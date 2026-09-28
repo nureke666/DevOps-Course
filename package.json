@@ -1,0 +1,26 @@
+{
+  "name": "devops-course",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Личные конспекты и практика по DevOps",
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nureke666/DevOps-Course.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/nureke666/DevOps-Course/issues"
+  },
+  "homepage": "https://github.com/nureke666/DevOps-Course#readme",
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}

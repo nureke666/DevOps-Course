@@ -1,0 +1,89 @@
+/* ---------- Brand palette ---------- */
+:root {
+  --vp-c-brand-1: #4361ee;
+  --vp-c-brand-2: #5a75f0;
+  --vp-c-brand-3: #7b90f3;
+  --vp-c-brand-soft: rgba(67, 97, 238, 0.14);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #4361ee 30%, #4cc9f0);
+}
+
+.dark {
+  --vp-c-brand-1: #7c93f8;
+  --vp-c-brand-2: #6f86f2;
+  --vp-c-brand-3: #5a75f0;
+  --vp-c-brand-soft: rgba(124, 147, 248, 0.16);
+}
+
+/* ---------- Readability: prose ---------- */
+.vp-doc p,
+.vp-doc li {
+  line-height: 1.75;
+}
+
+.vp-doc strong {
+  color: var(--vp-c-text-1);
+  font-weight: 700;
+}
+
+.vp-doc h2 {
+  margin-top: 56px;
+  padding-top: 12px;
+}
+
+/* ---------- Callout-style blockquotes (💡/⚠️/📌/🎤 notes in the source) ---------- */
+.vp-doc blockquote {
+  position: relative;
+  margin: 20px 0;
+  padding: 14px 18px 14px 20px;
+  border-left: 4px solid var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+  border-radius: 0 10px 10px 0;
+  color: var(--vp-c-text-1);
+}
+
+.vp-doc blockquote > p {
+  margin: 4px 0;
+}
+
+/* ---------- Code blocks ---------- */
+.vp-doc div[class*='language-'] {
+  font-size: 13.5px;
+  border-radius: 10px;
+}
+
+.vp-doc div[class*='language-'] pre {
+  line-height: 1.65;
+}
+
+/* ---------- Tables ---------- */
+.vp-doc table {
+  display: table;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.vp-doc tr:nth-child(2n) {
+  background-color: var(--vp-c-bg-soft);
+}
+
+.vp-doc th {
+  background-color: var(--vp-c-bg-alt);
+}
+
+/* ---------- <details> answer key ---------- */
+.vp-doc details {
+  margin: 20px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  background: var(--vp-c-bg-soft);
+}
+
+.vp-doc details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--vp-c-brand-1);
+}
