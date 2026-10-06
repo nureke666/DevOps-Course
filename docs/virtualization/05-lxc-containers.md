@@ -1,14 +1,14 @@
 ---
 title: "05. Системные контейнеры: LXC, Incus, LXC в Proxmox"
-description: "Блок → Виртуализация on-prem → тема 05. Опирается на"
+description: "Unprivileged и idmap, Incus вместо LXD, pct, nesting, bind mounts, выбор LXC/VM/Docker"
 ---
 
 # 05. Системные контейнеры: LXC, Incus, LXC в Proxmox
 
 > Блок → Виртуализация on-prem → тема 05. Опирается на
-> [../Docker/01_containers_intro.md](/docker/01-containers-intro) (namespaces, cgroups,
-> capabilities — механизмы те же), [../Linux/12_kernel.md](/linux/12-kernel) (ядро, модули)
-> и [04_proxmox.md](/virtualization/04-proxmox) (`pct`, хранилища, сеть).
+> [Docker: 01. Контейнеры и архитектура Docker](/docker/01-containers-intro) (namespaces, cgroups,
+> capabilities — механизмы те же), [Linux: 12. Ядро Linux](/linux/12-kernel) (ядро, модули)
+> и [04. Proxmox VE: VM, LXC, шаблоны, хранилища, кластер, HA, бэкапы, API](/virtualization/04-proxmox) (`pct`, хранилища, сеть).
 >
 > **После темы ты умеешь:** объяснить разницу системного контейнера и контейнера приложения,
 > поднять LXC руками (privileged и unprivileged), понимать idmap и `/etc/subuid`, работать
@@ -19,7 +19,7 @@ description: "Блок → Виртуализация on-prem → тема 05. �
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                 ОДНО ЯДРО ХОСТА (namespaces + cgroups + AppArmor/seccomp)
   ┌──────────────────────────────┬──────────────────────────────┬─────────────────────────┐
   │ СИСТЕМНЫЙ КОНТЕЙНЕР (LXC)    │ КОНТЕЙНЕР ПРИЛОЖЕНИЯ (Docker)│ VM (для сравнения)      │
@@ -31,13 +31,14 @@ description: "Блок → Виртуализация on-prem → тема 05. �
   Инструменты:  liblxc + lxc-* (LXC 7.0 LTS)   ·   Incus (форк LXD, контейнеры + VM)
                 LXD (Canonical)                ·   Proxmox pct (своё управление поверх LXC)
   Безопасность: privileged (root = root хоста) ✗  →  unprivileged (root = UID 100000 хоста) ✓
-```text
+```
+
 ---
 
 ## 1. Системный контейнер против контейнера приложения
 
 Механизмы изоляции у LXC и Docker одинаковые — namespaces, cgroups, capabilities, seccomp,
-LSM (разобраны в [../Docker/01_containers_intro.md](/docker/01-containers-intro)).
+LSM (разобраны в [Docker: 01. Контейнеры и архитектура Docker](/docker/01-containers-intro)).
 Разная **модель использования**:
 
 | | Системный (LXC/Incus/pct) | Приложения (Docker/Podman) |
@@ -57,7 +58,7 @@ LSM (разобраны в [../Docker/01_containers_intro.md](/docker/01-contain
 
 ## 2. Семейство LXC: кто есть кто
 
-```text
+```
  2008  LXC (liblxc + утилиты lxc-*) — низкоуровневый менеджер контейнеров
  2014  LXD (Canonical) — демон и REST API поверх LXC: удобный CLI, образы, кластеры, позже VM
  07.2023  Canonical забрала LXD из проекта linuxcontainers.org под своё крыло
@@ -65,7 +66,8 @@ LSM (разобраны в [../Docker/01_containers_intro.md](/docker/01-contain
  12.2023  LXD перелицензирован в AGPLv3 с CLA; Incus остался на Apache 2.0
  04.2024  Incus 6.0 LTS (поддержка до июня 2029)
  весна 2026  LXC 7.0 LTS и Incus 7.0 LTS; дальше ветка 7.x
-```text
+```
+
 | Инструмент | Что это | Когда встретишь |
 |------------|---------|-----------------|
 | **LXC** (`lxc-create`, `lxc-start`…) | Библиотека и утилиты, фундамент | Руками редко; внутри Proxmox и Incus |
@@ -92,7 +94,8 @@ sudo lxc-ls -f                     # NAME STATE AUTOSTART GROUPS IPV4 ...
 sudo lxc-attach -n c1              # шелл внутри (без SSH)
 sudo lxc-info -n c1                # PID init-процесса на хосте, IP, память
 sudo lxc-stop -n c1 && sudo lxc-destroy -n c1
-```text
+```
+
 Где что лежит: `/var/lib/lxc/c1/config` (конфиг), `/var/lib/lxc/c1/rootfs/` (файловая система —
 обычный каталог на хосте), `/etc/lxc/default.conf` (дефолты для новых контейнеров).
 
@@ -106,9 +109,10 @@ lxc.uts.name = c1
 lxc.cgroup2.memory.max = 512M       # лимит памяти (cgroup v2)
 lxc.cgroup2.cpu.max = 50000 100000  # не больше 0,5 CPU
 lxc.start.auto = 1                  # автостарт с хостом
-```text
+```
+
 Контейнер — это процессы хоста: `sudo lxc-info -n c1 -p` даёт PID, дальше
-`ps -o pid,user,cmd --ppid &lt;PID&gt;` и `ls -l /proc/&lt;PID&gt;/ns/` — всё как с Docker.
+`ps -o pid,user,cmd --ppid <PID>` и `ls -l /proc/<PID>/ns/` — всё как с Docker.
 
 ---
 
@@ -120,19 +124,21 @@ capabilities, seccomp и AppArmor. Уязвимость в ядре или ош�
 
 **Решение — user namespace:** UID внутри контейнера отображаются на диапазон «ничьих» UID хоста.
 
-```text
+```text:no-line-numbers
    внутри контейнера              на хосте
    root      (UID 0)      ──►     UID 100000   (никто, прав на хосте нет)
    www-data  (UID 33)     ──►     UID 100033
    devops    (UID 1000)   ──►     UID 101000
    ...                            ... диапазон из 65536 UID: 100000–165535
-```text
+```
+
 Диапазоны, которые пользователю разрешено отображать, выдаёт хост:
 ```bash
 cat /etc/subuid /etc/subgid         # формат  user:start:count
 # nurik:100000:65536
 # root:100000:65536                 # в Proxmox — для root
-```text
+```
+
 **Unprivileged-контейнер от обычного пользователя:**
 ```bash
 echo "$(id -un) veth lxcbr0 10" | sudo tee -a /etc/lxc/lxc-usernet   # разрешить 10 veth в lxcbr0
@@ -149,7 +155,7 @@ systemd-run --user --scope -p "Delegate=yes" -- lxc-start -n u1
 lxc-attach -n u1 -- cat /proc/self/uid_map     #          0     100000      65536
 ps -eo user:10,pid,cmd | grep -E '^100000' | head -3   # процессы контейнера на хосте — от UID 100000
 ls -ln ~/.local/share/lxc/u1/rootfs/etc/passwd          # владелец 100000 — это «root» контейнера
-```text
+```
 `systemd-run ... Delegate=yes` нужен, чтобы обычному пользователю выдали свою ветку cgroup v2.
 
 **Ограничения unprivileged:**
@@ -176,7 +182,8 @@ User namespace — главный барьер, но не единственны
 # на хосте: к какому профилю AppArmor привязаны процессы контейнера
 sudo cat /proc/$(sudo lxc-info -n c1 -p -H)/attr/current      # lxc-c1_</var/lib/lxc> (enforce)
 grep -E 'Cap(Eff|Bnd)' /proc/$(sudo lxc-info -n c1 -p -H)/status   # урезанный набор capabilities
-```text
+```
+
 > 💡 Для privileged-контейнера эти слои — **единственная** защита хоста. Поэтому Proxmox
 > пишет в документации, что privileged-контейнеры — только для доверенных нагрузок.
 
@@ -200,7 +207,8 @@ incus snapshot create c1 clean
 incus snapshot restore c1 clean
 incus stop c1 && incus delete c1
 incus image list images: debian           # что есть на сервере образов
-```text
+```
+
 - Контейнеры Incus по умолчанию **unprivileged** (`security.privileged=false`).
 - `security.nesting=true` — если внутри нужен Docker или другие контейнеры.
 - `cloud-init` работает и здесь: образы с суффиксом `/cloud` читают `cloud-init.user-data`
@@ -210,7 +218,7 @@ incus image list images: debian           # что есть на сервере 
 
 > ⚠️ **Incus и Docker на одном хосте:** Docker ставит `iptables FORWARD DROP`, и контейнеры
 > Incus теряют выход в сеть — та же история, что с бриджами VM
-> ([03_virt_networking.md](/virtualization/03-virt-networking), раздел 3). Лечится правилами в `DOCKER-USER`
+> ([03. Сеть для VM: libvirt-сети, bridge, macvtap, VLAN, bonding](/virtualization/03-virt-networking), раздел 3). Лечится правилами в `DOCKER-USER`
 > или отдельными хостами.
 
 ---
@@ -227,7 +235,8 @@ pct create 200 local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst \
   --net0 name=eth0,bridge=vmbr0,ip=dhcp,tag=20 \
   --unprivileged 1 --features nesting=1 \
   --ssh-public-keys /root/devops.pub --start 1
-```text
+```
+
 ```ini
 # /etc/pve/lxc/200.conf
 arch: amd64
@@ -240,7 +249,8 @@ ostype: debian
 rootfs: local-lvm:vm-200-disk-0,size=8G
 swap: 512
 unprivileged: 1
-```text
+```
+
 | Команда | Что делает |
 |---------|-----------|
 | `pct enter 200` / `pct console 200` | Шелл внутри / консоль (getty) |
@@ -266,7 +276,7 @@ unprivileged: 1
 ```bash
 mkdir -p /mnt/bindmounts/shared
 pct set 200 -mp0 /mnt/bindmounts/shared,mp=/shared
-```text
+```
 В unprivileged файлы хоста с UID 1000 видны внутри как `nobody`. Варианты:
 1. `chown -R 101000:101000 /mnt/bindmounts/shared` — хостовый UID «со сдвигом» = UID 1000 внутри.
 2. Классический idmap: пробросить один UID 1:1, остальное — как обычно.
@@ -292,13 +302,14 @@ pct set 200 -mp0 /mnt/bindmounts/shared,mp=/shared
 
 ## 7. LXC, VM или Docker
 
-```text
+```text:no-line-numbers
  Нужна не-Linux ОС, своё ядро/модуль, сильная изоляция, живая миграция?   ── да ──► VM
         │ нет
  Это приложение, которое поставляют образом и масштабируют (CI/CD, k8s)?  ── да ──► Docker/k8s (в VM)
         │ нет
  Долгоживущий Linux-сервис «как сервер», важны плотность и скорость?      ── да ──► LXC (unprivileged)
-```text
+```
+
 | Сценарий | Выбор | Почему |
 |----------|-------|--------|
 | Внутренний DNS, NTP, reverse proxy, Zabbix-прокси | LXC | Лёгкий сервис, живёт годами, почти без накладных расходов |
@@ -356,7 +367,7 @@ pct set 200 -mp0 /mnt/bindmounts/shared,mp=/shared
 | Incus: контейнер / VM | `incus launch images:debian/13 c1` / `... --vm` |
 | Incus: лимиты, снапшот | `incus config set c1 limits.memory=1GiB`, `incus snapshot create c1 s0` |
 | Proxmox: шаблоны | `pveam update; pveam available --section system` |
-| Proxmox: создать CT | `pct create ID local:vztmpl/&lt;tpl&gt; --unprivileged 1 --features nesting=1 ...` |
+| Proxmox: создать CT | `pct create ID local:vztmpl/<tpl> --unprivileged 1 --features nesting=1 ...` |
 | Войти / выполнить | `pct enter ID`, `pct exec ID -- cmd` |
 | Bind mount | `pct set ID -mp0 /mnt/bindmounts/x,mp=/x` |
 | Снапшот / откат | `pct snapshot ID s`, `pct rollback ID s` |
@@ -377,13 +388,17 @@ pct set 200 -mp0 /mnt/bindmounts/shared,mp=/shared
 9. Incus управляет и контейнерами, и VM одним CLI; с Docker на одном хосте конфликтует по iptables.
 10. LXC — для лёгких долгоживущих Linux-сервисов, VM — для изоляции и другого ядра, Docker — для поставки приложений.
 
-➡️ Дальше: [06_virt_automation.md](/virtualization/06-virt-automation) · задачи: 05_lxc_containers_tasks.md
+---
 
+## Задачи
+
+> Стенд: задачи на LXC и Incus делай **в отдельной VM** `lxc-lab` (Ubuntu 24.04, 2 vCPU, 2 ГБ,
+> из облачного образа по теме 02), а не на хосте — так не сломаешь сеть хоста и не
+> подружишь Incus с Docker. Задачи про Proxmox — на `pve1` из темы 04.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Назови пять отличий системного контейнера от контейнера приложения.
 
@@ -538,227 +553,113 @@ Linux-сервис, важна плотность → unprivileged LXC.
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```
 B1.  $ lxc list
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `lxc` — это CLI LXD. У пакета `lxc` утилиты с дефисом: `lxc-ls -f`, `lxc-create`.
-
-</details>
-
-```text:no-line-numbers
      Command 'lxc' not found, but can be installed with:
-```text
-```text:no-line-numbers
      sudo snap install lxd
-```text
-```text:no-line-numbers
      # «я ведь поставил пакет lxc!»
-```text
-```text:no-line-numbers
-B2.  # публичный веб-сервис с загрузкой файлов от пользователей
-```text
-<details><summary>Ответ</summary>
 
-⚠️ Privileged для недоверенной нагрузки из интернета — взлом приложения + уязвимость
+B2.  # публичный веб-сервис с загрузкой файлов от пользователей
+     pct create 300 ... --unprivileged 0
+
+B3.  # unprivileged CT 200, pct set 200 -mp0 /srv/share,mp=/share
+     root@ct1:~# ls -ln /share
+     -rw-r--r-- 1 65534 65534  120 Sep 27 10:00 report.csv
+
+B4.  root@ct1:~# mount -t nfs 10.10.10.30:/srv/data /mnt      # unprivileged CT
+     mount.nfs: Operation not permitted
+
+B5.  # unprivileged CT без features
+     root@ct1:~# apt install -y docker.io && docker run hello-world
+
+B6.  # /etc/pve/lxc/200.conf: пробросили UID 1000 1:1 (lxc.idmap: u 1000 1000 1 и т.д.)
+     # /etc/subuid и /etc/subgid не меняли
+     root@pve1:~# pct start 200
+
+B7.  root@pve1:~# pct migrate 200 pve2      # CT 200 работает, опций нет
+
+B8.  root@ct1:~# modprobe wireguard
+     modprobe: FATAL: Module wireguard not found in directory /lib/modules/7.0.x-pve
+
+B9.  # голый LXC на хосте без lxcfs, у контейнера lxc.cgroup2.memory.max = 512M
+     root@c1:~# free -h | head -2
+
+B10. «Чтобы разработчикам было удобно, добавим всех в группу incus-admin на общем сервере»
+
+B11. $ cat /etc/subuid
+     nurik:200000:65536
+     $ cat ~/.config/lxc/default.conf
+     lxc.idmap = u 0 100000 65536
+     lxc.idmap = g 0 100000 65536
+
+B12. # privileged CT для «легаси-приложения», добавили --features nesting=1 «на всякий случай»
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ `lxc` — это CLI LXD. У пакета `lxc` утилиты с дефисом: `lxc-ls -f`, `lxc-create`.
+
+**B2.** ⚠️ Privileged для недоверенной нагрузки из интернета — взлом приложения + уязвимость
 = root на хосте. Unprivileged-контейнер, а лучше VM.
 
-</details>
-
-```text:no-line-numbers
-     pct create 300 ... --unprivileged 0
-```text
-```text:no-line-numbers
-B3.  # unprivileged CT 200, pct set 200 -mp0 /srv/share,mp=/share
-```text
-<details><summary>Ответ</summary>
-
-⚠️ UID хоста вне диапазона idmap — файлы показываются как `65534`. chown со сдвигом,
+**B3.** ⚠️ UID хоста вне диапазона idmap — файлы показываются как `65534`. chown со сдвигом,
 idmap 1:1 или `idmap=` у точки монтирования.
 
-</details>
-
-```text:no-line-numbers
-     root@ct1:~# ls -ln /share
-```text
-```text:no-line-numbers
-     -rw-r--r-- 1 65534 65534  120 Sep 27 10:00 report.csv
-```text
-```text:no-line-numbers
-B4.  root@ct1:~# mount -t nfs 10.10.10.30:/srv/data /mnt      # unprivileged CT
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Unprivileged-контейнер не может монтировать NFS. Смонтировать NFS на хосте и
+**B4.** ⚠️ Unprivileged-контейнер не может монтировать NFS. Смонтировать NFS на хосте и
 пробросить bind mount, либо хранилище NFS в Proxmox и volume mount point.
 
-</details>
-
-```text:no-line-numbers
-     mount.nfs: Operation not permitted
-```text
-```text:no-line-numbers
-B5.  # unprivileged CT без features
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без `nesting=1,keyctl=1` Docker не сможет создать namespaces/overlay и упадёт
+**B5.** ⚠️ Без `nesting=1,keyctl=1` Docker не сможет создать namespaces/overlay и упадёт
 с ошибками прав. Включить features (CT перезапустить) или, лучше, Docker в VM.
 
-</details>
-
-```text:no-line-numbers
-     root@ct1:~# apt install -y docker.io && docker run hello-world
-```text
-```text:no-line-numbers
-B6.  # /etc/pve/lxc/200.conf: пробросили UID 1000 1:1 (lxc.idmap: u 1000 1000 1 и т.д.)
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Root'у не разрешено отображать UID/GID 1000 — CT не стартует (ошибка newuidmap/idmap).
+**B6.** ⚠️ Root'у не разрешено отображать UID/GID 1000 — CT не стартует (ошибка newuidmap/idmap).
 Добавить `root:1000:1` в `/etc/subuid` и `/etc/subgid`.
 
-</details>
-
-```text:no-line-numbers
-     # /etc/subuid и /etc/subgid не меняли
-```text
-```text:no-line-numbers
-     root@pve1:~# pct start 200
-```text
-```text:no-line-numbers
-B7.  root@pve1:~# pct migrate 200 pve2      # CT 200 работает, опций нет
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Работающий CT не мигрирует «вживую» — нужна `--restart` (короткий простой) или
+**B7.** ⚠️ Работающий CT не мигрирует «вживую» — нужна `--restart` (короткий простой) или
 остановка CT перед миграцией.
 
-</details>
-
-```text:no-line-numbers
-B8.  root@ct1:~# modprobe wireguard
-```text
-<details><summary>Ответ</summary>
-
-✅ Так и должно быть: ядро общее, модули — только у хоста. `modprobe wireguard` на хосте
+**B8.** ✅ Так и должно быть: ядро общее, модули — только у хоста. `modprobe wireguard` на хосте
 (модуль станет доступен контейнеру) или VM.
 
-</details>
+**B9.** ⚠️ Без lxcfs `free` читает `/proc/meminfo` хоста и покажет всю его память, хотя лимит
+512M работает. Поставить lxcfs на хост.
 
-```text:no-line-numbers
-     modprobe: FATAL: Module wireguard not found in directory /lib/modules/7.0.x-pve
-```text
-```text:no-line-numbers
-B9.  # голый LXC на хосте без lxcfs, у контейнера lxc.cgroup2.memory.max = 512M
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без lxcfs `free` читает `/proc/meminfo` хоста и покажет всю его память, хотя лимит
-
-</details>
-
-```text:no-line-numbers
-     root@c1:~# free -h | head -2
-```text
-```text:no-line-numbers
-B10.  «Чтобы разработчикам было удобно, добавим всех в группу incus-admin на общем сервере»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `incus-admin` — фактически root на хосте (можно создать privileged-контейнер и
+**B10.** ⚠️ `incus-admin` — фактически root на хосте (можно создать privileged-контейнер и
 смонтировать `/`). Для разработчиков — группа `incus` с ограниченными проектами или отдельные VM.
 
-</details>
-
-```text:no-line-numbers
-B11.  $ cat /etc/subuid
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Отображение не совпадает с разрешённым диапазоном (200000, а в конфиге 100000) —
+**B11.** ⚠️ Отображение не совпадает с разрешённым диапазоном (200000, а в конфиге 100000) —
 контейнер не запустится. Числа в `lxc.idmap` берут из `/etc/subuid`/`/etc/subgid`.
 
-</details>
-
-```text:no-line-numbers
-     nurik:200000:65536
-```text
-```text:no-line-numbers
-     $ cat ~/.config/lxc/default.conf
-```text
-```text:no-line-numbers
-     lxc.idmap = u 0 100000 65536
-```text
-```text:no-line-numbers
-     lxc.idmap = g 0 100000 65536
-```text
-```text:no-line-numbers
-B12.  # privileged CT для «легаси-приложения», добавили --features nesting=1 «на всякий случай»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `nesting` в privileged-контейнере даёт доступ к procfs/sysfs хоста — серьёзная
+**B12.** ⚠️ `nesting` в privileged-контейнере даёт доступ к procfs/sysfs хоста — серьёзная
 дыра. В privileged не включать; для легаси — VM.
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Privileged LXC руками
+#### C1. 🔑 Privileged LXC руками
 В `lxc-lab`:
-**1.** `apt install lxc`, `lxc-checkconfig`, создай и запусти privileged `c1` (Debian 13).
-
-<details><summary>Ответ</summary>
-
-`sudo lxc-info -n c1 -p -H` → PID; ссылки `/proc/&lt;PID&gt;/ns/*` отличаются от
-`/proc/1/ns/*` (кроме user и time в privileged). Файл лимита — например,
-`/sys/fs/cgroup/lxc.payload.c1/memory.max` → `268435456`. При превышении OOM-killer убьёт
-процесс внутри контейнера (`dmesg` на хосте: `Memory cgroup out of memory`), хост не пострадает.
-
-</details>
-
-**2.** Найди PID init-процесса контейнера на хосте, сравни `ls -l /proc/&lt;PID&gt;/ns/` с `/proc/1/ns/`.
-
-<details><summary>Ответ</summary>
-
-`uid_map` внутри — `0 100000 65536`; `ps` на хосте показывает процессы от UID 100000;
-файлы rootfs принадлежат 100000. `mount -t tmpfs` внутри обычно работает (tmpfs разрешён в user
-namespace), `mount -t nfs` — нет: монтирование сетевых и блочных ФС требует привилегий хоста.
-
-</details>
-
-**3.** Поставь лимит памяти 256M в конфиг, перезапусти. Найди файл `memory.max` этого контейнера
+1. `apt install lxc`, `lxc-checkconfig`, создай и запусти privileged `c1` (Debian 13).
+2. Найди PID init-процесса контейнера на хосте, сравни `ls -l /proc/<PID>/ns/` с `/proc/1/ns/`.
+3. Поставь лимит памяти 256M в конфиг, перезапусти. Найди файл `memory.max` этого контейнера
    в `/sys/fs/cgroup/` и проверь значение. Запусти внутри `stress --vm 1 --vm-bytes 400M`
    (или `python3 -c "a='x'*400_000_000"`) — что произойдёт?
 
 <details><summary>Ответ</summary>
 
-Контейнер готов за секунды и занимает десятки МБ сверх процессов; VM — десятки секунд
-и сотни МБ (своё ядро, память под гостя). `incus config set c1 limits.cpu=1 limits.memory=512MiB`,
-`incus snapshot create c1 s0`, `incus snapshot restore c1 s0`.
-
-</details>
-
-### C2. 🔑 Unprivileged от обычного пользователя
-**1.** Настрой `lxc-usernet`, `~/.config/lxc/default.conf` по своим `/etc/subuid` и `/etc/subgid`.
-
-<details><summary>Ответ</summary>
-
-`sudo lxc-info -n c1 -p -H` → PID; ссылки `/proc/&lt;PID&gt;/ns/*` отличаются от
+`sudo lxc-info -n c1 -p -H` → PID; ссылки `/proc/<PID>/ns/*` отличаются от
 `/proc/1/ns/*` (кроме user и time в privileged). Файл лимита — например,
 `/sys/fs/cgroup/lxc.payload.c1/memory.max` → `268435456`. При превышении OOM-killer убьёт
 процесс внутри контейнера (`dmesg` на хосте: `Memory cgroup out of memory`), хост не пострадает.
 
 </details>
 
-**2.** Создай и запусти `u1` через `systemd-run`.
+#### C2. 🔑 Unprivileged от обычного пользователя
+1. Настрой `lxc-usernet`, `~/.config/lxc/default.conf` по своим `/etc/subuid` и `/etc/subgid`.
+2. Создай и запусти `u1` через `systemd-run`.
+3. Докажи отображение: `uid_map` внутри, владелец процессов и файлов rootfs на хосте.
+4. Попробуй внутри `mount -t tmpfs none /mnt` и `mount -t nfs ...`. Что работает, что нет и почему?
 
 <details><summary>Ответ</summary>
 
@@ -768,51 +669,12 @@ namespace), `mount -t nfs` — нет: монтирование сетевых �
 
 </details>
 
-**3.** Докажи отображение: `uid_map` внутри, владелец процессов и файлов rootfs на хосте.
-
-<details><summary>Ответ</summary>
-
-Контейнер готов за секунды и занимает десятки МБ сверх процессов; VM — десятки секунд
-и сотни МБ (своё ядро, память под гостя). `incus config set c1 limits.cpu=1 limits.memory=512MiB`,
-`incus snapshot create c1 s0`, `incus snapshot restore c1 s0`.
-
-</details>
-
-**4.** Попробуй внутри `mount -t tmpfs none /mnt` и `mount -t nfs ...`. Что работает, что нет и почему?
-
-<details><summary>Ответ</summary>
-
-`pct push 200 ./index.html /var/www/html/index.html`, `pct set 200 --memory 1024`,
-`pct resize 200 rootfs +4G` — применяются на ходу, внутри сразу видны новые лимиты (lxcfs) и
-размер ФС. `pct snapshot 200 before`, `pct rollback 200 before`.
-
-</details>
-
-### C3. Incus: контейнер и VM одним CLI
+#### C3. Incus: контейнер и VM одним CLI
 В `lxc-lab` с nested (VM создана с `host-passthrough`):
-**1.** Установи Incus, `incus admin init --minimal`.
-
-<details><summary>Ответ</summary>
-
-`sudo lxc-info -n c1 -p -H` → PID; ссылки `/proc/&lt;PID&gt;/ns/*` отличаются от
-`/proc/1/ns/*` (кроме user и time в privileged). Файл лимита — например,
-`/sys/fs/cgroup/lxc.payload.c1/memory.max` → `268435456`. При превышении OOM-killer убьёт
-процесс внутри контейнера (`dmesg` на хосте: `Memory cgroup out of memory`), хост не пострадает.
-
-</details>
-
-**2.** Запусти `c1` (контейнер) и `v1` (`--vm`) из Debian 13. Засеки время до готовности и сравни
+1. Установи Incus, `incus admin init --minimal`.
+2. Запусти `c1` (контейнер) и `v1` (`--vm`) из Debian 13. Засеки время до готовности и сравни
    потребление памяти на хосте (`free -m` до и после, `incus info`).
-
-<details><summary>Ответ</summary>
-
-`uid_map` внутри — `0 100000 65536`; `ps` на хосте показывает процессы от UID 100000;
-файлы rootfs принадлежат 100000. `mount -t tmpfs` внутри обычно работает (tmpfs разрешён в user
-namespace), `mount -t nfs` — нет: монтирование сетевых и блочных ФС требует привилегий хоста.
-
-</details>
-
-**3.** Лимиты `limits.cpu=1 limits.memory=512MiB` на `c1`, снапшот, поломка, откат.
+3. Лимиты `limits.cpu=1 limits.memory=512MiB` на `c1`, снапшот, поломка, откат.
 
 <details><summary>Ответ</summary>
 
@@ -822,39 +684,11 @@ namespace), `mount -t nfs` — нет: монтирование сетевых �
 
 </details>
 
-### C4. 🔑 LXC в Proxmox
-**1.** Скачай шаблон Debian 13 через `pveam`, создай unprivileged CT с `nesting=1` в `vmbr0`.
-
-<details><summary>Ответ</summary>
-
-`sudo lxc-info -n c1 -p -H` → PID; ссылки `/proc/&lt;PID&gt;/ns/*` отличаются от
-`/proc/1/ns/*` (кроме user и time в privileged). Файл лимита — например,
-`/sys/fs/cgroup/lxc.payload.c1/memory.max` → `268435456`. При превышении OOM-killer убьёт
-процесс внутри контейнера (`dmesg` на хосте: `Memory cgroup out of memory`), хост не пострадает.
-
-</details>
-
-**2.** Через `pct exec` поставь `nginx`, через `pct push` положи свою `index.html`.
-
-<details><summary>Ответ</summary>
-
-`uid_map` внутри — `0 100000 65536`; `ps` на хосте показывает процессы от UID 100000;
-файлы rootfs принадлежат 100000. `mount -t tmpfs` внутри обычно работает (tmpfs разрешён в user
-namespace), `mount -t nfs` — нет: монтирование сетевых и блочных ФС требует привилегий хоста.
-
-</details>
-
-**3.** Увеличь память и диск на ходу (`pct set`, `pct resize`). Проверь внутри `free -h` и `df -h`.
-
-<details><summary>Ответ</summary>
-
-Контейнер готов за секунды и занимает десятки МБ сверх процессов; VM — десятки секунд
-и сотни МБ (своё ядро, память под гостя). `incus config set c1 limits.cpu=1 limits.memory=512MiB`,
-`incus snapshot create c1 s0`, `incus snapshot restore c1 s0`.
-
-</details>
-
-**4.** Снапшот → сломай конфиг nginx → `pct rollback`.
+#### C4. 🔑 LXC в Proxmox
+1. Скачай шаблон Debian 13 через `pveam`, создай unprivileged CT с `nesting=1` в `vmbr0`.
+2. Через `pct exec` поставь `nginx`, через `pct push` положи свою `index.html`.
+3. Увеличь память и диск на ходу (`pct set`, `pct resize`). Проверь внутри `free -h` и `df -h`.
+4. Снапшот → сломай конфиг nginx → `pct rollback`.
 
 <details><summary>Ответ</summary>
 
@@ -864,92 +698,54 @@ namespace), `mount -t nfs` — нет: монтирование сетевых �
 
 </details>
 
-### C5. 🔑 Bind mount и idmap
-**1.** На `pve1`: `mkdir -p /mnt/bindmounts/share`, создай файл от UID 1000 (`useradd -u 1000 app`,
+#### C5. 🔑 Bind mount и idmap
+1. На `pve1`: `mkdir -p /mnt/bindmounts/share`, создай файл от UID 1000 (`useradd -u 1000 app`,
    `sudo -u app touch ...`).
-
-<details><summary>Ответ</summary>
-
-`sudo lxc-info -n c1 -p -H` → PID; ссылки `/proc/&lt;PID&gt;/ns/*` отличаются от
-`/proc/1/ns/*` (кроме user и time в privileged). Файл лимита — например,
-`/sys/fs/cgroup/lxc.payload.c1/memory.max` → `268435456`. При превышении OOM-killer убьёт
-процесс внутри контейнера (`dmesg` на хосте: `Memory cgroup out of memory`), хост не пострадает.
-
-</details>
-
-**2.** Подключи к CT (`-mp0`), посмотри `ls -ln` внутри — `65534`?
-
-<details><summary>Ответ</summary>
-
-`uid_map` внутри — `0 100000 65536`; `ps` на хосте показывает процессы от UID 100000;
-файлы rootfs принадлежат 100000. `mount -t tmpfs` внутри обычно работает (tmpfs разрешён в user
-namespace), `mount -t nfs` — нет: монтирование сетевых и блочных ФС требует привилегий хоста.
-
-</details>
-
-**3.** Способ 1: `chown -R 101000:101000` на хосте — внутри файл принадлежит UID 1000. Что теперь
+2. Подключи к CT (`-mp0`), посмотри `ls -ln` внутри — `65534`?
+3. Способ 1: `chown -R 101000:101000` на хосте — внутри файл принадлежит UID 1000. Что теперь
    видит сервис на хосте, работающий от `app`?
-
-<details><summary>Ответ</summary>
-
-Контейнер готов за секунды и занимает десятки МБ сверх процессов; VM — десятки секунд
-и сотни МБ (своё ядро, память под гостя). `incus config set c1 limits.cpu=1 limits.memory=512MiB`,
-`incus snapshot create c1 s0`, `incus snapshot restore c1 s0`.
-
-</details>
-
-**4.** Способ 2: верни владельца 1000, настрой idmap 1:1 для UID/GID 1000 (конфиг CT +
+4. Способ 2: верни владельца 1000, настрой idmap 1:1 для UID/GID 1000 (конфиг CT +
    `/etc/subuid`, `/etc/subgid`), перезапусти CT. Проверь с обеих сторон.
 
 <details><summary>Ответ</summary>
 
-`pct push 200 ./index.html /var/www/html/index.html`, `pct set 200 --memory 1024`,
-`pct resize 200 rootfs +4G` — применяются на ходу, внутри сразу видны новые лимиты (lxcfs) и
-размер ФС. `pct snapshot 200 before`, `pct rollback 200 before`.
+2\) Да, внутри `65534`. 3) После `chown 101000` сервис на хосте от UID 1000 потерял
+права на свои файлы — теперь они «чужие». 4) С idmap 1:1 UID 1000 одинаков внутри и снаружи:
+файлы принадлежат `app` на хосте и UID 1000 в контейнере. Обязательно `root:1000:1` в
+`/etc/subuid` и `/etc/subgid`, иначе CT не стартует.
 
 </details>
 
-### C6. Docker в LXC против Docker в VM
-**1.** В unprivileged CT с `nesting=1,keyctl=1` поставь Docker и запусти `nginx`.
-
-<details><summary>Ответ</summary>
-
-`sudo lxc-info -n c1 -p -H` → PID; ссылки `/proc/&lt;PID&gt;/ns/*` отличаются от
-`/proc/1/ns/*` (кроме user и time в privileged). Файл лимита — например,
-`/sys/fs/cgroup/lxc.payload.c1/memory.max` → `268435456`. При превышении OOM-killer убьёт
-процесс внутри контейнера (`dmesg` на хосте: `Memory cgroup out of memory`), хост не пострадает.
-
-</details>
-
-**2.** Выпиши, какие features понадобились и что в `pct config` поменялось.
-
-<details><summary>Ответ</summary>
-
-`uid_map` внутри — `0 100000 65536`; `ps` на хосте показывает процессы от UID 100000;
-файлы rootfs принадлежат 100000. `mount -t tmpfs` внутри обычно работает (tmpfs разрешён в user
-namespace), `mount -t nfs` — нет: монтирование сетевых и блочных ФС требует привилегий хоста.
-
-</details>
-
-**3.** Сравни с VM из шаблона 9000: что проще обновлять, что можно мигрировать вживую,
+#### C6. Docker в LXC против Docker в VM
+1. В unprivileged CT с `nesting=1,keyctl=1` поставь Docker и запусти `nginx`.
+2. Выпиши, какие features понадобились и что в `pct config` поменялось.
+3. Сравни с VM из шаблона 9000: что проще обновлять, что можно мигрировать вживую,
    где сильнее изоляция?
 
 <details><summary>Ответ</summary>
 
-Контейнер готов за секунды и занимает десятки МБ сверх процессов; VM — десятки секунд
-и сотни МБ (своё ядро, память под гостя). `incus config set c1 limits.cpu=1 limits.memory=512MiB`,
-`incus snapshot create c1 s0`, `incus snapshot restore c1 s0`.
+Понадобились `features: keyctl=1,nesting=1`. VM проще: обновления ядра хоста не
+влияют, живая миграция, отдельное ядро. LXC экономнее по памяти, но хрупче.
 
 </details>
 
-### C7. Выбери платформу
+#### C7. Выбери платформу
 Для каждого — LXC, VM или Docker/k8s и одна фраза «почему»: Bind9/Unbound; GitLab (omnibus);
 Prometheus + Grafana для команды; нода Kubernetes; WireGuard-шлюз; тестовые окружения для
-**50.** студентов; 1С-сервер на Windows; Redis для кэша сессий в k8s-приложении.
+50 студентов; 1С-сервер на Windows; Redis для кэша сессий в k8s-приложении.
+
+<details><summary>Ответ</summary>
+
+Bind9/Unbound — LXC; GitLab omnibus — VM (тяжёлый, много сервисов, важна изоляция);
+Prometheus+Grafana — LXC или Docker в VM; нода k8s — VM; WireGuard-шлюз — VM (модуль ядра,
+сеть) или LXC с модулем на хосте; 50 тестовых окружений — LXC/Incus; 1С на Windows — VM;
+Redis для k8s-приложения — в Kubernetes (Docker-образ).
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После обновления ядра на узле Proxmox Docker внутри нескольких LXC перестал стартовать
 контейнеры (ошибки overlayfs/cgroup). В VM с Docker всё в порядке. Почему так и что делать
@@ -1037,14 +833,13 @@ Root в privileged-контейнере — root хоста при любой д
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Чем LXC отличается от Docker?
 
 <details><summary>Ответ</summary>
 
 Механизмы одни (namespaces, cgroups), разная модель: LXC — системный контейнер с init и
-   полной ОС, живёт как сервер; Docker — контейнер приложения из образа, один процесс,
-   пересоздаётся при обновлении.
+полной ОС, живёт как сервер; Docker — контейнер приложения из образа, один процесс,
+пересоздаётся при обновлении.
 
 </details>
 
@@ -1053,8 +848,8 @@ Root в privileged-контейнере — root хоста при любой д
 <details><summary>Ответ</summary>
 
 Privileged — root внутри = root хоста, сдерживают только capabilities/seccomp/AppArmor.
-   Unprivileged — через user namespace root внутри отображается на бесправный UID хоста
-   (100000+). Выбор по умолчанию — unprivileged.
+Unprivileged — через user namespace root внутри отображается на бесправный UID хоста
+(100000+). Выбор по умолчанию — unprivileged.
 
 </details>
 
@@ -1063,7 +858,7 @@ Privileged — root внутри = root хоста, сдерживают тол�
 <details><summary>Ответ</summary>
 
 User namespace даёт процессу свой набор UID/GID; idmap — таблица соответствия UID внутри
-   и снаружи (`lxc.idmap = u 0 100000 65536`), разрешённые диапазоны — в `/etc/subuid`/`subgid`.
+и снаружи (`lxc.idmap = u 0 100000 65536`), разрешённые диапазоны — в `/etc/subuid`/`subgid`.
 
 </details>
 
@@ -1072,8 +867,8 @@ User namespace даёт процессу свой набор UID/GID; idmap — 
 <details><summary>Ответ</summary>
 
 Incus — community-форк LXD (2023) от бывших авторов в linuxcontainers.org под Apache 2.0;
-   LXD развивает Canonical (AGPLv3 + CLA). Функционально близки, пути расходятся; образы
-   linuxcontainers.org — для Incus.
+LXD развивает Canonical (AGPLv3 + CLA). Функционально близки, пути расходятся; образы
+linuxcontainers.org — для Incus.
 
 </details>
 
@@ -1082,7 +877,7 @@ Incus — community-форк LXD (2023) от бывших авторов в linu
 <details><summary>Ответ</summary>
 
 LXC — лёгкие Linux-сервисы (DNS, прокси, мониторинг), плотность и скорость. VM — другая ОС,
-   модули ядра, Docker/k8s, сильная изоляция, живая миграция, недоверенные нагрузки.
+модули ядра, Docker/k8s, сильная изоляция, живая миграция, недоверенные нагрузки.
 
 </details>
 
@@ -1091,7 +886,7 @@ LXC — лёгкие Linux-сервисы (DNS, прокси, мониторин
 <details><summary>Ответ</summary>
 
 Можно: unprivileged CT с `nesting=1` и `keyctl=1`. Но Proxmox рекомендует Docker в VM —
-   изоляция, миграция, устойчивость к обновлениям ядра.
+изоляция, миграция, устойчивость к обновлениям ядра.
 
 </details>
 
@@ -1100,7 +895,7 @@ LXC — лёгкие Linux-сервисы (DNS, прокси, мониторин
 <details><summary>Ответ</summary>
 
 VM — да. Контейнеры — в Proxmox только с перезапуском; технически есть CRIU, но для
-   системных контейнеров это ненадёжно.
+системных контейнеров это ненадёжно.
 
 </details>
 
@@ -1109,7 +904,7 @@ VM — да. Контейнеры — в Proxmox только с перезап�
 <details><summary>Ответ</summary>
 
 Namespaces (что видно), cgroups (сколько ресурсов), user namespace (кто ты на хосте),
-   capabilities, seccomp, AppArmor (что можно), lxcfs (что видно в `/proc`).
+capabilities, seccomp, AppArmor (что можно), lxcfs (что видно в `/proc`).
 
 </details>
 
@@ -1118,7 +913,7 @@ Namespaces (что видно), cgroups (сколько ресурсов), user 
 <details><summary>Ответ</summary>
 
 UID файлов хоста не входят в диапазон отображения unprivileged-контейнера — видны как
-   `nobody`, запись запрещена. Лечится сдвигом UID, idmap или idmapped mounts.
+`nobody`, запись запрещена. Лечится сдвигом UID, idmap или idmapped mounts.
 
 </details>
 
@@ -1127,9 +922,7 @@ UID файлов хоста не входят в диапазон отображ
 <details><summary>Ответ</summary>
 
 cgroups: в LXC `lxc.cgroup2.memory.max`, `lxc.cgroup2.cpu.max`, `pids.max`; в Proxmox —
-    `--memory`, `--cores`, `--cpulimit`; в Incus — `limits.memory`, `limits.cpu`.
-
----
+`--memory`, `--cores`, `--cpulimit`; в Incus — `limits.memory`, `limits.cpu`.
 
 </details>
 

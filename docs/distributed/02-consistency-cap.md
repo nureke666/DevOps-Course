@@ -1,15 +1,15 @@
 ---
 title: "02. Согласованность, CAP и PACELC"
-description: "Блок → Распределённые системы → тема 02. Реплики PostgreSQL и synchronouscommit — в"
+description: "Linearizable → eventual, read-your-writes, CAP без мифов, PACELC, где на этой шкале PG, etcd, Kafka, S3, Redis"
 ---
 
 # 02. Согласованность, CAP и PACELC
 
 > Блок → Распределённые системы → тема 02. Реплики PostgreSQL и `synchronous_commit` — в
-> [../Left/01_Databases/06_replication.md](/databases/06-replication), транзакции и ACID — в
-> [../Left/01_Databases/01_db_for_devops.md](/databases/01-db-for-devops), уровни изоляции PG и MySQL —
-> в [../Left/01_Databases/12_mysql.md](/databases/12-mysql), Kafka `acks` — в
-> [../Left/05_Queues/02_kafka_basics.md](/queues/02-kafka-basics).
+> [Базы данных: 06. Репликация PostgreSQL](/databases/06-replication), транзакции и ACID — в
+> [Базы данных: 01. База данных глазами DevOps](/databases/01-db-for-devops), уровни изоляции PG и MySQL —
+> в [Базы данных: 12. MySQL и MariaDB](/databases/12-mysql), Kafka `acks` — в
+> [Очереди: 02. Kafka: концепции](/queues/02-kafka-basics).
 >
 > **После темы ты умеешь:** различать три значения слова «согласованность», раскладывать
 > модели от linearizable до eventual на примерах, отличать согласованность от изоляции,
@@ -22,7 +22,7 @@ description: "Блок → Распределённые системы → те�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
              «данные согласованы» — а что именно обещано?
                                 │
    ┌────────────────────────────┼─────────────────────────────┐
@@ -36,7 +36,8 @@ description: "Блок → Распределённые системы → те�
                                 └──────────► «ЧТО НУЖНО НАШЕЙ ОПЕРАЦИИ?»
                                              создать ссылку ≠ редирект ≠ счётчик кликов
                                              read-your-writes: primary, sticky, LSN
-```text
+```
+
 ---
 
 ## 1. Три разных «согласованности»
@@ -56,7 +57,7 @@ description: "Блок → Распределённые системы → те�
 
 ## 2. Лестница моделей согласованности
 
-```text
+```text:no-line-numbers
  СИЛЬНЕЕ, дороже, недоступна при разделении
    ▲
    │  LINEARIZABLE      как будто копия одна и операции мгновенны в реальном времени
@@ -70,14 +71,15 @@ description: "Блок → Распределённые системы → те�
    │  EVENTUAL          «когда-нибудь, если записи прекратятся, все копии сойдутся»
    ▼                    DNS, CDN, асинхронные реплики, межрегиональная репликация S3
  СЛАБЕЕ, дешевле, доступна при разделении
-```text
+```
+
 ### Linearizable — «как будто копия одна»
 
 Каждая операция выглядит мгновенной в какой-то момент между её началом и концом, и порядок
 уважает реальное время: если запись **завершилась** до начала чтения, чтение обязано её
 увидеть. Это самая сильная модель для одного объекта (ключа).
 
-```text
+```text:no-line-numbers
  время ─────────────────────────────────────────────────────────►
  клиент A:  [ write x=1 ]✓
  клиент B:                  [ read x ] → обязан вернуть 1   ✅ linearizable
@@ -86,11 +88,12 @@ description: "Блок → Распределённые системы → те�
  клиент A:  [ write x=1 ─────────────── ]✓        запись ещё идёт →
  клиент B:        [ read x ] → 0 или 1 — оба допустимы, НО
  клиент C:                     [ read x ] → если B уже увидел 1, C не имеет права увидеть 0
-```text
+```
+
 Зачем нужна: выбор лидера и блокировки (все должны согласиться, кто лидер), уникальность
 («имя пользователя свободно?»), счёт денег, конфигурация (etcd для Kubernetes). Цена: каждая
 операция координируется с кворумом или лидером → задержка, а при разделении меньшинство
-не отвечает (тема [04_consensus_quorum.md](/distributed/04-consensus-quorum)).
+не отвечает (тема [04. Консенсус и кворум: Raft, etcd, Patroni, Ceph, corosync](/distributed/04-consensus-quorum)).
 
 ### Sequential — «один порядок для всех, но с опозданием»
 
@@ -104,11 +107,12 @@ ZooKeeper гарантирует порядок обновлений, а чте�
 Если операция B **зависит** от A (прочитала её результат, ответила на неё), все увидят A
 раньше B. Независимые операции разные узлы могут видеть в разном порядке.
 
-```text
+```text:no-line-numbers
  Алия:   пишет «Сервер упал?»   ─────┐
  Бекзат: читает вопрос, отвечает «Уже поднял» ─┐   (ответ зависит от вопроса)
  Данияр:                                      видит «Уже поднял» без вопроса ❌ нарушение causal
-```text
+```
+
 Causal — самая сильная модель, которая остаётся доступной при разделении (если клиент
 держится своей реплики), поэтому её любят гео-распределённые системы.
 
@@ -132,7 +136,7 @@ PostgreSQL, межрегиональная репликация S3, вторич
 
 > ⚠️ «Eventual» — не синоним «почти сразу». Под нагрузкой или при разделении отставание —
 > минуты и часы, а конфликты параллельных записей кто-то должен разрешать (тема
-> [03_replication_partitioning.md](/distributed/03-replication-partitioning): LWW, CRDT).
+> [03. Репликация и шардирование](/distributed/03-replication-partitioning): LWW, CRDT).
 
 ---
 
@@ -147,7 +151,7 @@ PostgreSQL, межрегиональная репликация S3, вторич
 | Шкала | linearizable → causal → eventual | serializable → snapshot / repeatable read → read committed |
 | Где ломается | Реплики, кэши, регионы | Даже на одном сервере без реплик |
 
-```text
+```text:no-line-numbers
                         согласованность (свежесть, реальное время)
                                     ▲
              STRICT SERIALIZABLE ── │ ── «транзакции как будто по одной и в реальном времени»
@@ -156,14 +160,15 @@ PostgreSQL, межрегиональная репликация S3, вторич
    ─────────────────────────────────┼──────────────────────────► изоляция (транзакции)
     read committed   snapshot / RR  │  serializable
     (PG по умолчанию)               │  (PG SERIALIZABLE — SSI)
-```text
+```
+
 Что полезно знать про свои системы:
 - **PostgreSQL:** по умолчанию `READ COMMITTED`; `REPEATABLE READ` в PG — это snapshot isolation;
   `SERIALIZABLE` — SSI. На одном primary чтение и запись линеаризуемы; чтение с асинхронной
   реплики — нет.
 - **etcd:** операции с ключами — strict serializable (Jepsen, etcd 3.4.3, 2020 — подтвердил под
   разделениями, падениями и сдвигом часов). Но в том же анализе: **блокировки etcd не дают
-  взаимного исключения** — нужны fencing-токены (тема [05_time_ordering.md](/distributed/05-time-ordering)).
+  взаимного исключения** — нужны fencing-токены (тема [05. Время и порядок событий: часы, логические часы, лизы и fencing-токены](/distributed/05-time-ordering)).
 - **Документация — это обещание, а не факт.** Jepsen нашёл в PostgreSQL 12.3 (2020) аномалию
   G2-item на уровне `SERIALIZABLE` — баг жил с 2011 года и был исправлен в следующем минорном
   релизе. Урок: на критичных гарантиях стоит проверять и версию, и errata.
@@ -182,10 +187,10 @@ available, partition-tolerant web services», ACM SIGACT News).
 | **A** — availability | **Каждый** запрос к **неупавшему** узлу получает не-ошибочный ответ | Не «99,9% аптайма», не «кластер в целом отвечает» |
 | **P** — partition tolerance | Система работает, даже если сеть теряет сколько угодно сообщений между узлами | Не опция, которую «выбирают» |
 
-**Теорема:** если сеть может разделиться (а она может — тема [01_fallacies_basics.md](/distributed/01-fallacies-basics)),
+**Теорема:** если сеть может разделиться (а она может — тема [01. Основы: частичные отказы, задержки и 8 заблуждений о сети](/distributed/01-fallacies-basics)),
 то во время разделения система не может быть одновременно C и A.
 
-```text
+```text:no-line-numbers
  Доказательство на пальцах: две реплики, связь между ними пропала
 
    клиент 1 ──► [ узел N1 ]   ✖ сеть ✖   [ узел N2 ] ◄── клиент 2
@@ -194,7 +199,8 @@ available, partition-tolerant web services», ACM SIGACT News).
  Вариант A: N2 отвечает сразу → вернёт старое x=0 → нарушена C (линеаризуемость)
  Вариант C: N2 ждёт связи с N1 или отвечает ошибкой → нарушена A
  Третьего нет: N2 физически не может узнать о записи, пока сообщение не дойдёт
-```text
+```
+
 ### Почему «CA» — не вариант
 
 «CA» значило бы «не переживаем разделение». Но разделение — не твой выбор, его выбирает сеть.
@@ -236,29 +242,30 @@ available, partition-tolerant web services», ACM SIGACT News).
 Database System Design», IEEE Computer) заметил: разделения редки, а цену согласованности
 платят **каждый день** — задержкой.
 
-```text
+```text:no-line-numbers
  if Partition:  выбор A или C          ← это CAP
  Else:          выбор Latency или C    ← а это случается на каждом запросе
 
  почему в норме тоже выбор: чтобы чтение было согласованным, запись должна дойти до других
  копий ДО ответа клиенту (синхронно) — это минимум один RTT до реплики или кворума.
  Реплика в другой AZ: +1 мс; в другом регионе: +50–150 мс на КАЖДУЮ запись (тема 01, §7)
-```text
+```
+
 Где твои системы (по настройке — одна и та же система может быть в разных клетках):
 
 | Система и настройка | При разделении (PA / PC) | В норме (EL / EC) | Комментарий |
 |---------------------|--------------------------|-------------------|-------------|
-| PostgreSQL, всё через primary, синхронная реплика (`synchronous_commit=on`, `ANY 1 (s1, s2)`) | **PC**: нет подтверждения реплики — запись ждёт | **EC**: каждый `COMMIT` + RTT | [../Left/01_Databases/06_replication.md](/databases/06-replication) §4 |
+| PostgreSQL, всё через primary, синхронная реплика (`synchronous_commit=on`, `ANY 1 (s1, s2)`) | **PC**: нет подтверждения реплики — запись ждёт | **EC**: каждый `COMMIT` + RTT | [Базы данных: 06. Репликация PostgreSQL](/databases/06-replication) §4 |
 | PostgreSQL, асинхронная реплика, чтение с реплики | Запись на primary идёт; при failover теряются неуспевшие транзакции | **EL**: чтение с реплики может вернуть прошлое | Классический read-your-writes-баг (§7) |
 | etcd (Raft), чтение по умолчанию | **PC**: меньшинство не пишет и не читает линеаризуемо | **EC**: запись и чтение через кворум | Чтение `--consistency=s` (serializable) — быстрое, но может быть устаревшим (EL) |
-| Kafka `acks=all` + `min.insync.replicas=2` | **PC**: ISR < 2 → запись отклоняется | **EC**: ждём все реплики из ISR | Минимальный прод-профиль из [../Left/05_Queues/03_kafka_ops.md](/queues/03-kafka-ops) |
+| Kafka `acks=all` + `min.insync.replicas=2` | **PC**: ISR < 2 → запись отклоняется | **EC**: ждём все реплики из ISR | Минимальный прод-профиль из [Очереди: 03. Kafka: эксплуатация](/queues/03-kafka-ops) |
 | Kafka `acks=1` | Подтверждённое может пропасть при смене лидера | **EL**: ответ от лидера до репликации | `acks=0` — даже без лидера |
 | Kafka `unclean.leader.election.enable=true` | **PA**: лидером станет отставшая реплика — потеря | — | Доступность ценой данных |
 | S3 (в одном регионе) | Детали скрыты провайдером | **EC** для клиента: strong read-after-write с декабря 2020 | Межрегиональная репликация (CRR) — асинхронная: EL |
 | DynamoDB | — | **EL** по умолчанию (eventual, вдвое дешевле); `ConsistentRead=true` — EC для этого чтения | GSI — всегда eventual; global tables: MREC (async) или MRSC (**проверь**) |
 | Redis + реплики (+ Sentinel) | **PA**: старый master может принимать записи, которые потеряются при failover | **EL**: репликация асинхронная | `WAIT` уменьшает шанс потери, но **не делает Redis CP** (документация Redis) |
 | Cassandra / Dynamo-стиль, `ONE` | **PA** | **EL** | Абади относил Dynamo, Cassandra, Riak к PA/EL |
-| Cassandra, `QUORUM` на запись и чтение | Меньшинство не наберёт кворум — ошибка | Ближе к EC, но цена — ответ кворума | R + W > N — тема [03_replication_partitioning.md](/distributed/03-replication-partitioning) |
+| Cassandra, `QUORUM` на запись и чтение | Меньшинство не наберёт кворум — ошибка | Ближе к EC, но цена — ответ кворума | R + W > N — тема [03. Репликация и шардирование](/distributed/03-replication-partitioning) |
 
 > 💡 **S3 подробнее.** С декабря 2020 года S3 даёт strong read-after-write для PUT, DELETE и
 > LIST во всех регионах без доплаты. Но: одновременные PUT в один ключ — побеждает запись с
@@ -273,13 +280,14 @@ Database System Design», IEEE Computer) заметил: разделения р
 
 Вопрос задают **на каждую операцию**, а не «на базу»:
 
-```text
+```text:no-line-numbers
  1. Что сломается, если чтение вернёт устаревшее?       (деньги, безопасность, дубли, UX?)
  2. Чьё устаревшее: чужое или СВОЁ только что записанное? (свое → read-your-writes)
  3. Насколько устаревшее терпимо?                         (мс, секунды, минуты — это SLO)
  4. Что лучше при сбое: ошибка или старые данные?         (C или A — CAP для этой операции)
  5. Сколько стоит сильная модель?                         (RTT на запись, деньги, сложность)
-```text
+```
+
 | Операция linkd | Модель | Где читать/писать | Почему |
 |----------------|--------|-------------------|--------|
 | `POST /api/links` (создать код) | Linearizable для уникальности кода | Только primary, `UNIQUE` на `code` | Два одинаковых кода на разные URL — порча |
@@ -296,13 +304,14 @@ Database System Design», IEEE Computer) заметил: разделения р
 
 ## 7. Read-your-writes при чтении с реплик
 
-Проблема из [../Left/01_Databases/06_replication.md](/databases/06-replication) §5, теперь с именем:
+Проблема из [Базы данных: 06. Репликация PostgreSQL](/databases/06-replication) §5, теперь с именем:
 
-```text
+```text:no-line-numbers
  клиент ── POST /api/links ──► primary: INSERT ✓ (LSN 0/3000148)
         ── GET  /api/links ──► реплика: применила только до 0/3000100 → ссылки нет 😱
                                        через 200 мс догонит — но пользователь уже видел «пусто»
-```text
+```
+
 | Способ | Как | Плюсы | Минусы |
 |--------|-----|-------|--------|
 | Читать своё с primary | Запросы «про мои данные» — на primary; остальное — на реплики | Просто, надёжно | Нагрузка на primary |
@@ -327,11 +336,11 @@ mkdir -p ~/labs/distributed/02 && cd ~/labs/distributed/02
 cat > init-primary.sh <<'EOF'
 #!/bin/bash
 set -e
-psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" <&lt;SQL
+psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" <<SQL
 CREATE ROLE repl WITH REPLICATION LOGIN PASSWORD 'replpass';
 CREATE TABLE links (code text PRIMARY KEY, url text NOT NULL, created_at timestamptz DEFAULT now());
 SQL
-echo "host replication repl all scram-sha-256"&gt;> "$PGDATA/pg_hba.conf"
+echo "host replication repl all scram-sha-256" >> "$PGDATA/pg_hba.conf"
 EOF
 chmod +x init-primary.sh
 cat > compose.yaml <<'EOF'
@@ -361,7 +370,8 @@ P="docker compose exec -T primary psql -U postgres -Atq"
 R="docker compose exec -T replica psql -U postgres -Atq"
 $P -c "SELECT client_addr, state, sync_state FROM pg_stat_replication"   # streaming | async
 $R -c "SELECT pg_is_in_recovery()"                                         # t
-```text
+```
+
 ```bash
 # 1. Норма: на одном хосте лаг микроскопический — аномалию почти не поймать
 for i in $(seq 20); do
@@ -391,7 +401,8 @@ $P -c "ALTER SYSTEM SET synchronous_standby_names = '*'" -c "SELECT pg_reload_co
 time $P -c "SET synchronous_commit = remote_apply; INSERT INTO links(code,url) VALUES ('d1','https://example.com/d1')"
 # real ≈ 3 с: COMMIT ждал применения на реплике — это «E → C» из PACELC
 $R -c "SELECT count(*) FROM links WHERE code='d1'"       # 1 сразу
-```text
+```
+
 ```bash
 # 5. ⭐ CAP глазами: синхронная реплика недоступна → запись встаёт (выбор C, а не A)
 docker compose stop replica
@@ -408,7 +419,8 @@ $P -c "SELECT count(*) FROM links WHERE code='e1'"       # 1 — клиент п
 # 6. Уборка
 $P -c "ALTER SYSTEM RESET synchronous_standby_names" -c "SELECT pg_reload_conf()"
 docker compose down
-```text
+```
+
 Что записать себе: сколько ждал цикл LSN в шаге 3 и сколько — `COMMIT` в шаге 4 (одна и та
 же цена, но платит разный участник: читатель или писатель); почему в шаге 5 запись видна
 после отмены; какой из способов ты бы выбрал для `GET /api/links` у linkd и почему.
@@ -492,13 +504,17 @@ docker compose down
 9. S3 — strong read-after-write с декабря 2020; Redis — асинхронный, `WAIT` не делает его CP.
 10. Документация — обещание; Jepsen и свои тесты с отказами проверяют, держит ли система слово.
 
-➡️ Дальше: [03_replication_partitioning.md](/distributed/03-replication-partitioning) · задачи: 02_consistency_cap_tasks.md
+---
 
+## Задачи
+
+> Стенд: `~/labs/distributed/02` из мини-лабы конспекта (`postgres:17` primary + асинхронная
+> реплика). Сокращения: `P="docker compose exec -T primary psql -U postgres -Atq"`,
+> `R="docker compose exec -T replica psql -U postgres -Atq"`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Назови три значения слова «согласованность». Какое из них — свойство приложения,
 а не базы?
@@ -714,164 +730,97 @@ Eventually consistent (по умолчанию) может не отразить
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```python
 B1.  # после создания ссылки сразу показываем её пользователю
-```text
-<details><summary>Ответ</summary>
+     db_rw.execute("INSERT INTO links ...")
+     return render(db_ro.query("SELECT * FROM links WHERE owner = %s", user))   # ro = реплика
 
-⚠️ Чтение своих данных с асинхронной реплики сразу после записи — нарушение
+B2.  # балансировка чтений: round-robin по трём асинхронным репликам с разным лагом
+```
+
+```conf
+B3.  synchronous_standby_names = 'standby1'      # единственная реплика
+     synchronous_commit = on
+
+B4.  synchronous_commit = remote_apply           # реплика в другом регионе, RTT 90 мс
+```
+
+```properties
+B5.  # Kafka, платёжные события
+     acks=1
+     unclean.leader.election.enable=true
+
+B6.  replication.factor=3
+     min.insync.replicas=3
+     acks=all
+```
+
+```
+B7.  «Наш кластер — CA: мы в одном ДЦ, разделений не бывает»
+
+B8.  «Возьмём Redis с WAIT 2 0 — будет строго согласованно, как в etcd»
+
+B9.  etcdctl get /config/feature --consistency=s   # из скрипта, решающего, кто лидер
+
+B10. «Включили SERIALIZABLE на primary — теперь чтения с реплик тоже свежие»
+
+B11. деплой-скрипт: включил версионирование S3-бакета и сразу начал загрузку бэкапов,
+     рассчитывая на версии
+
+B12. кэш редиректов linkd в CDN с TTL 24 часа; ссылки на фишинг удаляем по жалобам
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Чтение своих данных с асинхронной реплики сразу после записи — нарушение
 read-your-writes: пользователь не увидит новую ссылку. Читать с primary, ждать LSN или
 вернуть результат из `INSERT ... RETURNING`.
 
-</details>
-
-```text:no-line-numbers
-     db_rw.execute("INSERT INTO links ...")
-```text
-```text:no-line-numbers
-     return render(db_ro.query("SELECT * FROM links WHERE owner = %s", user))   # ro = реплика
-```text
-```text:no-line-numbers
-B2.  # балансировка чтений: round-robin по трём асинхронным репликам с разным лагом
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Реплики с разным лагом по очереди → нарушение monotonic reads, данные «мигают».
+**B2.** ⚠️ Реплики с разным лагом по очереди → нарушение monotonic reads, данные «мигают».
 Sticky по пользователю или отслеживать максимальный увиденный LSN.
 
-</details>
-
-
-```text:no-line-numbers
-B3.  synchronous_standby_names = 'standby1'      # единственная реплика
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Единственная синхронная реплика: она недоступна — все `COMMIT` встают (выбор C,
+**B3.** ⚠️ Единственная синхронная реплика: она недоступна — все `COMMIT` встают (выбор C,
 но ценой полной недоступности записи). `ANY 1 (s1, s2)` с двумя кандидатами.
 
-</details>
-
-```text:no-line-numbers
-     synchronous_commit = on
-```text
-```text:no-line-numbers
-B4.  synchronous_commit = remote_apply           # реплика в другом регионе, RTT 90 мс
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Каждый `COMMIT` ждёт RTT 90 мс + применение в другом регионе — PACELC-цена на каждую
+**B4.** ⚠️ Каждый `COMMIT` ждёт RTT 90 мс + применение в другом регионе — PACELC-цена на каждую
 запись; при проблемах канала запись встаёт. Синхронно — в регионе, в другой регион — асинхронно.
 
-</details>
-
-
-```text:no-line-numbers
-B5.  # Kafka, платёжные события
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Для платежей — два способа потерять данные: `acks=1` (подтверждено до репликации)
+**B5.** ⚠️ Для платежей — два способа потерять данные: `acks=1` (подтверждено до репликации)
 и unclean election (лидером станет отставшая реплика). `acks=all`, `min.insync.replicas=2`,
 unclean — false.
 
-</details>
-
-```text:no-line-numbers
-     acks=1
-```text
-```text:no-line-numbers
-     unclean.leader.election.enable=true
-```text
-```text:no-line-numbers
-B6.  replication.factor=3
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `min.insync.replicas=3` при RF 3: любой брокер на обслуживании — запись в топик
+**B6.** ⚠️ `min.insync.replicas=3` при RF 3: любой брокер на обслуживании — запись в топик
 отклоняется. Для RF 3 обычно `min.insync.replicas=2`.
 
-</details>
-
-```text:no-line-numbers
-     min.insync.replicas=3
-```text
-```text:no-line-numbers
-     acks=all
-```text
-```text:no-line-numbers
-B7.  «Наш кластер — CA: мы в одном ДЦ, разделений не бывает»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Разделения бывают и внутри ДЦ (коммутатор, файрвол, conntrack, GC-паузы). «CA»
+**B7.** ⚠️ Разделения бывают и внутри ДЦ (коммутатор, файрвол, conntrack, GC-паузы). «CA»
 значит, что поведение при разделении не продумано.
 
-</details>
-
-```text:no-line-numbers
-B8.  «Возьмём Redis с WAIT 2 0 — будет строго согласованно, как в etcd»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `WAIT` не делает Redis CP: репликация асинхронная, подтверждённые записи теряются при
+**B8.** ⚠️ `WAIT` не делает Redis CP: репликация асинхронная, подтверждённые записи теряются при
 failover. Для выбора лидера и блокировок — etcd/Consul/ZooKeeper с fencing.
 
-</details>
-
-```text:no-line-numbers
-B9.  etcdctl get /config/feature --consistency=s   # из скрипта, решающего, кто лидер
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Serializable-чтение может вернуть устаревшее значение с отставшего участника — для
+**B9.** ⚠️ Serializable-чтение может вернуть устаревшее значение с отставшего участника — для
 решений «кто лидер» нужно линеаризуемое чтение (по умолчанию) и лучше lease/election API etcd.
 
-</details>
-
-```text:no-line-numbers
-B10.  «Включили SERIALIZABLE на primary — теперь чтения с реплик тоже свежие»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Изоляция и согласованность реплик — разные оси: `SERIALIZABLE` на primary не
+**B10.** ⚠️ Изоляция и согласованность реплик — разные оси: `SERIALIZABLE` на primary не
 ускоряет применение WAL на реплике.
 
-</details>
-
-```text:no-line-numbers
-B11.  деплой-скрипт: включил версионирование S3-бакета и сразу начал загрузку бэкапов,
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Конфигурация бакета eventually consistent: первые объекты могут записаться без
+**B11.** ⚠️ Конфигурация бакета eventually consistent: первые объекты могут записаться без
 версий. Подождать (AWS советует 15 минут) и проверить `get-bucket-versioning` перед загрузкой.
 
-</details>
-
-```text:no-line-numbers
-     рассчитывая на версии
-```text
-```text:no-line-numbers
-B12.  кэш редиректов linkd в CDN с TTL 24 часа; ссылки на фишинг удаляем по жалобам
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Eventual с огромным окном: удалённая ссылка работает до 24 часов из кэша. Для
+**B12.** ⚠️ Eventual с огромным окном: удалённая ссылка работает до 24 часов из кэша. Для
 удалений — инвалидация CDN (purge), короткий TTL для редиректов или проверка «чёрного списка»
 на краю.
 
 </details>
 
-
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Поймать «прошлое» с реплики
-**1.** Поставь `recovery_min_apply_delay = '2s'` на реплике.
+#### C1. 🔑 Поймать «прошлое» с реплики
+1. Поставь `recovery_min_apply_delay = '2s'` на реплике.
+2. Напиши цикл: 20 раз вставить строку на primary и сразу прочитать с реплики.
+3. Посчитай долю «промахов». Повтори с `500ms`. От чего зависит доля промахов?
 
 <details><summary>Ответ</summary>
 
@@ -881,7 +830,9 @@ B12.  кэш редиректов linkd в CDN с TTL 24 часа; ссылки 
 
 </details>
 
-**2.** Напиши цикл: 20 раз вставить строку на primary и сразу прочитать с реплики.
+#### C2. 🔑 Read-your-writes через LSN
+Оформи скрипт `ryw.sh <code> <url>`: вставка на primary → получение LSN → ожидание на реплике
+с таймаутом 1 с → если не догнала, чтение с primary. Выведи, откуда прочитано и сколько ждали.
 
 <details><summary>Ответ</summary>
 
@@ -898,68 +849,18 @@ while [ "$($R -c "SELECT pg_last_wal_replay_lsn() >= '$lsn'::pg_lsn")" != t ]; d
   sleep 0.05
 done
 echo "replica ok, waited $(echo "$(date +%s.%N) - $start" | bc) s"; $R -c "SELECT url FROM links WHERE code='$code'"
-```text
+```
 В приложении то же делают одним соединением к реплике (или `WAIT FOR LSN` в PG 19), а LSN
 передают через сессию или cookie.
 
 </details>
 
-**3.** Посчитай долю «промахов». Повтори с `500ms`. От чего зависит доля промахов?
-
-<details><summary>Ответ</summary>
-
-`off` и `local` не ждут реплику; `on` ждёт сброса WAL на реплике, `remote_apply` — ещё и
-применения. С 20 мс задержки `on` и `remote_apply` стали дороже примерно на RTT на каждую
-транзакцию (`remote_write` тоже), `off`/`local` — нет. Это PACELC: согласованность = задержка.
-
-</details>
-
-### C2. 🔑 Read-your-writes через LSN
-Оформи скрипт `ryw.sh <code> &lt;url&gt;`: вставка на primary → получение LSN → ожидание на реплике
-с таймаутом 1 с → если не догнала, чтение с primary. Выведи, откуда прочитано и сколько ждали.
-
-### C3. Цена remote_apply
+#### C3. Цена remote_apply
 Замерь `time` для 10 вставок с `synchronous_commit` = `off`, `local`, `on`, `remote_apply`
 (при `synchronous_standby_names='*'` и `recovery_min_apply_delay = 0`). Потом добавь
 `tc netem delay 20ms` между контейнерами (нужен образ с `tc` или sidecar `nicolaka/netshoot`
 в сети контейнера). Какие уровни почувствовали задержку и почему?
 
-### C4. CAP руками
-**1.** `synchronous_standby_names='*'`, останови реплику, сделай вставку.
-
-<details><summary>Ответ</summary>
-
-При `2s` почти все чтения — промахи (docker exec занимает ~0,1–0,2 с, меньше задержки);
-при `500ms` — большинство, но часть попадёт после применения. Доля промахов зависит от
-соотношения лага и времени между записью и чтением.
-
-</details>
-
-**2.** Посмотри `pg_stat_activity` (`wait_event`), отмени ожидание `pg_cancel_backend`.
-
-<details><summary>Ответ</summary>
-
-Пример:
-```bash
-#!/bin/bash
-code=$1 url=$2
-P="docker compose exec -T primary psql -U postgres -Atq"
-R="docker compose exec -T replica psql -U postgres -Atq"
-lsn=$($P -c "INSERT INTO links(code,url) VALUES ('$code','$url')" -c "SELECT pg_current_wal_insert_lsn()")
-start=$(date +%s.%N); deadline=$(echo "$start + 1" | bc)
-while [ "$($R -c "SELECT pg_last_wal_replay_lsn() >= '$lsn'::pg_lsn")" != t ]; do
-  [ "$(echo "$(date +%s.%N) > $deadline" | bc)" = 1 ] && { echo "replica late → primary"; $P -c "SELECT url FROM links WHERE code='$code'"; exit; }
-  sleep 0.05
-done
-echo "replica ok, waited $(echo "$(date +%s.%N) - $start" | bc) s"; $R -c "SELECT url FROM links WHERE code='$code'"
-```text
-В приложении то же делают одним соединением к реплике (или `WAIT FOR LSN` в PG 19), а LSN
-передают через сессию или cookie.
-
-</details>
-
-**3.** Объясни: какой выбор (C или A) сделала система, что получил клиент, что — база?
-
 <details><summary>Ответ</summary>
 
 `off` и `local` не ждут реплику; `on` ждёт сброса WAL на реплике, `remote_apply` — ещё и
@@ -968,25 +869,62 @@ echo "replica ok, waited $(echo "$(date +%s.%N) - $start" | bc) s"; $R -c "SELEC
 
 </details>
 
-### C5. Monotonic reads
+#### C4. CAP руками
+1. `synchronous_standby_names='*'`, останови реплику, сделай вставку.
+2. Посмотри `pg_stat_activity` (`wait_event`), отмени ожидание `pg_cancel_backend`.
+3. Объясни: какой выбор (C или A) сделала система, что получил клиент, что — база?
+
+<details><summary>Ответ</summary>
+
+Система выбрала C: без подтверждения реплики `COMMIT` не завершается, запись недоступна.
+После `pg_cancel_backend` клиент получил WARNING/отмену, а транзакция уже закоммичена
+локально и видна — исход для клиента «неизвестен», хотя данные есть. Отсюда: повтор должен быть
+идемпотентным, а «отмена» не значит «не выполнено».
+
+</details>
+
+#### C5. Monotonic reads
 Подними вторую реплику с `recovery_min_apply_delay = '5s'`, первую оставь без задержки.
 Сделай 10 чтений «через round-robin» (чередуя реплики) сразу после записи. Покажи, как значение
 «появляется и исчезает». Как исправить без чтения с primary?
 
-### C6. etcd: linearizable против serializable
+<details><summary>Ответ</summary>
+
+Чередование реплик: значение видно на быстрой, не видно на медленной — «появляется и
+исчезает». Без primary: закрепить клиента за одной репликой (hash по id) или хранить у клиента
+максимальный увиденный LSN и читать только с реплики, которая его догнала.
+
+</details>
+
+#### C6. etcd: linearizable против serializable
 Подними один etcd (`quay.io/coreos/etcd`, **проверь** тег) или возьми кластер из
-[04_consensus_quorum.md](/distributed/04-consensus-quorum). Сравни `etcdctl get k` и
+[04. Консенсус и кворум: Raft, etcd, Patroni, Ceph, corosync](/distributed/04-consensus-quorum). Сравни `etcdctl get k` и
 `etcdctl get k --consistency=s` по времени (`time`, 100 раз в цикле). Когда serializable-чтение
 вернёт устаревшее значение?
 
-### C7. Карта согласованности своего проекта
+<details><summary>Ответ</summary>
+
+Serializable быстрее: отвечает локальный участник без кворума (без ReadIndex через
+лидера). Устаревшее значение вернёт участник, который отстал или отрезан от кворума
+(в меньшинстве при разделении) — он продолжает отвечать тем, что знает.
+
+</details>
+
+#### C7. Карта согласованности своего проекта
 Для linkd-platform (или своего сервиса) составь таблицу: операция → нужная модель → где
 читать/писать → что при разделении (C/A) → как проверяем. Не меньше шести операций.
+
+<details><summary>Ответ</summary>
+
+Пример строки: «`POST /api/links` → linearizable (уникальность кода) → primary +
+`UNIQUE` → при разделении C (ошибка 503) → тест: два параллельных POST с одним кодом».
+Остальные — редирект, список своих ссылок, счётчик кликов, удаление, экспорт.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После вынесения чтений на реплики пользователи жалуются: «создал заказ — пишет, что
 заказов нет; через секунду появился».
@@ -1075,14 +1013,13 @@ PACELC: синхронная реплика в другом регионе до�
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое CAP-теорема? Правда ли, что надо «выбрать два из трёх»?
 
 <details><summary>Ответ</summary>
 
 При разделении сети распределённая система не может быть одновременно линеаризуемой и
-   доступной (ответ каждого живого узла); P не выбирают, поэтому выбор — C или A на время
-   разделения, и его делают по операциям. «Два из трёх» — упрощение, от которого отказался сам Брюер.
+доступной (ответ каждого живого узла); P не выбирают, поэтому выбор — C или A на время
+разделения, и его делают по операциям. «Два из трёх» — упрощение, от которого отказался сам Брюер.
 
 </details>
 
@@ -1091,7 +1028,7 @@ PACELC: синхронная реплика в другом регионе до�
 <details><summary>Ответ</summary>
 
 Linearizable — как будто одна копия: завершённая запись видна всем последующим чтениям.
-   Eventual — копии сойдутся, когда записи прекратятся, до этого можно прочитать старое.
+Eventual — копии сойдутся, когда записи прекратятся, до этого можно прочитать старое.
 
 </details>
 
@@ -1100,8 +1037,8 @@ Linearizable — как будто одна копия: завершённая �
 <details><summary>Ответ</summary>
 
 Расширение CAP: без разделения всё равно выбираешь между задержкой и согласованностью,
-   потому что синхронная координация стоит RTT на каждой операции. CAP говорит о редком,
-   PACELC — о каждодневном.
+потому что синхронная координация стоит RTT на каждой операции. CAP говорит о редком,
+PACELC — о каждодневном.
 
 </details>
 
@@ -1110,7 +1047,7 @@ Linearizable — как будто одна копия: завершённая �
 <details><summary>Ответ</summary>
 
 Скорее всего, чтение с асинхронной реплики (или кэша) после записи — нарушение
-   read-your-writes. Читать своё с primary, ждать LSN, `remote_apply` или sticky + LSN.
+read-your-writes. Читать своё с primary, ждать LSN, `remote_apply` или sticky + LSN.
 
 </details>
 
@@ -1119,7 +1056,7 @@ Linearizable — как будто одна копия: завершённая �
 <details><summary>Ответ</summary>
 
 Изоляция — что видят параллельные транзакции (даже на одном сервере); согласованность — что
-   видят чтения при нескольких копиях. Strict serializable объединяет обе.
+видят чтения при нескольких копиях. Strict serializable объединяет обе.
 
 </details>
 
@@ -1128,7 +1065,7 @@ Linearizable — как будто одна копия: завершённая �
 <details><summary>Ответ</summary>
 
 Зависит от конфигурации: всё через primary с синхронной репликой — CP (PC/EC); с чтением
-   с асинхронных реплик — EL; с асинхронным failover — возможна потеря подтверждённого.
+с асинхронных реплик — EL; с асинхронным failover — возможна потеря подтверждённого.
 
 </details>
 
@@ -1137,7 +1074,7 @@ Linearizable — как будто одна копия: завершённая �
 <details><summary>Ответ</summary>
 
 Strong read-after-write для объектов (PUT, DELETE, LIST) с декабря 2020; LWW для
-   одновременных записей; конфигурация бакета и межрегиональная репликация — eventual.
+одновременных записей; конфигурация бакета и межрегиональная репликация — eventual.
 
 </details>
 
@@ -1146,8 +1083,8 @@ Strong read-after-write для объектов (PUT, DELETE, LIST) с дека�
 <details><summary>Ответ</summary>
 
 `acks` (0/1/all), `min.insync.replicas`, `replication.factor`, `unclean.leader.election`:
-   `acks=all` + `min.insync=2` + RF 3 — надёжно, с задержкой на репликацию; `acks=1` — быстро,
-   с риском потерь.
+`acks=all` + `min.insync=2` + RF 3 — надёжно, с задержкой на репликацию; `acks=1` — быстро,
+с риском потерь.
 
 </details>
 
@@ -1156,7 +1093,7 @@ Strong read-after-write для объектов (PUT, DELETE, LIST) с дека�
 <details><summary>Ответ</summary>
 
 Когда устаревание на секунды терпимо и дешевле ошибок: редиректы, каталоги, ленты, счётчики,
-   DNS, CDN — и есть способ разрешать конфликты.
+DNS, CDN — и есть способ разрешать конфликты.
 
 </details>
 
@@ -1165,10 +1102,8 @@ Strong read-after-write для объектов (PUT, DELETE, LIST) с дека�
 <details><summary>Ответ</summary>
 
 По операциям: создание кода — linearizable на primary с `UNIQUE`; показ только что созданного —
-    read-your-writes; редиректы — eventual с реплик и кэша; удаление — быстрая инвалидация;
-    клики — асинхронно.
-
----
+read-your-writes; редиректы — eventual с реплик и кэша; удаление — быстрая инвалидация;
+клики — асинхронно.
 
 </details>
 

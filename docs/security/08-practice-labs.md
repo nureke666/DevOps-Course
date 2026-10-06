@@ -1,12 +1,12 @@
 ---
 title: "08. Практика: 5 лаб по безопасности"
-description: "Блок → Безопасность → практика."
+description: "5 лаб: харденинг + Lynis, security-стадия CI, kind (kube-bench, PSA, Kyverno, Falco), аудит edge, game day «утёк токен»"
 ---
 
 # 08. Практика: 5 лаб по безопасности
 
 > Блок → Безопасность → практика.
-> Лабы делаются на стенде из [00_INDEX.md](/security/) и остаются в git. После них есть что
+> Лабы делаются на стенде из [Безопасность](/security/) и остаются в git. После них есть что
 > показать на собесе: роль харденинга с отчётом Lynis до/после, security-стадия CI со SBOM,
 > политики кластера, отчёт об аудите периметра и таймлайн учебного инцидента.
 >
@@ -39,7 +39,7 @@ description: "Блок → Безопасность → практика."
 # ~/labs/security/ansible/inventory.ini
 [lab]
 sec01 ansible_host=192.168.56.30 ansible_user=vagrant ansible_ssh_private_key_file=~/labs/security/vagrant/.vagrant/machines/sec01/libvirt/private_key
-```text
+```
 ```yaml
 # requirements.yml
 collections:
@@ -50,7 +50,7 @@ collections:
 - hosts: lab
   become: true
   roles: [hardening]
-```text
+```
 ```yaml
 # roles/hardening/defaults/main.yml
 hardening_ssh_group: ssh-users
@@ -87,16 +87,16 @@ hardening_sysctl:
 
 # roles/hardening/tasks/packages.yml
 - name: Security packages present
-  ansible.builtin.apt: { name: "&#123;&#123; hardening_packages &#125;&#125;", state: present, update_cache: true, cache_valid_time: 3600 }
+  ansible.builtin.apt: { name: "{{ hardening_packages }}", state: present, update_cache: true, cache_valid_time: 3600 }
 - name: Legacy clients absent
-  ansible.builtin.apt: { name: "&#123;&#123; hardening_packages_absent &#125;&#125;", state: absent, purge: true }
+  ansible.builtin.apt: { name: "{{ hardening_packages_absent }}", state: absent, purge: true }
 
 # roles/hardening/tasks/ssh.yml
 - name: SSH group exists
-  ansible.builtin.group: { name: "&#123;&#123; hardening_ssh_group &#125;&#125;", state: present }
+  ansible.builtin.group: { name: "{{ hardening_ssh_group }}", state: present }
 - name: Admins are in SSH group
-  ansible.builtin.user: { name: "&#123;&#123; item &#125;&#125;", groups: "&#123;&#123; hardening_ssh_group &#125;&#125;", append: true }
-  loop: "&#123;&#123; hardening_ssh_members &#125;&#125;"
+  ansible.builtin.user: { name: "{{ item }}", groups: "{{ hardening_ssh_group }}", append: true }
+  loop: "{{ hardening_ssh_members }}"
 - name: sshd drop-in (читается первым)
   ansible.builtin.template:
     src: 00-hardening.conf.j2
@@ -118,11 +118,11 @@ hardening_sysctl:
 # roles/hardening/tasks/sysctl.yml
 - name: Kernel hardening
   ansible.posix.sysctl:
-    name: "&#123;&#123; item.key &#125;&#125;"
-    value: "&#123;&#123; item.value &#125;&#125;"
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
     sysctl_file: /etc/sysctl.d/60-hardening.conf
     reload: true
-  loop: "&#123;&#123; hardening_sysctl | dict2items &#125;&#125;"
+  loop: "{{ hardening_sysctl | dict2items }}"
 
 # roles/hardening/tasks/auditd.yml
 - name: Audit rules
@@ -143,8 +143,8 @@ hardening_sysctl:
 
 # roles/hardening/tasks/firewall.yml
 - name: SSH only from admin networks
-  community.general.ufw: { rule: allow, port: "22", proto: tcp, from_ip: "&#123;&#123; item &#125;&#125;" }
-  loop: "&#123;&#123; hardening_admin_nets &#125;&#125;"
+  community.general.ufw: { rule: allow, port: "22", proto: tcp, from_ip: "{{ item }}" }
+  loop: "{{ hardening_admin_nets }}"
 - name: Default deny incoming and enable        # ⭐ строго ПОСЛЕ allow
   community.general.ufw: { state: enabled, policy: deny, direction: incoming }
 
@@ -154,10 +154,10 @@ hardening_sysctl:
 - name: load audit rules
   ansible.builtin.command: augenrules --load
   changed_when: true
-```text
-Шаблоны: `00-hardening.conf.j2` — drop-in из раздела 2 темы 02 (с `AllowGroups &#123;&#123; hardening_ssh_group &#125;&#125;`),
+```
+Шаблоны: `00-hardening.conf.j2` — drop-in из раздела 2 темы 02 (с <code v-pre>AllowGroups {{ hardening\_ssh\_group }}</code>),
 `50-hardening.rules.j2` — правила из раздела 7 (без `-e 2`), `52unattended-upgrades-local.j2` —
-из раздела 4 (`Automatic-Reboot "&#123;&#123; hardening_auto_reboot | lower &#125;&#125;"`).
+из раздела 4 (<code v-pre>Automatic-Reboot "{{ hardening\_auto\_reboot | lower }}"</code>).
 
 ```bash
 cd ~/labs/security/ansible && mkdir -p reports
@@ -174,7 +174,8 @@ ansible-playbook -i inventory.ini harden.yml | tee reports/second-run.txt     # 
 # ПОСЛЕ
 ansible sec01 -i inventory.ini -b -m shell -a 'lynis audit system --quick --no-colors >/dev/null 2>&1;
   grep -E "^(hardening_index|warning\[\])" /var/log/lynis-report.dat' > reports/lynis-after.txt
-```text
+```
+
 ### Требования
 - [ ] Снапшот `before_lab` сделан, вторая SSH-сессия была открыта при первом прогоне
 - [ ] Роль покрывает: пакеты, SSH (drop-in `00-…`, `AllowGroups`), sudo, sysctl, auditd, автообновления, ufw
@@ -195,7 +196,8 @@ ssh sec01 'sudo sshd -T | grep -Ei "^(permitrootlogin|passwordauthentication|all
 ssh sec01 'sudo auditctl -l | grep -c "key="; sudo ufw status | head -5; sysctl kernel.kptr_restrict'
 diff <(grep hardening_index reports/lynis-before.txt) <(grep hardening_index reports/lynis-after.txt)
 ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no vagrant@192.168.56.30 true   # → Permission denied
-```text
+```
+
 ### Вопросы себе
 - Что сломается, если кто-то вручную поправит `sshd_config` на сервере, и как роль это обнаружит?
 - Почему ufw-правило для SSH идёт до `ufw enable`, а не после?
@@ -221,13 +223,13 @@ app = Flask(__name__)
 @app.get("/healthz")
 def healthz():
     return jsonify(status="ok")
-```text
-```text
+```
+```
 # requirements.txt — ⚠️ намеренно старые версии, чтобы сканеру было что найти
 flask==2.2.2
 werkzeug==2.2.2
 requests==2.25.1
-```text
+```
 ```dockerfile
 # Dockerfile
 FROM python:3.12-slim
@@ -239,13 +241,13 @@ RUN useradd -u 10001 -r -s /usr/sbin/nologin app
 USER 10001
 EXPOSE 8080
 CMD ["python", "-m", "flask", "--app", "app", "run", "--host", "0.0.0.0", "--port", "8080"]
-```text
+```
 ```bash
 cd ~/labs/security/ci && git init -q
 # фейковый токен в истории — проверим, что gitleaks смотрит историю, а не только текущие файлы
 echo "GITLAB_TOKEN=glpat-$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)" > deploy.env
 git add . && git commit -qm "init with leaked token" && git rm -q deploy.env && git commit -qm "remove token"
-```text
+```
 ```yaml
 # .gitlab-ci.yml
 stages: [lint, build, scan]
@@ -302,7 +304,7 @@ scan:image:
     when: always
     paths: [image-report.json, sbom.cdx.json]
     expire_in: 1 year                      # SBOM живёт столько же, сколько образ в проде
-```text
+```
 ```bash
 # ci/local-scan.sh — то же самое локально, теми же образами
 set -euo pipefail
@@ -312,7 +314,8 @@ $TRIVY fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 
 docker build --pull -t lab/app:dev .
 $TRIVY image --format cyclonedx -o sbom.cdx.json lab/app:dev
 $TRIVY image --scanners vuln --pkg-types os --severity CRITICAL --ignore-unfixed --exit-code 1 lab/app:dev || echo "os gate: FAIL"
-```text
+```
+
 ### Требования
 - [ ] gitleaks находит токен **в истории** (в текущих файлах его нет); `GIT_DEPTH: "0"` объяснён
 - [ ] Trivy fs находит HIGH в старых зависимостях, gate по зависимостям красный
@@ -332,7 +335,8 @@ docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.30.1 git /repo; echo "ex
 bash local-scan.sh 2>&1 | grep -E 'FAIL|Total' ; echo "---"
 jq -r '.components[] | select(.name|test("^(flask|openssl|werkzeug)$")) | "\(.name) \(.version)"' sbom.cdx.json
 yq '.["scan:image"].image.name' .gitlab-ci.yml 2>/dev/null || grep -n 'sha256:' .gitlab-ci.yml
-```text
+```
+
 ### Вопросы себе
 - Почему токен, удалённый следующим коммитом, всё равно считается утёкшим?
 - Почему gate по ОС только на CRITICAL с фиксом, а по зависимостям — на HIGH?
@@ -375,8 +379,8 @@ kubectl apply -f policies/          # allowed-registries (Audit), default-seccom
 helm repo add falcosecurity https://falcosecurity.github.io/charts && helm repo update
 helm install falco falcosecurity/falco -n falco --create-namespace \
   --set driver.kind=modern_ebpf --set tty=true -f falco-values.yaml
-```text
-Манифесты политик — из разделов 5–7 темы [06_k8s_security.md](/security/06-k8s-security); `falco-values.yaml` —
+```
+Манифесты политик — из разделов 5–7 темы [06. Безопасность Kubernetes](/security/06-k8s-security); `falco-values.yaml` —
 `customRules` с правилом «Package manager in container» из раздела 9.
 
 ### Требования
@@ -395,7 +399,7 @@ helm install falco falcosecurity/falco -n falco --create-namespace \
 ```bash
 grep -A4 '== Summary total ==' reports/kube-bench-node.txt
 kubectl get ns app --show-labels | grep -o 'pod-security[^,]*'
-kubectl -n app run bad --image=busybox --overrides='{"spec":{"containers":[{"name":"b","image":"busybox","securityContext":{"privileged":true&#125;&#125;]&#125;&#125;' 2>&1 | head -2
+kubectl -n app run bad --image=busybox --overrides='{"spec":{"containers":[{"name":"b","image":"busybox","securityContext":{"privileged":true}}]}}' 2>&1 | head -2
 kubectl get validatingpolicies,mutatingpolicies,imagevalidatingpolicies 2>/dev/null
 kubectl get policyreport -A
 kubectl run unsigned --image=ghcr.io/kyverno/test-verify-image:unsigned 2>&1 | head -2
@@ -403,7 +407,8 @@ kubectl -n app exec -it deploy/web -- sh -c 'id' ; \
   kubectl logs -n falco -l app.kubernetes.io/name=falco -c falco --since=5m | grep -iE 'shell|package'
 docker exec sec-control-plane cat /var/log/kubernetes/kube-apiserver-audit.log \
   | jq -c 'select(.objectRef.subresource=="exec") | {user: .user.username, pod: .objectRef.name}' | tail -3
-```text
+```
+
 ### Вопросы себе
 - Почему Deployment применился, а подов не было, и где это видно?
 - Что будет с кластером, если под Kyverno выселят при `failurePolicy: Fail`?
@@ -439,7 +444,7 @@ docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload
 docker compose --profile waf up -d waf
 curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:8081/?id=1'%20OR%20'1'='1"
 # ПОСЛЕ — те же команды в reports/after/
-```text
+```
 ```markdown
 <!-- reports/summary.md -->
 | # | Находка | Риск | Исправление | Проверка после |
@@ -447,7 +452,8 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:8081/?id=1'%20OR%20'1
 | 1 | Версия nginx в заголовке Server | Low | server_tokens off | curl -I |
 | 2 | Нет HSTS/CSP/nosniff | Medium | сниппет заголовков с always | curl -I, testssl -h |
 | … |
-```text
+```
+
 ### Требования
 - [ ] Отчёты «до»: nmap (порты, версии), шифры, testssl JSON, заголовки, распределение кодов под нагрузкой
 - [ ] Все порты стенда слушают только 127.0.0.1; с `sec01` они не видны (проверено nmap с `sec01`)
@@ -466,7 +472,8 @@ curl -sI http://app.lab.local:8080/ | head -1                                   
 for i in $(seq 60); do curl -sk -o /dev/null -w '%{http_code}\n' https://app.lab.local:8443/; done | sort | uniq -c   # 200 и 429, без 503
 jq -r '.[] | select(.id|test("^TLS1$|^TLS1_1$|^SSLv")) | "\(.id) \(.finding)"' reports/after/testssl.json          # not offered
 curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:8081/?id=1'%20OR%20'1'='1"                                 # 403
-```text
+```
+
 ### Вопросы себе
 - Что увидел бы внешний сканер, если бы порты были опубликованы на `0.0.0.0`?
 - Почему HSTS на стенде — `max-age=300`, а в проде — год, и что будет, если перепутать?
@@ -493,7 +500,7 @@ services:
       VAULT_DEV_ROOT_TOKEN_ID: root
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
     ports: ["127.0.0.1:8200:8200"]
-```text
+```
 ```bash
 cd ~/labs/security/ir && docker compose up -d
 export VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root
@@ -509,7 +516,7 @@ jq -r .auth.accessor /tmp/leak.json > /tmp/leak.accessor      # ведущий �
 mkdir -p demo-repo && cd demo-repo && git init -q
 echo "VAULT_TOKEN=$(jq -r .auth.client_token /tmp/leak.json)" > deploy.env
 git add deploy.env && git commit -qm "add deploy config"
-```text
+```
 - [ ] Роли: **ведущий** (утечка, «атакующий», следит за безопасностью учений), **IC**, **Ops**,
       **Comms**, **Scribe**. Соло — ведущий запускает «атаку» по таймеру со случайной задержкой
 - [ ] Playbook из темы 07 (C1) и шаблон таймлайна (C8) под рукой
@@ -517,24 +524,24 @@ git add deploy.env && git commit -qm "add deploy config"
 - [ ] Условия остановки: 60–90 минут, стенд не нужен для другого
 
 ### Проведение
-```text
+```
 T+0    ведущий «атакует» с другого контейнера, фиксирует время:
        docker run --rm --network ir_default -e VAULT_ADDR=http://vault:8200 \
-         -e VAULT_TOKEN=&lt;токен из deploy.env&gt; hashicorp/vault:2.1 vault kv get secret/prod/db
+         -e VAULT_TOKEN=<токен из deploy.env> hashicorp/vault:2.1 vault kv get secret/prod/db
 T+?    detect:   gitleaks по demo-repo (правило vault-service-token) или «звонок исследователя»
        triage:   SEV, IC, закрытый канал/файл инцидента, первый апдейт
-       contain:  ⭐ СНАЧАЛА отозвать токен: vault token revoke -accessor &lt;accessor&gt;
+       contain:  ⭐ СНАЧАЛА отозвать токен: vault token revoke -accessor <accessor>
        scope:    что токен читал — Vault audit log по accessor, с каких адресов
        rotate:   всё, что он мог прочитать: secret/prod/db и secret/prod/s3 (новые значения)
        clean:    git filter-repo / новый репозиторий без истории; pre-commit gitleaks
 T+end  ведущий раскрывает сценарий; 15 минут горячего разбора: гипотеза против факта
-```text
+```
 ```bash
 # scope: что делал утёкший токен
 docker compose exec vault cat /vault/logs/audit.log \
   | jq -c --arg a "$(cat /tmp/leak.accessor)" 'select(.auth.accessor==$a)
       | {time, type, path: .request.path, op: .request.operation, ip: .request.remote_address}'
-```text
+```
 > 💡 Если gitleaks не нашёл токен — посмотри, под какой regex попадает `vault-service-token`
 > (`gitleaks` config), и добавь своё правило в `.gitleaks.toml`. Это тоже результат учений.
 
@@ -546,22 +553,23 @@ docker compose exec vault cat /vault/logs/audit.log \
 - [ ] История репозитория очищена; pre-commit с gitleaks блокирует повторную утечку
 - [ ] Посчитаны MTTD и время от обнаружения до отзыва (MTTC); сравнены с гипотезой
 - [ ] Отмечено, были ли затронуты «персональные данные» и нужно ли было бы уведомление (закон РК — 1 рабочий день)
-- [ ] Постмортем по шаблону [../SRE/05_postmortems.md](/sre/05-postmortems) с 3–5 action items
+- [ ] Постмортем по шаблону [SRE: 05. Постмортемы](/sre/05-postmortems) с 3–5 action items
       (хотя бы один — «убрать класс проблемы»: короткий TTL, AppRole/OIDC вместо статичного токена)
 
 ### Критерии приёмки
-```text
+```text:no-line-numbers
 ir/gameday/2026-10-xx/
 ├── plan.md            # роли, гипотеза, условия остановки
 ├── timeline.md        # UTC, события, решения, авторы
 ├── evidence/          # выдержки audit log + SHA256SUMS
 ├── updates.md         # статус-апдейты в закрытый канал
 └── postmortem.md      # влияние, факторы, хорошо/плохо/повезло, action items
-```text
+```
 ```bash
 VAULT_TOKEN=$(jq -r .auth.client_token /tmp/leak.json) vault token lookup 2>&1 | grep -i 'bad token\|permission denied'
 docker run --rm -v "$PWD/demo-repo":/repo zricethezav/gitleaks:v8.30.1 git /repo; echo "exit=$?"   # 0
-```text
+```
+
 ### Вопросы себе
 - Сколько времени токен был действующим после попадания в git и почему это главная метрика?
 - Что изменилось бы, будь токен выдан с TTL 1 час или через AppRole/OIDC?
@@ -572,7 +580,7 @@ docker run --rm -v "$PWD/demo-repo":/repo zricethezav/gitleaks:v8.30.1 git /repo
 
 ## 🏁 Что должно остаться после блока
 
-```text
+```text:no-line-numbers
 ~/labs/security/                   # репозиторий стенда
 ├── vagrant/Vagrantfile
 ├── ansible/roles/hardening/ + reports/lynis-{before,after}.txt
@@ -581,8 +589,7 @@ docker run --rm -v "$PWD/demo-repo":/repo zricethezav/gitleaks:v8.30.1 git /repo
 ├── k8s/kind-config.yaml, audit-policy.yaml, policies/, falco-values.yaml, reports/kube-bench-*.txt
 ├── ir/playbooks/, gameday/…/timeline.md, postmortem.md
 └── docs/threat-model.md          # тема 01
-```text
+```
+
 Это превращает «знаю про безопасность» в «вот threat model, вот роль харденинга с отчётом,
 вот CI, который ловит токен в истории, вот политики кластера и таймлайн учебного инцидента».
-
-➡️ Дальше: [09_interview.md](/softskills/09-interview)

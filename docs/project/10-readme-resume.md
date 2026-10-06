@@ -1,6 +1,6 @@
 ---
 title: "10. Оформление: README, ADR, резюме, рассказ на собесе"
-description: "Цель этапа: упаковать linkd-platform так, чтобы рекрутеру хватило 30 секунд,"
+description: "README, ADR, строки резюме, рассказ"
 ---
 
 # 10. Оформление: README, ADR, резюме, рассказ на собесе
@@ -41,7 +41,7 @@ description: "Цель этапа: упаковать linkd-platform так, ч�
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
  резюме: 4–6 строк + ссылка ──► linkd-platform (витрина)
                                  ├── README.md       что/зачем · схема · стек · быстрый старт
                                  │                   · SLO · RPO/RTO · ограничения
@@ -54,7 +54,8 @@ description: "Цель этапа: упаковать linkd-platform так, ч�
                                linkd-gitops: короткий README + ссылка на витрину
 
  собес: рассказ 3 мин ──► уточняющие вопросы ──► демо по 11_demo_and_next.md
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -69,10 +70,10 @@ description: "Цель этапа: упаковать linkd-platform так, ч�
 > секреты в Vault, проверенное восстановление из бэкапа. Сервис — учебный;
 > платформа вокруг него и утилиты в tools/ — моя работа.
 
-![pipeline](https://gitlab.com/&lt;you&gt;/linkd-platform/badges/main/pipeline.svg)
+![pipeline](https://gitlab.com/<you>/linkd-platform/badges/main/pipeline.svg)
 
 ## Архитектура
-&lt;схема Mermaid&gt; + 3–5 предложений о пути «коммит → прод».
+<схема Mermaid> + 3–5 предложений о пути «коммит → прод».
 
 ## Стек
 | Слой | Инструменты |
@@ -96,10 +97,10 @@ description: "Цель этапа: упаковать linkd-platform так, ч�
 Кластер с нуля: make cluster, затем bootstrap (3–5 команд)
 
 ## CI/CD · Инфраструктура · Kubernetes · Наблюдаемость · Безопасность · Бэкапы и DR
-&lt;по короткому разделу из этапов 02–09, длинное — ссылкой в docs/&gt;
+<по короткому разделу из этапов 02–09, длинное — ссылкой в docs/>
 
 ## Архитектурные решения
-- `ADR-001: Два репозитория и pull-модель`
+- [ADR-001: Два репозитория и pull-модель](docs/adr/001-two-repos.md)
 - …
 
 ## Ограничения и что дальше
@@ -114,7 +115,7 @@ description: "Цель этапа: упаковать linkd-platform так, ч�
 
 ### 2. Схема
 
-ASCII из [00_INDEX.md](/project/) хороша для Obsidian; в GitLab/GitHub удобнее
+ASCII из [Пет-проект](/project/) хороша для Obsidian; в GitLab/GitHub удобнее
 Mermaid — он рендерится прямо в README:
 
 ```mermaid
@@ -138,7 +139,8 @@ flowchart LR
   reg -->|pull image| svc
   am --> tg([Telegram])
   pg -->|backup| minio[(MinIO вне кластера)]
-```text
+```
+
 ### 3. Скриншоты — `docs/img/`
 
 | Скриншот | Что он доказывает |
@@ -180,7 +182,8 @@ flowchart LR
 + git log linkd-gitops = история выкаток, откат = git revert.
 − Токен на запись в gitops-репо в CI, возможны гонки коммитов (resource_group + retry).
 − Два репозитория нужно держать согласованными (версия чарта, имена).
-```text
+```
+
 Темы ADR, которые уже есть в портфолио:
 
 | № | Решение | Главный аргумент |
@@ -326,17 +329,17 @@ flowchart LR
 
 ## 📚 Теория в волте
 
-- Markdown для README: [../../IT/Git/10_markdown.md](/git/10-markdown)
-- Merge request, ревью, Conventional Commits: [../../IT/Git/11_collaboration.md](/git/11-collaboration)
-- Теги и релизы: [../../IT/Git/08_tags_versioning.md](/git/08-tags-versioning)
-- Постмортемы как материал для историй: [../SRE/05_postmortems.md](/sre/05-postmortems)
-- Behavioral-часть собеса (STAR, банк историй, «расскажи о себе»): [../SoftSkills/09_interview.md](/softskills/09-interview)
+- Markdown для README: [Git: 10. Markdown](/git/10-markdown)
+- Merge request, ревью, Conventional Commits: [Git: 11. Командная работа](/git/11-collaboration)
+- Теги и релизы: [Git: 08. Теги и версионирование](/git/08-tags-versioning)
+- Постмортемы как материал для историй: [SRE: 05. Постмортемы](/sre/05-postmortems)
+- Behavioral-часть собеса (STAR, банк историй, «расскажи о себе»): [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview)
 - Вопросы с собеседований по блокам — прогони ответы на своём портфолио:
   [Docker](/docker/13-interview) · [CI/CD](/cicd/15-interview) ·
-  [Kubernetes](/kubernetes/23-interview) · [Ansible](/cicd/15-interview) ·
-  [Terraform](/mlops/08-interview) · [ArgoCD](/english/07-interview) ·
-  [Мониторинг](/softskills/09-interview) · [Логи](/english/07-interview) ·
-  [PostgreSQL](/databases/11-interview) · [Vault](/english/07-interview) ·
-  [SRE](/mlops/08-interview) · [Python](/python/10-interview) · [Сети](/network/16-interview)
+  [Kubernetes](/kubernetes/23-interview) · [Ansible](/ansible/15-interview) ·
+  [Terraform](/terraform/08-interview) · [ArgoCD](/argocd/07-interview) ·
+  [Мониторинг](/monitoring/09-interview) · [Логи](/logging/07-interview) ·
+  [PostgreSQL](/databases/11-interview) · [Vault](/vault/07-interview) ·
+  [SRE](/sre/08-interview) · [Python](/python/10-interview) · [Сети](/network/16-interview)
 
-➡️ Следующий этап: [11_demo_and_next.md](/project/11-demo-and-next)
+➡️ Следующий этап: [11. Финальный прогон, демо и развитие](/project/11-demo-and-next)

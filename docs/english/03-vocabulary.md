@@ -1,14 +1,14 @@
 ---
 title: "03. Лексика: глоссарий DevOps, фразовые глаголы, ложные друзья, произношение"
-description: "Блок → Английский для IT → тема 03. Опирается на 01levelandsystem.md"
+description: "Глоссарий по областям, фразовые глаголы, setup / set up, ложные друзья, произношение nginx, etcd, cache"
 ---
 
 # 03. Лексика: глоссарий DevOps, фразовые глаголы, ложные друзья, произношение
 
-> Блок → Английский для IT → тема 03. Опирается на [01_level_and_system.md](/english/01-level-and-system)
-> (как вести свои слова в Anki) и [02_reading_docs.md](/english/02-reading-docs) (фразы
+> Блок → Английский для IT → тема 03. Опирается на [01. Уровень и система: как учить английский для IT](/english/01-level-and-system)
+> (как вести свои слова в Anki) и [02. Чтение документации, ошибок и issues](/english/02-reading-docs) (фразы
 > документации). Здесь — слова, на которых держатся созвоны, чаты и инциденты.
-> Термины инцидентов по существу — в [../../DevOps/SRE/04_incident_management.md](/sre/04-incident-management).
+> Термины инцидентов по существу — в [SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management).
 >
 > **После темы ты умеешь:** понимать и использовать рабочую лексику по областям (инфра,
 > CI/CD, инциденты, встречи); уверенно использовать фразовые глаголы IT (*spin up*,
@@ -20,7 +20,7 @@ description: "Блок → Английский для IT → тема 03. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  ПАССИВНЫЙ СЛОВАРЬ  ──────────────────────►  АКТИВНЫЙ СЛОВАРЬ
  узнаёшь при чтении                           используешь сам в речи и письме
         │                                            ▲
@@ -34,7 +34,8 @@ description: "Блок → Английский для IT → тема 03. Оп�
  │ incidents,    │ roll back,  │ control        │ + ударения:  │
  │ meetings      │ look into   │                │ deVELop      │
  └───────────────┴─────────────┴────────────────┴──────────────┘
-```text
+```
+
 ---
 
 ## 1. Как учить лексику
@@ -46,7 +47,7 @@ description: "Блок → Английский для IT → тема 03. Оп�
   a change*, *mitigate the impact*, *take a look*. Выучив блок, не надо гадать, какой
   глагол подходит.
 - **Слово — из своего контекста.** Таблицы ниже — карта, а не список для зубрёжки:
-  в Anki берёшь только то, что встретил в работе ([01_level_and_system.md](/english/01-level-and-system), раздел 7).
+  в Anki берёшь только то, что встретил в работе ([01. Уровень и система: как учить английский для IT](/english/01-level-and-system), раздел 7).
 - **Сразу использовать.** Новое слово — в сегодняшнем сообщении, коммите или записи
   стендапа. Использованное один раз запоминается лучше десяти повторений карточки.
 
@@ -233,14 +234,15 @@ description: "Блок → Английский для IT → тема 03. Оп�
 | **cabinet** | кабинет | шкаф; кабинет министров | *office* |
 
 🇬🇧 Типичные ляпы и исправления:
-```text
+```
 ✗ This documentation is not actual anymore.     ✓ This documentation is out of date.
 ✗ We realized the new feature last sprint.       ✓ We implemented the new feature last sprint.
 ✗ The service is in exploitation since 2023.     ✓ The service has been in production since 2023.
 ✗ I will control the deployment.                 ✓ I'll monitor the deployment.
 ✗ We need a complex approach to monitoring.      ✓ We need a comprehensive approach to monitoring.
 ✗ Please be accurate with prod.                  ✓ Please be careful with prod.
-```text
+```
+
 *Complex* vs *complicated*: оба «сложный», но *complex* — много связанных частей
 (*a complex system*), *complicated* — запутанный, трудный для понимания
 (*a complicated setup process*).
@@ -388,13 +390,17 @@ description: "Блок → Английский для IT → тема 03. Оп�
 9. Ударение — часть слова: *deVELop*, *comPOnent*, *enVIronment*.
 10. *A* или *an* выбирают по звуку: *an SSH key*, *a URL*.
 
-➡️ Дальше: [04_writing.md](/english/04-writing) · задачи: 03_vocabulary_tasks.md
+---
 
+## Задачи
+
+> Английские тексты помечены 🇬🇧. Для заданий на произношение нужен телефон с диктофоном
+> и YouGlish (youglish.com). Новые слова из задач — в свою колоду Anki, если встретишь
+> их и в работе.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем пассивный словарь отличается от активного? Как слово переходит из одного
 в другой?
@@ -535,7 +541,6 @@ YAML — «я́мл», sudo — «су́-ду» (официально) или «
 
 ### Блок B. «Что тут не так»
 
-
 Найди ошибки в английском тексте и перепиши правильно.
 
 **B1.** 🇬🇧 *This documentation is not actual, please use the actual version from the wiki.*
@@ -663,269 +668,151 @@ enough time.*
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Свой глоссарий
+#### C1. 🔑 Свой глоссарий
 Выпиши 20 терминов, которые встретил или использовал за эту неделю (доки, чат, созвоны,
 логи). Для каждого — предложение из реального контекста. Сделай из них cloze-карточки.
 
-### C2. 🔑 Фразовые глаголы
+<details><summary>Ответ</summary>
+
+Проверка: у каждого термина есть реальное предложение, а не определение из
+словаря; хотя бы половина — сочетания или фразовые глаголы.
+
+</details>
+
+#### C2. 🔑 Фразовые глаголы
 Вставь подходящий глагол в нужной форме: *spin up, roll back, look into, run into,
 tear down, fall back to, kick off, roll out, figure out, wrap up, hand over, point to*.
-**1.** 🇬🇧 *Can you ___ a test environment for the demo?*
+1. 🇬🇧 *Can you ___ a test environment for the demo?*
+2. 🇬🇧 *The error rate went up after the release, so we ___ it ___.*
+3. 🇬🇧 *I'm not sure why the job fails — I'll ___ it after lunch.*
+4. 🇬🇧 *We ___ a permissions issue while deploying to prod.*
+5. 🇬🇧 *Don't forget to ___ the environment after the load test.*
+6. 🇬🇧 *The client ___ HTTP/1.1 if HTTP/2 isn't available.*
+7. 🇬🇧 *Merging to main ___ the deployment pipeline.*
+8. 🇬🇧 *We'll ___ the new version to 10% of users first.*
+9. 🇬🇧 *I still can't ___ why the pod gets OOMKilled.*
+10. 🇬🇧 *Let's ___ — we're out of time.*
+11. 🇬🇧 *I'll ___ the on-call shift to Aliya at 9 am.*
+12. 🇬🇧 *The DNS record still ___ the old load balancer.*
 
 <details><summary>Ответ</summary>
 
-*This documentation is out of date.*
+1\) spin up. 2) rolled … back. 3) look into. 4) ran into. 5) tear down.
+6) falls back to. 7) kicks off. 8) roll out. 9) figure out. 10) wrap up.
+11) hand over. 12) points to.
 
 </details>
 
-**2.** 🇬🇧 *The error rate went up after the release, so we ___ it ___.*
+#### C3. Слитно или раздельно
+1. 🇬🇧 *Please ___ the monitoring for the new service.* (setup / set up)
+2. 🇬🇧 *The ___ failed last night.* (backup / back up)
+3. 🇬🇧 *Don't forget to ___ the volume.* (backup / back up)
+4. 🇬🇧 *I can't ___ to Grafana.* (login / log in)
+5. 🇬🇧 *The ___ is paused at 50%.* (rollout / roll out)
+6. 🇬🇧 *We need to ___ the release.* (rollback / roll back)
+7. 🇬🇧 *Add a ___ step to the pipeline.* (cleanup / clean up)
+8. 🇬🇧 *The DNS ___ takes 2 seconds.* (lookup / look up)
+9. 🇬🇧 *Let's schedule a ___ next week.* (follow-up / follow up)
+10. 🇬🇧 *Our local ___ uses kind.* (setup / set up)
 
 <details><summary>Ответ</summary>
 
-*Last sprint we implemented monitoring.* (или *set up monitoring*)
+1\) set up. 2) backup. 3) back up. 4) log in. 5) rollout. 6) roll back.
+7) cleanup. 8) lookup. 9) follow-up. 10) setup.
 
 </details>
 
-**3.** 🇬🇧 *I'm not sure why the job fails — I'll ___ it after lunch.*
-
-<details><summary>Ответ</summary>
-
-*The service has been in production since 2023.*
-
-</details>
-
-**4.** 🇬🇧 *We ___ a permissions issue while deploying to prod.*
-
-<details><summary>Ответ</summary>
-
-*We need to monitor the rollout.* (или *keep an eye on the rollout*)
-
-</details>
-
-**5.** 🇬🇧 *Don't forget to ___ the environment after the load test.*
-
-<details><summary>Ответ</summary>
-
-*We need a comprehensive approach to security.*
-
-</details>
-
-**6.** 🇬🇧 *The client ___ HTTP/1.1 if HTTP/2 isn't available.*
-
-<details><summary>Ответ</summary>
-
-*This is a non-standard setting that isn't in the docs.* (или *an unusual setting*;
-   *a specific setting* значило бы «конкретная настройка»)
-
-</details>
-
-**7.** 🇬🇧 *Merging to main ___ the deployment pipeline.*
-
-<details><summary>Ответ</summary>
-
-*Please be careful with prod.*
-
-</details>
-
-**8.** 🇬🇧 *We'll ___ the new version to 10% of users first.*
-
-<details><summary>Ответ</summary>
-
-*I'll send the meeting notes tonight.*
-
-</details>
-
-**9.** 🇬🇧 *I still can't ___ why the pod gets OOMKilled.*
-
-<details><summary>Ответ</summary>
-
-*I'm applying for a mid-level position.*
-
-</details>
-
-**10.** 🇬🇧 *Let's ___ — we're out of time.*
-**11.** 🇬🇧 *I'll ___ the on-call shift to Aliya at 9 am.*
-
-<details><summary>Ответ</summary>
-
-) hand over. 12) points to.
-
-</details>
-
-**12.** 🇬🇧 *The DNS record still ___ the old load balancer.*
-### C3. Слитно или раздельно
-**1.** 🇬🇧 *Please ___ the monitoring for the new service.* (setup / set up)
-
-<details><summary>Ответ</summary>
-
-*This documentation is out of date.*
-
-</details>
-
-**2.** 🇬🇧 *The ___ failed last night.* (backup / back up)
-
-<details><summary>Ответ</summary>
-
-*Last sprint we implemented monitoring.* (или *set up monitoring*)
-
-</details>
-
-**3.** 🇬🇧 *Don't forget to ___ the volume.* (backup / back up)
-
-<details><summary>Ответ</summary>
-
-*The service has been in production since 2023.*
-
-</details>
-
-**4.** 🇬🇧 *I can't ___ to Grafana.* (login / log in)
-
-<details><summary>Ответ</summary>
-
-*We need to monitor the rollout.* (или *keep an eye on the rollout*)
-
-</details>
-
-**5.** 🇬🇧 *The ___ is paused at 50%.* (rollout / roll out)
-
-<details><summary>Ответ</summary>
-
-*We need a comprehensive approach to security.*
-
-</details>
-
-**6.** 🇬🇧 *We need to ___ the release.* (rollback / roll back)
-
-<details><summary>Ответ</summary>
-
-*This is a non-standard setting that isn't in the docs.* (или *an unusual setting*;
-   *a specific setting* значило бы «конкретная настройка»)
-
-</details>
-
-**7.** 🇬🇧 *Add a ___ step to the pipeline.* (cleanup / clean up)
-
-<details><summary>Ответ</summary>
-
-*Please be careful with prod.*
-
-</details>
-
-**8.** 🇬🇧 *The DNS ___ takes 2 seconds.* (lookup / look up)
-
-<details><summary>Ответ</summary>
-
-*I'll send the meeting notes tonight.*
-
-</details>
-
-**9.** 🇬🇧 *Let's schedule a ___ next week.* (follow-up / follow up)
-
-<details><summary>Ответ</summary>
-
-*I'm applying for a mid-level position.*
-
-</details>
-
-**10.** 🇬🇧 *Our local ___ uses kind.* (setup / set up)
-### C4. 🔑 Ложные друзья: перевод
+#### C4. 🔑 Ложные друзья: перевод
 Переведи на английский, не попавшись на ложных друзей:
-**1.** Эта документация неактуальна.
+1. Эта документация неактуальна.
+2. В прошлом спринте мы реализовали мониторинг.
+3. Сервис в эксплуатации с 2023 года.
+4. Нужно проконтролировать выкатку.
+5. Нам нужен комплексный подход к безопасности.
+6. Это специфическая настройка, её нет в доке.
+7. Аккуратнее с продом, пожалуйста.
+8. Протокол встречи пришлю вечером.
+9. Я претендую на позицию мидла.
 
 <details><summary>Ответ</summary>
 
-*This documentation is out of date.*
-
-</details>
-
-**2.** В прошлом спринте мы реализовали мониторинг.
-
-<details><summary>Ответ</summary>
-
-*Last sprint we implemented monitoring.* (или *set up monitoring*)
-
-</details>
-
-**3.** Сервис в эксплуатации с 2023 года.
-
-<details><summary>Ответ</summary>
-
-*The service has been in production since 2023.*
-
-</details>
-
-**4.** Нужно проконтролировать выкатку.
-
-<details><summary>Ответ</summary>
-
-*We need to monitor the rollout.* (или *keep an eye on the rollout*)
-
-</details>
-
-**5.** Нам нужен комплексный подход к безопасности.
-
-<details><summary>Ответ</summary>
-
-*We need a comprehensive approach to security.*
-
-</details>
-
-**6.** Это специфическая настройка, её нет в доке.
-
-<details><summary>Ответ</summary>
-
-*This is a non-standard setting that isn't in the docs.* (или *an unusual setting*;
+🇬🇧
+1. *This documentation is out of date.*
+2. *Last sprint we implemented monitoring.* (или *set up monitoring*)
+3. *The service has been in production since 2023.*
+4. *We need to monitor the rollout.* (или *keep an eye on the rollout*)
+5. *We need a comprehensive approach to security.*
+6. *This is a non-standard setting that isn't in the docs.* (или *an unusual setting*;
    *a specific setting* значило бы «конкретная настройка»)
+7. *Please be careful with prod.*
+8. *I'll send the meeting notes tonight.*
+9. *I'm applying for a mid-level position.*
 
 </details>
 
-**7.** Аккуратнее с продом, пожалуйста.
-
-<details><summary>Ответ</summary>
-
-*Please be careful with prod.*
-
-</details>
-
-**8.** Протокол встречи пришлю вечером.
-
-<details><summary>Ответ</summary>
-
-*I'll send the meeting notes tonight.*
-
-</details>
-
-**9.** Я претендую на позицию мидла.
-
-<details><summary>Ответ</summary>
-
-*I'm applying for a mid-level position.*
-
-</details>
-
-### C5. 🔑 Произношение: запись
+#### C5. 🔑 Произношение: запись
 Запиши на телефон 15 слов из таблицы раздела 6 (nginx, cache, etcd, Azure, YAML, sudo,
 Linux, Debian, Grafana, Prometheus, queue, suite, height, width, daemon). Сравни каждое
 с YouGlish. Отметь три худших, повторяй их неделю и запиши снова.
 
-### C6. Ударение
+<details><summary>Ответ</summary>
+
+Чаще всего проблемы с *cache* (читают «каше»), *queue*, *suite*, *height*
+и межзубным *th* в *width* и *Prometheus*. Через неделю повторения — заметная разница.
+
+</details>
+
+#### C6. Ударение
 Прочитай вслух и запиши: 🇬🇧 *I need to record a demo. — The record is in the logs.*
 *We'll update the chart. — The update broke staging.* *Traffic will increase. — We saw
 an increase in errors.* Составь ещё по одной паре с *export* и *object*.
 
-### C7. Лексика инцидента
+<details><summary>Ответ</summary>
+
+🇬🇧 *We need to exPORT the data. — The EXport took an hour.* *I obJECT to
+this change. — Each OBject has a label.*
+
+</details>
+
+#### C7. Лексика инцидента
 Опиши по-английски в 5–6 предложениях реальный или учебный инцидент, используя:
 *outage* или *degradation*, *impact*, *mitigate*, *root cause*, *roll back*, *blast radius*.
 
-### C8. Итоги встречи
+<details><summary>Ответ</summary>
+
+🇬🇧 Пример:
+```
+On Tuesday we had a 25-minute outage of the checkout API.
+The impact was about 15% of failed orders.
+We mitigated it by rolling back the latest release.
+The root cause was a missing index in a new migration.
+The blast radius was small because only checkout used that table.
+```
+
+</details>
+
+#### C8. Итоги встречи
 Напиши итог встречи (5–7 строк) по-английски: *agenda*, *action items* с владельцами,
 *follow-up*, *ETA*, *blocker*.
+
+<details><summary>Ответ</summary>
+
+🇬🇧 Пример:
+```
+Sync on the cluster migration, Oct 2
+Agenda: migration plan, risks, dates.
+Action items:
+- Daniyar: prepare the node pool by Oct 6
+- Aliya: update the runbook, ETA Oct 7
+Blocker: we still need firewall rules from the network team.
+Follow-up: next sync on Oct 8.
+```
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** В англоязычном канале инцидента спрашивают: 🇬🇧 *Is it mitigated or resolved?*
 Ты перезапустил поды, ошибки прекратились, причина неизвестна.
@@ -933,11 +820,12 @@ an increase in errors.* Составь ещё по одной паре с *expor
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Mitigated, not resolved. Restarting the pods stopped the errors at 14:32 UTC,
 but we don't know the root cause yet. We're monitoring and investigating.
 Next update at 15:00 UTC.
-```text
+```
+
 </details>
 
 **D2.** Коллега: 🇬🇧 *What's the blast radius if we rotate the internal CA today?*
@@ -947,11 +835,12 @@ Next update at 15:00 UTC.
 
 Blast radius — все 12 сервисов и ingress: при ошибке в ротации TLS может
 отвалиться всё сразу. 🇬🇧
-```text
+```
 The blast radius is large: 12 services and the ingress trust this CA.
 To reduce it, I suggest rotating in stages: staging first, then one low-risk service
 in prod, then the rest. Both CAs will be trusted during the transition.
-```text
+```
+
 </details>
 
 **D3.** Стендап по-английски. Нужно сказать: «Вчера разбирался, почему падает сборка —
@@ -961,11 +850,12 @@ in prod, then the rest. Both CAs will be trusted during the transition.
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Yesterday I looked into the failing build and figured out it was a cache issue.
 Today I'll finish the fix and roll it out to staging.
 I'm blocked on access to the registry — could someone help me with that after the call?
-```text
+```
+
 </details>
 
 **D4.** В резюме написано: 🇬🇧 *Exploitation and control of Kubernetes clusters, realization
@@ -974,10 +864,10 @@ of CI/CD pipelines, actual technologies.* Перепиши.
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Operated and maintained Kubernetes clusters in production;
 implemented CI/CD pipelines with GitLab CI and Argo CD.
-```text
+```
 *Actual technologies* убрать совсем — лучше конкретный стек.
 
 </details>
@@ -1017,14 +907,13 @@ Jonas and share the outcome in the thread before Thursday.*
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** 🇬🇧 *What's the difference between scaling up and scaling out?*
 
 <details><summary>Ответ</summary>
 
 🇬🇧 *Scaling up means giving a single instance more resources, like more CPU or memory.
-   Scaling out means adding more instances behind a load balancer. Scaling out is usually
-   better for availability, but the app must be stateless or handle shared state.*
+Scaling out means adding more instances behind a load balancer. Scaling out is usually
+better for availability, but the app must be stateless or handle shared state.*
 
 </details>
 
@@ -1033,8 +922,8 @@ Jonas and share the outcome in the thread before Thursday.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *Blast radius is how much of the system or how many users a failure or a change
-   can affect. You reduce it with canary releases, feature flags, separate environments
-   and accounts, and by splitting large changes into smaller ones.*
+can affect. You reduce it with canary releases, feature flags, separate environments
+and accounts, and by splitting large changes into smaller ones.*
 
 </details>
 
@@ -1043,8 +932,8 @@ Jonas and share the outcome in the thread before Thursday.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *Mitigation reduces the user impact quickly, for example with a rollback or
-   a failover, even if we don't know the cause yet. Resolution means the underlying
-   problem is fixed. In an incident, we mitigate first and investigate later.*
+a failover, even if we don't know the cause yet. Resolution means the underlying
+problem is fixed. In an incident, we mitigate first and investigate later.*
 
 </details>
 
@@ -1053,8 +942,8 @@ Jonas and share the outcome in the thread before Thursday.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *Toil is manual, repetitive work that doesn't add long-term value and grows with
-   the system. For example, we renewed certificates by hand every few months; I set up
-   cert-manager, and the task disappeared.*
+the system. For example, we renewed certificates by hand every few months; I set up
+cert-manager, and the task disappeared.*
 
 </details>
 
@@ -1063,8 +952,8 @@ Jonas and share the outcome in the thread before Thursday.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *Drift is when the real infrastructure no longer matches the code, usually because
-   someone changed something by hand. I detect it with a scheduled `terraform plan` in CI
-   and, for Kubernetes, with Argo CD, which shows resources that are out of sync.*
+someone changed something by hand. I detect it with a scheduled `terraform plan` in CI
+and, for Kubernetes, with Argo CD, which shows resources that are out of sync.*
 
 </details>
 
@@ -1073,8 +962,8 @@ Jonas and share the outcome in the thread before Thursday.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *A canary release sends a small part of the traffic, say 5%, to the new version
-   first. If the error rate and latency look good, we gradually increase it; if not,
-   we roll back, and only a few users are affected.*
+first. If the error rate and latency look good, we gradually increase it; if not,
+we roll back, and only a few users are affected.*
 
 </details>
 
@@ -1083,8 +972,8 @@ Jonas and share the outcome in the thread before Thursday.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *A flaky test passes or fails without any code changes. I don't just rerun it
-   forever: I track it, quarantine it if it blocks the team, and find the cause —
-   usually timing, shared state, or an external dependency.*
+forever: I track it, quarantine it if it blocks the team, and find the cause —
+usually timing, shared state, or an external dependency.*
 
 </details>
 
@@ -1093,10 +982,8 @@ Jonas and share the outcome in the thread before Thursday.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *At least two people per shift, a primary and a secondary, clear escalation
-   paths, runbooks for every alert, and time off after a bad night. Alerts should be
-   actionable, and we should regularly remove noisy ones.*
-
----
+paths, runbooks for every alert, and time off after a bad night. Alerts should be
+actionable, and we should regularly remove noisy ones.*
 
 </details>
 

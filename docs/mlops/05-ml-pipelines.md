@@ -1,6 +1,6 @@
 ---
 title: "05. Пайплайны и реестр моделей: MLflow, DVC, оркестраторы, CT/CD"
-description: "Блок → AI/MLOps-инфраструктура → тема 05. Вопросы собеса: «Как модель попадает"
+description: "MLflow tracking и registry, версионирование данных (DVC), пайплайны (Kubeflow Pipelines, Argo Workflows, Airflow), CT/CD моделей"
 ---
 
 # 05. Пайплайны и реестр моделей: MLflow, DVC, оркестраторы, CT/CD
@@ -18,7 +18,7 @@ description: "Блок → AI/MLOps-инфраструктура → тема 05
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  ДАННЫЕ                ОБУЧЕНИЕ (оркестратор)             РЕЕСТР                ПРОД
  ──────                ───────────────────────            ──────                ────
  S3 / MinIO            prepare → train → evaluate        MLflow Registry        CI/GitOps:
@@ -31,7 +31,8 @@ description: "Блок → AI/MLOps-инфраструктура → тема 05
                        артефакты, окружение                    │ чемпиона?      мониторинг:
                                                                │                latency, ошибки,
  триггер переобучения ◄────── дрейф данных / расписание / новый код ◄────────── дрейф предсказаний
-```text
+```
+
 ---
 
 ## 1. Чем CI/CD модели отличается от CI/CD сервиса
@@ -46,7 +47,7 @@ description: "Блок → AI/MLOps-инфраструктура → тема 05
 | Кто делает | Разработчик → CI | DS/ML-инженер обучает; девопс даёт трекинг, реестр, хранилище, пайплайн и деплой |
 
 Термины: **CT** (continuous training) — автоматическое переобучение по триггеру; **CD модели** —
-автоматическая выкладка новой версии после проверок. Роли и жизненный цикл — [01_ml_systems_for_devops.md](/mlops/01-ml-systems-for-devops).
+автоматическая выкладка новой версии после проверок. Роли и жизненный цикл — [01. ML- и LLM-системы глазами девопса](/mlops/01-ml-systems-for-devops).
 
 ---
 
@@ -55,18 +56,19 @@ description: "Блок → AI/MLOps-инфраструктура → тема 05
 MLflow — open-source платформа (Apache-2.0) для трекинга экспериментов, реестра моделей и,
 в линейке 3.x, трейсинга и оценки GenAI-приложений. Версия **3.16.1** (16.09.2026).
 
-```text
+```text:no-line-numbers
  python train.py ──(REST)──► mlflow server :5000 ──► backend store: PostgreSQL
  (MLFLOW_TRACKING_URI)        │  UI, API, Registry      (эксперименты, runs, параметры,
                               │                          метрики, реестр, пользователи)
                               └─ proxy артефактов ──► artifact store: S3 / MinIO
                                  (--artifacts-destination)  (веса, графики, окружение)
-```text
+```
+
 | Компонент | Что хранит | Эксплуатация |
 |-----------|------------|--------------|
 | **Tracking** | Runs: параметры, метрики, теги, артефакты | Растёт постоянно: retention, чистка старых экспериментов |
-| **Backend store** | Метаданные в SQL (PostgreSQL/MySQL) | Бэкапы как у любой БД ([../Left/01_Databases/05_backup_restore.md](/databases/05-backup-restore)); миграции схемы при обновлении — `mlflow db upgrade` |
-| **Artifact store** | Файлы моделей и артефакты в S3 | Versioning и lifecycle бакета ([../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage) §4–5) |
+| **Backend store** | Метаданные в SQL (PostgreSQL/MySQL) | Бэкапы как у любой БД ([Базы данных: 05. Бэкап и восстановление](/databases/05-backup-restore)); миграции схемы при обновлении — `mlflow db upgrade` |
+| **Artifact store** | Файлы моделей и артефакты в S3 | Versioning и lifecycle бакета ([Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage) §4–5) |
 | **Model Registry** | Зарегистрированные модели, версии, алиасы, теги | ⭐ Главный контракт между ML и эксплуатацией |
 
 > 💡 С `--artifacts-destination` сервер **проксирует** артефакты: клиенты грузят файлы через
@@ -88,7 +90,7 @@ MLflow — open-source платформа (Apache-2.0) для трекинга �
 ## 3. Стенд: MLflow + PostgreSQL + MinIO-форк в compose
 
 Официальные образы MinIO больше не публикуются — берём форк `pgsty/silo`
-([../Storage/03_nfs_minio.md](/storage/03-nfs-minio) §3, §5). Образ MLflow — вариант
+([Хранилища: 03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio) §3, §5). Образ MLflow — вариант
 **`-full`** (с драйверами PostgreSQL и клиентом S3; базовый образ их не содержит, `-full` есть с 3.9.0).
 
 ```yaml
@@ -118,14 +120,16 @@ services:
       --artifacts-destination s3://mlflow
       --allowed-hosts "localhost:*,127.0.0.1:*,mlflow:*"
 volumes: { pgdata: {}, s3: {} }
-```text
+```
+
 ```bash
 cd ~/labs/mlops/mlflow && docker compose up -d
 docker compose exec minio mcli alias set local http://127.0.0.1:9000 admin admin-secret-123
 docker compose exec minio mcli mb local/mlflow            # бакет для артефактов
 docker compose logs mlflow | tail -5                      # слушает :5000, таблицы созданы
 # UI: http://localhost:5000
-```text
+```
+
 ---
 
 ## 4. Трекинг: игрушечная модель
@@ -134,7 +138,8 @@ docker compose logs mlflow | tail -5                      # слушает :5000
 python3 -m venv .venv && . .venv/bin/activate
 pip install "mlflow==3.16.1" "scikit-learn==1.9.1"        # ⭐ версии зафиксированы
 export MLFLOW_TRACKING_URI=http://localhost:5000
-```text
+```
+
 ```python
 # train.py — «отток клиентов» на синтетических данных, без скачиваний
 import sys
@@ -164,17 +169,19 @@ with mlflow.start_run():
         registered_model_name="churn",                    # сразу регистрирует новую версию
     )
     print("model_uri:", info.model_uri)
-```text
+```
+
 ```bash
 python train.py 1.0 && python train.py 0.01               # две версии: churn v1 и v2
-```text
+```
+
 Что появилось: в UI — эксперимент `churn` с двумя runs (параметры, метрики); в **Logged Models** —
 две модели; в **Models** — `churn` версии 1 и 2; в бакете `mlflow` — файлы модели,
 `MLmodel`, `requirements.txt`/`conda.yaml` (окружение, в котором модель обучена).
 
 > ⚠️ Отличия MLflow 3 от старых туториалов: `log_model(..., name=...)` вместо
 > `artifact_path=`; модели — отдельные сущности (LoggedModel), артефакты лежат в
-> `experiments/&lt;id&gt;/models/&lt;model_id&gt;/artifacts`; `runs:/&lt;run_id&gt;/model` — устаревший путь,
+> `experiments/<id>/models/<model_id>/artifacts`; `runs:/<run_id>/model` — устаревший путь,
 > используй `info.model_uri` или `models:/…`.
 
 ---
@@ -207,14 +214,16 @@ mv = c.get_model_version_by_alias("churn", "production")
 print("production ->", mv.version, mv.tags)
 model = mlflow.pyfunc.load_model("models:/churn@production")
 print(model.predict(np.array([[0.1] * 8])))
-```text
-**Сервинг встроенным сервером** (для стенда и простых моделей; прод-варианты — [03_model_serving.md](/mlops/03-model-serving)):
+```
+
+**Сервинг встроенным сервером** (для стенда и простых моделей; прод-варианты — [03. Сервинг моделей: vLLM, llama.cpp, Ollama, KServe, холодный старт, метрики, автоскейлинг](/mlops/03-model-serving)):
 
 ```bash
 mlflow models serve -m "models:/churn@production" --env-manager local -h 0.0.0.0 -p 5001
 curl -s localhost:5001/invocations -H 'Content-Type: application/json' \
   -d '{"inputs": [[0.1, -0.2, 0.3, 0.0, 1.1, -0.5, 0.2, 0.7]]}'      # → {"predictions": [1]}
-```text
+```
+
 > ⚠️ Алиас резолвится **в момент загрузки**. Перевели `@production` на v2 — работающий
 > сервер продолжает отдавать v1, пока его не перезапустят; а два пода, стартовавшие до и после
 > переключения, отдают **разные** модели. Поэтому в деплое фиксируют номер версии (§8).
@@ -239,8 +248,9 @@ docker compose exec minio mcli mb local/dvc
 dvc add data/train.csv            # → data/train.csv.dvc (хеш md5) + data/train.csv в .gitignore
 git add data/train.csv.dvc data/.gitignore && git commit -m "data: train v1"
 dvc push                          # данные → s3://dvc
-# позже: git checkout &lt;старый коммит&gt; && dvc checkout   → вернулись те же данные
-```text
+# позже: git checkout <старый коммит> && dvc checkout   → вернулись те же данные
+```
+
 Пайплайн DVC (`dvc.yaml`) описывает стадии с входами и выходами; `dvc repro` пересчитывает
 только то, у чего изменились зависимости, `dvc.lock` фиксирует хеши — «make для данных».
 
@@ -286,15 +296,16 @@ spec:
       container:
         image: registry.example.com/ml/churn-train:1.4.0@sha256:…   # окружение обучения, pinned
         command: [sh, -c]
-        args: ["&#123;&#123;inputs.parameters.cmd&#125;&#125;"]
+        args: ["{{inputs.parameters.cmd}}"]
         env: [{ name: MLFLOW_TRACKING_URI, value: "http://mlflow.ml.svc:5000" }]
         resources: { requests: { cpu: "1", memory: 2Gi } }
-```text
+```
+
 ---
 
 ## 8. CT/CD: путь модели в прод
 
-```text
+```text:no-line-numbers
  1. ТРИГГЕР     расписание (раз в неделю) │ новые данные │ алерт дрейфа │ изменился код
  2. ОБУЧЕНИЕ    пайплайн: prepare → train → log в MLflow → новая версия churn v8
  3. GATE        evaluate.py: v8 на отложенной выборке vs текущий @production (v7)
@@ -304,11 +315,12 @@ spec:
  5. ДЕПЛОЙ      CI резолвит @production → 8, коммитит в gitops-репо model.version: 8
                  → ArgoCD синхронизирует → сервинг при старте качает модель v8
  6. КОНТРОЛЬ    canary / shadow, метрики сервиса и модели; плохо → revert коммита
-```text
+```
+
 ⭐ **Модель — это конфиг, а не слой образа.** Образ сервинга содержит рантайм (Python,
 библиотеки нужных версий), а номер модели приходит из values/env; модель скачивается
 при старте (init-контейнер или сам сервер) из реестра или S3 и кэшируется на PVC —
-как в [03_model_serving.md](/mlops/03-model-serving).
+как в [03. Сервинг моделей: vLLM, llama.cpp, Ollama, KServe, холодный старт, метрики, автоскейлинг](/mlops/03-model-serving).
 
 | Способ | Плюсы | Минусы |
 |--------|-------|--------|
@@ -324,22 +336,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with: { repository: my-org/ml-gitops, token: "$&#123;&#123; secrets.GITOPS_TOKEN &#125;&#125;" }
+        with: { repository: my-org/ml-gitops, token: "${{ secrets.GITOPS_TOKEN }}" }
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - run: pip install "mlflow==3.16.1"
       - env:
-          MLFLOW_TRACKING_URI: $&#123;&#123; vars.MLFLOW_URI &#125;&#125;
+          MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_URI }}
           MLFLOW_TRACKING_USERNAME: ci-promoter                 # basic-auth; права — только чтение реестра
-          MLFLOW_TRACKING_PASSWORD: $&#123;&#123; secrets.MLFLOW_PASSWORD &#125;&#125;
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_PASSWORD }}
         run: |
           V=$(python -c "from mlflow import MlflowClient as C; print(C().get_model_version_by_alias('churn','production').version)")
           yq -i ".model.version = \"$V\"" apps/churn/values-prod.yaml
           git config user.name ci-bot && git config user.email ci-bot@example.com
           git commit -am "churn: model v$V" && git push
-```text
-Дальше — обычный GitOps: [../Left/07_ArgoCD/03_application.md](/argocd/03-application),
-[../CICD/04_gitops.md](/cicd/04-gitops). Кто может двигать `@production` — решают права
+```
+
+Дальше — обычный GitOps: [ArgoCD: 03. Application: синхронизация и здоровье](/argocd/03-application),
+[CI/CD: 04. GitOps](/cicd/04-gitops). Кто может двигать `@production` — решают права
 в MLflow и review в gitops-репозитории, а не «у кого есть пароль админа».
 
 ---
@@ -365,7 +378,7 @@ jobs:
 
 ## 10. Мониторинг модели в проде
 
-Слой 1 — **как у любого сервиса** (SLO, RED, насыщение, [../SRE/02_sli_slo_error_budget.md](/sre/02-sli-slo-error-budget)):
+Слой 1 — **как у любого сервиса** (SLO, RED, насыщение, [SRE: 02. SLI, SLO и error budget](/sre/02-sli-slo-error-budget)):
 латентность, ошибки, RPS, память, время загрузки модели. Слой 2 — **модель**:
 
 | Что | Как увидеть | Сложность |
@@ -383,11 +396,12 @@ jobs:
 # доля предсказаний «уйдёт» за час — сервинг экспортирует счётчик с меткой класса
 sum(rate(model_predictions_total{model="churn", class="1"}[1h]))
   / sum(rate(model_predictions_total{model="churn"}[1h]))
-```text
+```
+
 Алерт дрейфа — **триггер переобучения и повод для разбора**, а не автоматическая выкатка:
 новая модель всё равно проходит gate (§8). Специализированные библиотеки считают дрейф
 по признакам (например, Evidently — проверь); девопс даёт хранилище логов предсказаний
-(без ПДн, [04_llm_gateway_rag.md](/mlops/04-llm-gateway-rag) §6), расписание и алерты.
+(без ПДн, [04. LLM-шлюз, RAG и векторные базы](/mlops/04-llm-gateway-rag) §6), расписание и алерты.
 
 ---
 
@@ -404,7 +418,7 @@ offline (история в хранилище/озере — для обучен
 
 ## 🧪 Мини-лаба: версия → алиас → сервинг по алиасу
 
-Стенд из §3 и `train.py` из §4 (полная лаба с деплоем через CI — лаба 5 в [07_practice_labs.md](/mlops/07-practice-labs)).
+Стенд из §3 и `train.py` из §4 (полная лаба с деплоем через CI — лаба 5 в [07. Практика: шесть лаб без GPU](/mlops/07-practice-labs)).
 
 1. `python train.py 1.0 && python train.py 0.01` — в реестре `churn` v1 и v2. Сравни `f1` в UI.
 2. Назначь `@production` версии с лучшим `f1`, `@staging` — второй (`promote.py`).
@@ -444,7 +458,7 @@ offline (история в хранилище/озере — для обучен
 - Девопс не выбирает модель, но строит **дорогу**: шаблон пайплайна обучения, gate, промоушен
   через алиас с одобрением, деплой через GitOps, откат `git revert`.
 - Секреты: ключи S3 — только у сервера MLflow (proxy артефактов), токены CI — в Vault
-  ([../Left/08_Vault/05_vault_integrations.md](/vault/05-vault-integrations)).
+  ([Vault: 05. Интеграции и динамические секреты](/vault/05-vault-integrations)).
 - Оркестратор выбирают по тому, что уже есть в компании: Airflow у дата-инженеров — ещё DAG;
   k8s-платформа — Argo Workflows; большая ML-команда — Kubeflow Pipelines.
 - Мониторинг модели делят: латентность и ошибки — девопс/SRE, дрейф и качество — ML-команда,
@@ -466,7 +480,7 @@ offline (история в хранилище/озере — для обучен
 | Поднять REST | `mlflow models serve -m models:/churn/3 --env-manager local -p 5001` → `POST /invocations` |
 | Версия данных | `dvc add` → `git commit *.dvc` → `dvc push`; назад — `git checkout` + `dvc checkout` |
 | Пересчитать пайплайн данных | `dvc repro` |
-| Обновить схему БД MLflow | `mlflow db upgrade &lt;db-uri&gt;` (после бэкапа) |
+| Обновить схему БД MLflow | `mlflow db upgrade <db-uri>` (после бэкапа) |
 
 ---
 
@@ -492,13 +506,17 @@ offline (история в хранилище/озере — для обучен
 13. Мониторинг: сначала как сервис, затем дрейф данных и предсказаний; дрейф — триггер
     переобучения, а не автодеплой.
 
-➡️ Дальше: [06_ai_in_devops_work.md](/mlops/06-ai-in-devops-work) · Лаба 5: [07_practice_labs.md](/mlops/07-practice-labs) · Задачи: 05_ml_pipelines_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«Как модель попадает в прод?»*, *«Как откатить модель?»*,
+> *«Что версионируете, кроме кода?»*, *«Как понять, что модель деградировала?»* — важно
+> показать путь целиком и где в нём проверки и люди.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Чем CI/CD модели отличается от CI/CD обычного сервиса? Назови минимум четыре отличия.
 
@@ -538,7 +556,7 @@ Model Registry — модели, версии, алиасы, теги.
 
 </details>
 
-**A5.** Чем образ `ghcr.io/mlflow/mlflow:&lt;версия&gt;` отличается от `&lt;версия&gt;-full`?
+**A5.** Чем образ `ghcr.io/mlflow/mlflow:<версия>` отличается от `<версия>-full`?
 
 <details><summary>Ответ</summary>
 
@@ -567,13 +585,13 @@ localhost и частные IP, поэтому запросы по имени с
 
 </details>
 
-**A8.** Что изменилось в `log_model` в MLflow 3? Почему `runs:/&lt;run_id&gt;/model` — плохой URI для нового кода?
+**A8.** Что изменилось в `log_model` в MLflow 3? Почему `runs:/<run_id>/model` — плохой URI для нового кода?
 
 <details><summary>Ответ</summary>
 
 `name=` вместо `artifact_path=`, модель — отдельная сущность LoggedModel, можно логировать
-без run; артефакты — в `experiments/&lt;id&gt;/models/&lt;model_id&gt;/artifacts`. Путь через run устарел
-и будет удалён — используют `info.model_uri`, `models:/&lt;model_id&gt;` или `models:/&lt;имя&gt;/&lt;версия&gt;`.
+без run; артефакты — в `experiments/<id>/models/<model_id>/artifacts`. Путь через run устарел
+и будет удалён — используют `info.model_uri`, `models:/<model_id>` или `models:/<имя>/<версия>`.
 
 </details>
 
@@ -744,6 +762,7 @@ Data drift — изменилось распределение входных д
 <details><summary>Ответ</summary>
 
 Индекс стабильности распределения: `Σ (p − q) × ln(p / q)` по корзинам. < 0,1 — стабильно,
+0,1–0,25 — умеренный сдвиг, > 0,25 — существенный (эмпирическое правило).
 
 </details>
 
@@ -760,142 +779,124 @@ Data drift — изменилось распределение входных д
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```yaml
 # B1 — compose
-```text
-```text:no-line-numbers
 mlflow:
-```text
-```text:no-line-numbers
   image: ghcr.io/mlflow/mlflow:v3.16.1
-```text
-```text:no-line-numbers
   command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://mlflow:pass@db/mlflow
-```text
+```
 Вопрос: что будет при старте?
 
-```text:no-line-numbers
+```bash
 # B2 — сервис train в том же compose ходит в MLflow
-```text
-```text:no-line-numbers
 export MLFLOW_TRACKING_URI=http://mlflow:5000
-```text
-```text:no-line-numbers
 # сервер запущен без --allowed-hosts
-```text
+```
 Вопрос: что увидит клиент?
 
-```text:no-line-numbers
+```python
 # B3
-```text
-```text:no-line-numbers
 with mlflow.start_run() as run:
-```text
-```text:no-line-numbers
     mlflow.sklearn.log_model(model, name="model")
-```text
-```text:no-line-numbers
 m = mlflow.sklearn.load_model(mlflow.get_artifact_uri("model"))
-```text
+```
 Вопрос: загрузится ли модель в MLflow 3?
 
-```text:no-line-numbers
+```text
 B4 — в 10:00 @production → v5; под A стартовал в 09:50, под B — в 10:05
-```text
-```text:no-line-numbers
 оба грузят models:/churn@production
-```text
+```
 Вопрос: что отдают поды?
 
-```text:no-line-numbers
+```text
 B5 — в values-prod.yaml: model.version: 7
-```text
-```text:no-line-numbers
 кто-то в UI MLflow перевёл @production на v8
-```text
+```
 Вопрос: что в проде? Что покажет ArgoCD?
 
-```text:no-line-numbers
+```bash
 # B6
-```text
-```text:no-line-numbers
 dvc add data/train.csv
-```text
-```text:no-line-numbers
 git add data/train.csv && git commit -m "data"
-```text
+```
 Вопрос: что не так?
 
-```text:no-line-numbers
+```bash
 # B7 — через месяц
-```text
-```text:no-line-numbers
 git checkout v1.2.0      # коммит, на котором обучали модель v5
-```text
-```text:no-line-numbers
 python train.py          # dvc checkout забыли
-```text
+```
 Вопрос: на каких данных обучится модель?
 
-```text:no-line-numbers
+```text
 B8 — requirements.txt обучения: scikit-learn (без версии)
-```text
-```text:no-line-numbers
 образ сервинга собран через 3 месяца
-```text
+```
 Вопрос: чем рискуем?
 
-```text:no-line-numbers
+```text
 B9 — алерт: PSI признака "age" = 0,35 → автоматически запускается переобучение
-```text
-```text:no-line-numbers
 и новая версия сразу получает @production
-```text
+```
 Вопрос: что может пойти не так?
 
-```text:no-line-numbers
+```text
 B10 — бэкап MLflow: только pg_dump базы; бакет s3://mlflow без versioning,
-```text
-```text:no-line-numbers
 кто-то удалил префикс experiments/3/
-```text
+```
 Вопрос: что с моделями эксперимента 3?
 
-```text:no-line-numbers
+```yaml
 # B11 — Argo Workflows v4
-```text
-```text:no-line-numbers
 spec:
-```text
-```text:no-line-numbers
   synchronization:
-```text
-```text:no-line-numbers
     mutex: { name: retrain }
-```text
+```
 Вопрос: что будет?
+
+<details><summary>Ответы</summary>
+
+**B1.** Базовый образ без драйвера PostgreSQL — сервер упадёт при подключении к БД. Нужен `-full`
+или свой образ с `psycopg2`.
+
+**B2.** Ошибку проверки хоста (запрос отклонён): `mlflow` — не localhost и не IP. Добавить
+`--allowed-hosts "mlflow:*,…"`.
+
+**B3.** Нет: в MLflow 3 модели лежат не в артефактах run, `get_artifact_uri("model")` указывает
+не туда. Использовать `info.model_uri` из результата `log_model`.
+
+**B4.** Под A загрузил старую версию, под B — v5: в проде две модели, пока A не перезапустят.
+
+**B5.** В проде v7: сервинг берёт номер из values. ArgoCD дрейфа не покажет — git не менялся;
+v8 попадёт в прод только после коммита в gitops-репо (через CI промоушена).
+
+**B6.** В git добавлен сам CSV (или команда упадёт из-за `.gitignore`); нужно коммитить
+`data/train.csv.dvc` и `data/.gitignore`, а данные — `dvc push`.
+
+**B7.** На данных, которые сейчас лежат в рабочей копии (последняя версия), а не на тех, что
+в коммите v1.2.0: нужен `dvc checkout` (или `dvc pull`).
+
+**B8.** Сервинг поставит другую версию scikit-learn: модель может не загрузиться или тихо давать
+другие ответы. Pinned-зависимости и окружение из артефактов модели.
+
+**B9.** Если сдвиг — это поломка источника данных, модель обучится на мусоре и сразу уйдёт в прод.
+Дрейф — триггер обучения и разбора; `@production` — только после gate и одобрения.
+
+**B10.** Метаданные в базе есть, файлов моделей нет — загрузить версии эксперимента 3 нельзя.
+Нужен versioning/бэкап бакета, согласованный с бэкапом базы.
+
+**B11.** В v4 singular `mutex` удалён — Workflow не пройдёт валидацию. Использовать `mutexes: [{ name: retrain }]`.
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Стенд MLflow
+#### C1. 🔑 Стенд MLflow
 Подними compose из конспекта: PostgreSQL + `pgsty/silo` + `ghcr.io/mlflow/mlflow:v3.16.1-full`
 (теги проверь). Создай бакет, открой UI. Найди в PostgreSQL таблицы MLflow (`\dt`)
 и объясни три из них.
-
-### C2. 🔑 Два обучения — две версии
-Запусти `train.py` с `C=1.0` и `C=0.01`. Сравни runs в UI, найди файлы модели в бакете
-(`mcli ls -r`), открой `MLmodel` и `requirements.txt`. Что в них записано?
-
-### C3. 🔑 Алиасы
-Назначь `@production` и `@staging`, повесь тег `validation_status`. Загрузи модель по алиасу
-в Python и через `mlflow models serve`. Переназначь алиас и объясни, когда ответ сервера изменился.
-
-### C4. Сломай сервер
-**1.** Замени образ на базовый (без `-full`) — что в логах?
 
 <details><summary>Ответ</summary>
 
@@ -904,7 +905,9 @@ spec:
 
 </details>
 
-**2.** Убери `--allowed-hosts` и обратись к серверу из соседнего контейнера по имени `mlflow`.
+#### C2. 🔑 Два обучения — две версии
+Запусти `train.py` с `C=1.0` и `C=0.01`. Сравни runs в UI, найди файлы модели в бакете
+(`mcli ls -r`), открой `MLmodel` и `requirements.txt`. Что в них записано?
 
 <details><summary>Ответ</summary>
 
@@ -913,53 +916,80 @@ spec:
 
 </details>
 
-**3.** Включи `--app-name basic-auth` без `MLFLOW_AUTH_ADMIN_PASSWORD`.
+#### C3. 🔑 Алиасы
+Назначь `@production` и `@staging`, повесь тег `validation_status`. Загрузи модель по алиасу
+в Python и через `mlflow models serve`. Переназначь алиас и объясни, когда ответ сервера изменился.
+
+<details><summary>Ответ</summary>
+
+Работающий `mlflow models serve` продолжит отдавать старую версию — алиас резолвится при старте;
+после перезапуска — новую.
+
+</details>
+
+#### C4. Сломай сервер
+1. Замени образ на базовый (без `-full`) — что в логах?
+2. Убери `--allowed-hosts` и обратись к серверу из соседнего контейнера по имени `mlflow`.
+3. Включи `--app-name basic-auth` без `MLFLOW_AUTH_ADMIN_PASSWORD`.
 Запиши три симптома и три исправления.
 
 <details><summary>Ответ</summary>
 
-— сервер не стартует без пароля админа → задать `MLFLOW_AUTH_ADMIN_PASSWORD` (≥ 12 символов).
+1 — ошибка импорта драйвера БД/клиента S3 → образ `-full`. 2 — отказ по `Host` → `--allowed-hosts`.
+3 — сервер не стартует без пароля админа → задать `MLFLOW_AUTH_ADMIN_PASSWORD` (≥ 12 символов).
 
 </details>
 
-### C5. 🔑 DVC
+#### C5. 🔑 DVC
 В новом git-репозитории: `dvc init`, remote на MinIO (креды через `--local`), `dvc add`
 CSV-файла, `dvc push`. Измени файл, закоммить вторую версию. Вернись на первый коммит
 и восстанови данные. Проверь, что `.dvc/config.local` не в git.
 
-### C6. Пайплайн DVC
+#### C6. Пайплайн DVC
 Опиши в `dvc.yaml` две стадии: `prepare` (CSV → очищенный CSV) и `train` (→ `model.pkl`).
 Запусти `dvc repro` дважды. Что пересчиталось во второй раз? Измени только `train.py` — что теперь?
 
-### C7. Gate
+<details><summary>Ответ</summary>
+
+Во второй раз — ничего (хеши совпали). После изменения `train.py` — только стадия `train`.
+
+</details>
+
+#### C7. Gate
 Напиши `evaluate.py`: берёт последнюю версию `churn`, сравнивает её `f1` с версией
 под `@production` и выходит с кодом 1, если новая хуже более чем на 0,01. Если лучше —
 назначает `@staging`. Прогони для обоих исходов.
 
-### C8. Argo Workflows (со звёздочкой)
+#### C8. Argo Workflows (со звёздочкой)
 Поставь Argo Workflows в kind (Helm, версию проверь), создай ServiceAccount с минимальными
 правами и запусти `retrain-wf.yaml` из конспекта с образом, где есть `train.py`. Где смотреть
 логи шага и что будет, если шаг `evaluate` упадёт?
 
-### C9. Метрика дрейфа предсказаний
+#### C9. Метрика дрейфа предсказаний
 Добавь в сервинг (или в скрипт-эмулятор) счётчик `model_predictions_total{class}` и напиши
 PromQL доли класса 1 за час и алерт «доля выросла вдвое относительно прошлой недели».
 
-### C10. PSI руками
+#### C10. PSI руками
 Для признака с корзинами эталона [0,25; 0,25; 0,25; 0,25] и прода [0,10; 0,20; 0,30; 0,40]
 посчитай PSI. Какой вывод по эмпирическому правилу?
+
+<details><summary>Ответ</summary>
+
+(0,10 − 0,25) × ln(0,4) + (0,20 − 0,25) × ln(0,8) + (0,30 − 0,25) × ln(1,2) + (0,40 − 0,25) × ln(1,6)
+≈ 0,137 + 0,011 + 0,009 + 0,071 ≈ **0,23** — умеренный сдвиг, присмотреться и разобраться.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После обновления MLflow сервер не стартует: ошибка про схему базы. Что делать и что
 нужно было сделать до обновления?
 
 <details><summary>Ответ</summary>
 
-Новая версия требует миграции схемы: бэкап базы → `mlflow db upgrade &lt;uri&gt;` → старт.
+Новая версия требует миграции схемы: бэкап базы → `mlflow db upgrade <uri>` → старт.
 До обновления: читать release notes, прогнать миграцию на копии базы, план отката (восстановление бэкапа).
 
 </details>
@@ -1056,14 +1086,13 @@ DVC или неизменяемые пути данных + логировани
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Расскажи путь модели от эксперимента до прода.
 
 <details><summary>Ответ</summary>
 
 Эксперимент логируется в MLflow → регистрация версии → gate против текущей → `@staging` →
-   одобрение → `@production` → CI пишет номер версии в gitops-репо → ArgoCD → сервинг качает модель
-   → canary и мониторинг.
+одобрение → `@production` → CI пишет номер версии в gitops-репо → ArgoCD → сервинг качает модель
+→ canary и мониторинг.
 
 </details>
 
@@ -1080,7 +1109,7 @@ DVC или неизменяемые пути данных + логировани
 <details><summary>Ответ</summary>
 
 `git revert` коммита с `model.version` (и перевод алиаса обратно); модель уже в реестре, образ
-   не пересобираем.
+не пересобираем.
 
 </details>
 
@@ -1097,7 +1126,7 @@ DVC или неизменяемые пути данных + логировани
 <details><summary>Ответ</summary>
 
 По контексту: Airflow — если он уже есть у данных; Argo Workflows — k8s-native и лёгкий;
-   KFP — если нужна ML-платформа с UI; для одной модели — CI по расписанию.
+KFP — если нужна ML-платформа с UI; для одной модели — CI по расписанию.
 
 </details>
 
@@ -1106,7 +1135,7 @@ DVC или неизменяемые пути данных + логировани
 <details><summary>Ответ</summary>
 
 Гигабайтные образы на каждую версию, медленные сборки и откаты, смешение кода и модели;
-   лучше образ-рантайм и версия в конфиге.
+лучше образ-рантайм и версия в конфиге.
 
 </details>
 
@@ -1115,7 +1144,7 @@ DVC или неизменяемые пути данных + логировани
 <details><summary>Ответ</summary>
 
 Коммит, версия данных, pinned-зависимости, seeds, параметры, окружение; тест переобучения
-   с допуском в CI.
+с допуском в CI.
 
 </details>
 
@@ -1124,7 +1153,7 @@ DVC или неизменяемые пути данных + логировани
 <details><summary>Ответ</summary>
 
 Слой сервиса (латентность, ошибки, ресурсы) и слой модели (дрейф входов и предсказаний,
-   качество по отложенной разметке); алерты с runbook.
+качество по отложенной разметке); алерты с runbook.
 
 </details>
 
@@ -1133,7 +1162,7 @@ DVC или неизменяемые пути данных + логировани
 <details><summary>Ответ</summary>
 
 Изменение распределения данных или связи вход→ответ; разобраться в причине (источник данных?),
-   переобучить, выкатывать только через gate.
+переобучить, выкатывать только через gate.
 
 </details>
 
@@ -1142,9 +1171,7 @@ DVC или неизменяемые пути данных + логировани
 <details><summary>Ответ</summary>
 
 SSO/basic-auth, `--allowed-hosts`, только внутренняя сеть, ключи S3 только у сервера, права
-    на реестр, бэкапы базы и бакета, аудит.
-
----
+на реестр, бэкапы базы и бакета, аудит.
 
 </details>
 

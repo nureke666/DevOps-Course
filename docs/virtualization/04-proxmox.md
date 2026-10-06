@@ -1,12 +1,12 @@
 ---
 title: "04. Proxmox VE: VM, LXC, шаблоны, хранилища, кластер, HA, бэкапы, API"
-description: "Блок → Виртуализация on-prem → тема 04. Опирается на 02kvmqemulibvirt.md"
+description: "⭐ Nested-установка, репозитории PVE 9, шаблоны с cloud-init, хранилища, кластер и кворум, HA, vzdump/PBS, API"
 ---
 
 # 04. Proxmox VE: VM, LXC, шаблоны, хранилища, кластер, HA, бэкапы, API
 
-> Блок → Виртуализация on-prem → тема 04. Опирается на [02_kvm_qemu_libvirt.md](/virtualization/02-kvm-qemu-libvirt)
-> (KVM, QEMU, qcow2, cloud-init, снапшоты) и [03_virt_networking.md](/virtualization/03-virt-networking)
+> Блок → Виртуализация on-prem → тема 04. Опирается на [02. KVM, QEMU и libvirt руками: virsh, cloud-init, qcow2, снапшоты](/virtualization/02-kvm-qemu-libvirt)
+> (KVM, QEMU, qcow2, cloud-init, снапшоты) и [03. Сеть для VM: libvirt-сети, bridge, macvtap, VLAN, bonding](/virtualization/03-virt-networking)
 > (bridge, VLAN, bond). Хранилища (LVM-thin, ZFS, NFS, Ceph) подробно — в блоке [«Хранилища»](/storage/).
 >
 > **После темы ты умеешь:** поднять Proxmox VE вложенно в KVM, настроить репозиторий без подписки,
@@ -19,7 +19,7 @@ description: "Блок → Виртуализация on-prem → тема 04. �
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  ┌──────────────────── Proxmox VE 9.x = Debian 13 + ... ───────────────────────────┐
  │  веб-интерфейс :8006  ◄──►  REST API /api2/json  ◄──►  pvesh / Terraform / Ansible │
  │                                                                                  │
@@ -31,8 +31,9 @@ description: "Блок → Виртуализация on-prem → тема 04. �
  │  кластер: corosync (кворум) + pmxcfs (/etc/pve — общий конфиг всех узлов)        │
  │  HA: ha-manager (CRM/LRM + watchdog-фенсинг)    бэкап: vzdump → local / PBS      │
  └──────────────────────────────────────────────────────────────────────────────────┘
-          libvirt НЕ используется: у Proxmox свои конфиги /etc/pve/qemu-server/&lt;vmid&gt;.conf
-```text
+          libvirt НЕ используется: у Proxmox свои конфиги /etc/pve/qemu-server/<vmid>.conf
+```
+
 ---
 
 ## 1. Что такое Proxmox VE
@@ -78,7 +79,8 @@ virt-install \
   --graphics vnc,listen=127.0.0.1 \
   --noautoconsole
 virt-viewer pve1          # или virt-manager
-```text
+```
+
 В установщике: графический или **Terminal UI** (есть и вариант для серийной консоли);
 диск `vda`, ФС `ext4` (создаст `local` + `local-lvm`) или ZFS; FQDN `pve1.lab.local`;
 IP `10.10.10.11/24`, шлюз и DNS `10.10.10.1`. После перезагрузки:
@@ -89,7 +91,8 @@ virsh change-media pve1 sda --eject     # вынуть ISO (имя устрой�
 ssh root@10.10.10.11
 grep -cE 'vmx|svm' /proc/cpuinfo        # > 0 — nested работает, VM внутри будут на KVM
 pveversion -v | head -3
-```text
+```
+
 > 💡 Для десятков узлов есть автоматическая установка: `proxmox-auto-install-assistant`
 > готовит ISO с файлом ответов `answer.toml` — Proxmox ставится без рук.
 
@@ -116,7 +119,7 @@ Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
 EOF
 
 apt update && apt full-upgrade -y     # ⭐ всегда full-upgrade (dist-upgrade), не apt upgrade
-```text
+```
 То же в интерфейсе: узел → **Updates → Repositories** → Disable у enterprise, **Add →
 No-Subscription**. Окно «You do not have a valid subscription» при входе — просто напоминание.
 
@@ -143,9 +146,9 @@ No-Subscription**. Окно «You do not have a valid subscription» при вх
 **Где лежат конфиги.** `/etc/pve` — это **pmxcfs**: база в SQLite, смонтированная как ФС
 и одинаковая на всех узлах кластера.
 
-```text
+```text:no-line-numbers
 /etc/pve/
-├── qemu-server/101.conf     → симлинк на nodes/&lt;этот узел&gt;/qemu-server/
+├── qemu-server/101.conf     → симлинк на nodes/<этот узел>/qemu-server/
 ├── lxc/200.conf
 ├── nodes/pve1/…             конфиги VM/CT конкретного узла
 ├── storage.cfg              хранилища (общие для кластера)
@@ -154,7 +157,8 @@ No-Subscription**. Окно «You do not have a valid subscription» при вх
 └── user.cfg, priv/          пользователи, токены, ключи
 /var/lib/vz/                 хранилище local: template/iso, template/cache (LXC), dump (бэкапы)
 /etc/network/interfaces      сеть узла (ifupdown2; применить: ifreload -a)
-```text
+```
+
 ```ini
 # /etc/pve/qemu-server/101.conf — конфиг VM: читается проще XML libvirt
 agent: enabled=1
@@ -170,7 +174,8 @@ scsi0: local-lvm:base-9000-disk-0/vm-101-disk-0,discard=on,iothread=1,size=11776
 scsihw: virtio-scsi-single
 serial0: socket
 vga: serial0
-```text
+```
+
 ---
 
 ## 5. VM на Proxmox: на что смотреть
@@ -211,7 +216,8 @@ qm set 9000 --serial0 socket --vga serial0      # облачные образы 
 qm set 9000 --ciuser devops --sshkeys /root/devops.pub --ipconfig0 ip=dhcp
 qm disk resize 9000 scsi0 +8G                   # 3.5G образа мало
 qm template 9000                                # теперь это шаблон: запускать нельзя, клонировать — да
-```text
+```
+
 ```bash
 # три VM со статическими адресами
 for i in 1 2 3; do
@@ -223,7 +229,8 @@ qm list
 qm cloudinit dump 101 user          # какой user-data Proxmox сгенерировал
 qm guest cmd 101 network-get-interfaces   # IP от агента
 ssh devops@10.10.10.21
-```text
+```
+
 - Параметры cloud-init Proxmox: `ciuser`, `cipassword`, `sshkeys`, `ipconfigN`, `nameserver`,
   `searchdomain`, `ciupgrade` (по умолчанию 1 — полное обновление пакетов при первом старте,
   это долго). Меняются в любой момент — применяются при следующем старте.
@@ -248,9 +255,9 @@ pct create 200 local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst \
   --unprivileged 1 --features nesting=1 \
   --ssh-public-keys /root/devops.pub --start 1
 pct enter 200
-```text
+```
 Unprivileged, nesting, bind mounts, idmap и «когда LXC, а когда VM» — тема
-[05_lxc_containers.md](/virtualization/05-lxc-containers).
+[05. Системные контейнеры: LXC, Incus, LXC в Proxmox](/virtualization/05-lxc-containers).
 
 ---
 
@@ -272,7 +279,8 @@ pvesm list local-lvm
 pvesm add nfs nfs-lab --server 10.10.10.30 --export /srv/pve --content images,rootdir,backup
 pvesm set local --content iso,vztmpl,backup,snippets
 cat /etc/pve/storage.cfg
-```text
+```
+
 > 💡 «Общее» (shared) хранилище = диски доступны со всех узлов: живая миграция без
 > копирования дисков и HA. С локальными дисками миграция идёт с копированием
 > (`--with-local-disks`), а HA — только через ZFS-репликацию с потерей данных с последней
@@ -286,7 +294,7 @@ cat /etc/pve/storage.cfg
 (ровно схема из темы 03). Файл — `/etc/network/interfaces`, применяется без перезагрузки
 через `ifreload -a` (или кнопкой **Apply Configuration** в интерфейсе).
 
-```text
+```
 # /etc/network/interfaces — bond + VLAN-aware bridge (пример из документации Proxmox)
 auto lo
 iface lo inet loopback
@@ -313,11 +321,13 @@ auto vmbr0.10                      # IP узла в VLAN управления
 iface vmbr0.10 inet static
         address 10.0.10.11/24
         gateway 10.0.10.1
-```text
+```
+
 ```bash
 qm set 101 --net0 virtio,bridge=vmbr0,tag=20      # VM в VLAN 20 — Proxmox сам настроит порт
 pct set 200 --net0 name=eth0,bridge=vmbr0,tag=20,ip=dhcp
-```text
+```
+
 - **SDN** (Datacenter → SDN): зоны Simple, VLAN, QinQ, VXLAN, EVPN — сети VM описываются
   на уровне кластера, а не руками на каждом узле.
 - **Firewall** — на уровнях Datacenter, узел, VM (правила и security groups), выключен по
@@ -334,23 +344,25 @@ pvecm create lab-cluster
 pvecm add 10.10.10.11
 pvecm status
 pvecm nodes
-```text
+```
+
 **Кворум** — большинство голосов: `floor(N/2) + 1`. Только узлы в кворуме могут менять
 `/etc/pve` (запускать, создавать, мигрировать VM). Без кворума `/etc/pve` — только чтение,
 уже работающие VM продолжают работать (если нет HA).
 
-```text
+```text:no-line-numbers
  3 узла, 3 голоса, кворум = 2          2 узла, 2 голоса, кворум = 2
  ┌────┐ ┌────┐ ┌────┐                  ┌────┐     ┌────┐
  │pve1│ │pve2│ │pve3│                  │pve1│  ✗  │pve2│   упал один — у второго 1 голос из 2:
  └────┘ └────┘ └─✗──┘                  └────┘     └────┘   кворума нет, кластер «встал»
  упал один — 2 из 3 ✅                  → нужен третий голос: QDevice
  разрыв сети 2|1 — работает сторона с 2, одиночка знает, что она в меньшинстве (нет split-brain)
-```text
+```
+
 - **Почему 3 узла:** это минимум, когда падение одного не останавливает кластер и HA.
 - **QDevice** — внешний «арбитр» с одним голосом для кластеров из **чётного** числа узлов
   (прежде всего 2): на отдельной машине `apt install corosync-qnetd`, на узлах —
-  `apt install corosync-qdevice`, затем `pvecm qdevice setup &lt;IP&gt;`. Для нечётных кластеров
+  `apt install corosync-qdevice`, затем `pvecm qdevice setup <IP>`. Для нечётных кластеров
   Proxmox QDevice не рекомендует.
 - **Требования:** UDP 5405–5412 между узлами, задержка < 5 мс (LAN, не WAN), синхронное время,
   одинаковые версии, лучше отдельная сеть для corosync и второй линк на резерв. Corosync'у
@@ -372,7 +384,7 @@ ha-manager status
 ha-manager rules add node-affinity app1-on-pve1 --resources vm:101 --nodes pve1   # предпочитать pve1
 ha-manager rules add resource-affinity apps-apart --affinity negative --resources vm:101,vm:102
 qm migrate 102 pve2 --online          # живая миграция (с общим хранилищем)
-```text
+```
 - С 9.0 **HA rules** (node-affinity, resource-affinity) заменили HA groups — старые команды
   групп помечены устаревшими.
 - HA ≠ живая миграция: HA **перезапускает** VM на другом узле после смерти хоста (простой
@@ -389,13 +401,13 @@ qm migrate 102 pve2 --online          # живая миграция (с общи
 | `stop` | Выключить, бэкап, включить | Короткий | Максимальная |
 
 ```bash
-vzdump 101 --storage local --mode snapshot --compress zstd --notes-template '&#123;&#123;guestname&#125;&#125; manual'
-ls -lh /var/lib/vz/dump/                       # vzdump-qemu-101-&lt;дата&gt;.vma.zst + .log
+vzdump 101 --storage local --mode snapshot --compress zstd --notes-template '{{guestname}} manual'
+ls -lh /var/lib/vz/dump/                       # vzdump-qemu-101-<дата>.vma.zst + .log
 vzdump 200 --storage local --mode snapshot     # LXC → .tar.zst
 
-qmrestore /var/lib/vz/dump/vzdump-qemu-101-&lt;дата&gt;.vma.zst 201 --storage local-lvm   # в НОВЫЙ VMID
-pct restore 300 /var/lib/vz/dump/vzdump-lxc-200-&lt;дата&gt;.tar.zst --storage local-lvm
-```text
+qmrestore /var/lib/vz/dump/vzdump-qemu-101-<дата>.vma.zst 201 --storage local-lvm   # в НОВЫЙ VMID
+pct restore 300 /var/lib/vz/dump/vzdump-lxc-200-<дата>.tar.zst --storage local-lvm
+```
 Расписание: Datacenter → Backup (хранится в `/etc/pve/jobs.cfg`), хранение —
 `--prune-backups keep-daily=7,keep-weekly=4,keep-monthly=3`.
 
@@ -409,9 +421,10 @@ pct restore 300 /var/lib/vz/dump/vzdump-lxc-200-&lt;дата&gt;.tar.zst --stora
 
 ```bash
 pvesm add pbs pbs01 --server 10.10.10.20 --datastore store1 \
-  --username root@pam --fingerprint &lt;SHA256 из дашборда PBS&gt; --password
+  --username root@pam --fingerprint <SHA256 из дашборда PBS> --password
 vzdump 101 --storage pbs01
-```text
+```
+
 > ⭐ Бэкап, из которого ни разу не восстанавливали, — это надежда, а не бэкап. Правило
 > 3-2-1: три копии, на двух типах носителей, одна вне площадки. И регулярный тест
 > восстановления (лаба 4).
@@ -420,7 +433,7 @@ vzdump 101 --storage pbs01
 
 ## 13. API и токены
 
-Всё, что делает веб-интерфейс, — вызовы REST API `https://&lt;узел&gt;:8006/api2/json/...`.
+Всё, что делает веб-интерфейс, — вызовы REST API `https://<узел>:8006/api2/json/...`.
 Для автоматизации (Terraform, Ansible, Packer, скрипты) — **API-токены**, а не пароль root.
 
 ```bash
@@ -437,7 +450,7 @@ curl -sk -H 'Authorization: PVEAPIToken=terraform@pve!tf=3f0c9a4e-....' \
 
 pvesh get /cluster/resources --type vm --output-format json-pretty    # то же с узла
 pvesh get /nodes/pve1/qemu/101/status/current
-```text
+```
 - `--privsep 1` (по умолчанию) — у токена свои права, которые надо выдать отдельно
   (`pveum acl modify / --tokens 'terraform@pve!tf' --roles ...`), и они не шире прав
   пользователя. `--privsep 0` — токен получает все права пользователя.
@@ -451,7 +464,7 @@ pvesh get /nodes/pve1/qemu/101/status/current
 |---------|---------|-----------|
 | `apt update`: 401 Unauthorized от enterprise.proxmox.com | Enterprise-репо без подписки | `Enabled: no` в `pve-enterprise.sources` и `ceph.sources`, добавить no-subscription |
 | `KVM virtualisation configured, but not available` | Nested: у VM-гипервизора нет `vmx`/`svm` | `nested=1` на хосте, `host-passthrough` у pve1 |
-| Клон стартует, но не получает IP/ключ | Нет диска cloudinit или пустые `ipconfig0`/`sshkeys` | `qm cloudinit dump &lt;id&gt; user`, проверить `ide2 ...cloudinit` |
+| Клон стартует, но не получает IP/ключ | Нет диска cloudinit или пустые `ipconfig0`/`sshkeys` | `qm cloudinit dump <id> user`, проверить `ide2 ...cloudinit` |
 | Консоль VM из облачного образа пустая | Образ пишет в серийную консоль | `--serial0 socket --vga serial0` |
 | IP в интерфейсе не показывается | Нет/не запущен qemu-guest-agent или `agent` выключен | Вшить агент в шаблон, `--agent enabled=1` |
 | `apt upgrade` сломал узел | Для Proxmox нужен `full-upgrade` | Только `apt full-upgrade` |
@@ -495,13 +508,13 @@ pvesh get /nodes/pve1/qemu/101/status/current
 | Что сгенерировал cloud-init | `qm cloudinit dump 101 user` |
 | Увеличить диск | `qm disk resize 101 scsi0 +10G` |
 | VM в VLAN | `qm set 101 --net0 virtio,bridge=vmbr0,tag=20` |
-| Шаблоны LXC | `pveam update; pveam available --section system; pveam download local &lt;tpl&gt;` |
+| Шаблоны LXC | `pveam update; pveam available --section system; pveam download local <tpl>` |
 | Хранилища | `pvesm status`, `/etc/pve/storage.cfg` |
-| Кластер | `pvecm create N`, `pvecm add &lt;IP&gt;`, `pvecm status` |
-| QDevice | `pvecm qdevice setup &lt;IP&gt;` |
+| Кластер | `pvecm create N`, `pvecm add <IP>`, `pvecm status` |
+| QDevice | `pvecm qdevice setup <IP>` |
 | HA | `ha-manager add vm:101`, `ha-manager status`, `ha-manager rules add ...` |
 | Миграция | `qm migrate 101 pve2 --online` |
-| Бэкап / восстановление | `vzdump 101 --storage S --mode snapshot --compress zstd`; `qmrestore &lt;файл&gt; 201` |
+| Бэкап / восстановление | `vzdump 101 --storage S --mode snapshot --compress zstd`; `qmrestore <файл> 201` |
 | Токен | `pveum user token add user@pve id --privsep 0` |
 | API | `curl -H 'Authorization: PVEAPIToken=user@pve!id=SECRET' https://host:8006/api2/json/...` |
 
@@ -512,7 +525,7 @@ pvesh get /nodes/pve1/qemu/101/status/current
 1. Proxmox VE = Debian + KVM/QEMU + LXC + веб/API + кластер + бэкапы; libvirt не используется.
 2. Nested-стенд: у VM-гипервизора `host-passthrough`, внутри `grep vmx|svm` > 0.
 3. В PVE 9 репозитории — deb822 `.sources`; без подписки выключи enterprise и включи `pve-no-subscription`; обновление — только `full-upgrade`.
-4. `/etc/pve` — общая для кластера pmxcfs; конфиг VM — `/etc/pve/qemu-server/&lt;vmid&gt;.conf`.
+4. `/etc/pve` — общая для кластера pmxcfs; конфиг VM — `/etc/pve/qemu-server/<vmid>.conf`.
 5. Шаблон = облачный образ + `import-from` + диск `cloudinit` + serial + агент → `qm template`; клоны — linked или full.
 6. Хранилище определяет возможности: снапшоты, миграция без копирования, HA — только с общим хранилищем или ZFS-репликацией.
 7. VLAN в Proxmox — `bridge-vlan-aware yes` на vmbr0 и `tag=N` у NIC VM.
@@ -520,13 +533,17 @@ pvesh get /nodes/pve1/qemu/101/status/current
 9. HA перезапускает VM после отказа узла (фенсинг watchdog'ом, ~2 минуты), живая миграция — плановый переезд без простоя.
 10. vzdump/PBS + регулярная проверка восстановления; автоматизация — через API-токены с минимальными правами.
 
-➡️ Дальше: [05_lxc_containers.md](/virtualization/05-lxc-containers) · задачи: 04_proxmox_tasks.md
+---
 
+## Задачи
+
+> Стенд: `pve1` (10.10.10.11) вложенно в KVM в сети `virt-lab` из [Виртуализация](/virtualization/);
+> для задач про кластер — ещё `pve2`, `pve3` (.12, .13) и NFS-VM `nfs01` (.30).
+> Перед экспериментами: `virsh snapshot-create-as pve1 --name clean` на хосте.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Из чего состоит Proxmox VE? Чем его стек отличается от «libvirt + virsh»?
 
@@ -581,7 +598,7 @@ pmxcfs — кластерная ФС на базе SQLite, смонтирова�
 Скачать облачный образ (и проверить контрольную сумму) → при желании вшить
 `qemu-guest-agent` (`virt-customize`) → `qm create` с `--scsihw virtio-scsi-single`, NIC на
 `vmbr0`, `--agent enabled=1`, `--cpu`, `--ostype l26` → импорт диска
-`--scsi0 local-lvm:0,import-from=&lt;img&gt;` → диск cloud-init `--ide2 local-lvm:cloudinit` →
+`--scsi0 local-lvm:0,import-from=<img>` → диск cloud-init `--ide2 local-lvm:cloudinit` →
 `--boot order=scsi0` → `--serial0 socket --vga serial0` → `ciuser`, `sshkeys`, `ipconfig0` →
 увеличить диск → `qm template`.
 
@@ -712,168 +729,94 @@ HA реагирует на отказ: VM перезапускается на д
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
 ```text:no-line-numbers
 B1.  $ apt update
-```text
-<details><summary>Ответ</summary>
+     Err:4 https://enterprise.proxmox.com/debian/pve trixie InRelease
+       401  Unauthorized [IP: ...]
 
-⚠️ Включён enterprise-репозиторий без подписки. `Enabled: no` в
+B2.  root@pve1:~# apt upgrade -y        # «обычный Debian же»
+
+B3.  # кластер из 2 узлов, pve2 выключили на обслуживание
+     root@pve1:~# qm start 101
+     cluster not ready - no quorum? (500)
+
+B4.  root@pve2:~# qm list      # на pve2 уже есть VM 100
+     root@pve2:~# pvecm add 10.10.10.11
+
+B5.  # HA-ресурс vm:101, диск VM на local-lvm узла pve1; pve1 сгорел
+
+B6.  root@pve1:~# qm template 9000
+     root@pve1:~# qm start 9000
+
+B7.  # в шаблоне: --cicustom "user=local:snippets/pkgs.yaml"
+     # pkgs.yaml: #cloud-config + packages: [nginx]
+     # клоны: nginx есть, а зайти по SSH ключом нельзя
+
+B8.  # Datacenter → Firewall → Options → Firewall: Yes   (правил нет)
+
+B9.  # corosync и ночные бэкапы по одному линку 1G; каждую ночь узлы «выпадают» из кластера
+
+B10. root@pve1:~# qm create 9001 --name tpl2 --memory 2048 --net0 virtio,bridge=vmbr0
+     root@pve1:~# qm config 9001 | grep -E 'cpu|scsihw'
+
+B11. «Бэкапы у нас есть: vzdump каждую ночь в local на том же узле»
+
+B12. root@pve1:~# pveum user token add terraform@pve tf     # без --privsep 0
+     # terraform: 403 Permission check failed
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Включён enterprise-репозиторий без подписки. `Enabled: no` в
 `pve-enterprise.sources` (и `ceph.sources`), добавить `proxmox.sources` с `pve-no-subscription`.
 
-</details>
-
-```text:no-line-numbers
-     Err:4 https://enterprise.proxmox.com/debian/pve trixie InRelease
-```text
-```text:no-line-numbers
-       401  Unauthorized [IP: ...]
-```text
-```text:no-line-numbers
-B2.  root@pve1:~# apt upgrade -y        # «обычный Debian же»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `apt upgrade` не ставит новые зависимости и не убирает заменённые пакеты — узел
+**B2.** ⚠️ `apt upgrade` не ставит новые зависимости и не убирает заменённые пакеты — узел
 может остаться полуобновлённым. Нужен `apt full-upgrade`.
 
-</details>
-
-```text:no-line-numbers
-B3.  # кластер из 2 узлов, pve2 выключили на обслуживание
-```text
-<details><summary>Ответ</summary>
-
-⚠️ В кластере из двух узлов после выключения одного нет кворума — конфигурация
+**B3.** ⚠️ В кластере из двух узлов после выключения одного нет кворума — конфигурация
 только для чтения, VM не стартуют. Вернуть pve2, добавить QDevice или третий узел;
 временно `pvecm expected 1` — осознанно и только пока второй узел гарантированно выключен.
 
-</details>
-
-```text:no-line-numbers
-     root@pve1:~# qm start 101
-```text
-```text:no-line-numbers
-     cluster not ready - no quorum? (500)
-```text
-```text:no-line-numbers
-B4.  root@pve2:~# qm list      # на pve2 уже есть VM 100
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Узел с гостями добавлять нельзя (конфликт VMID и конфигов) — `pvecm add` откажет.
+**B4.** ⚠️ Узел с гостями добавлять нельзя (конфликт VMID и конфигов) — `pvecm add` откажет.
 Перенести/забэкапить VM, удалить их, добавить пустой узел, восстановить.
 
-</details>
-
-```text:no-line-numbers
-     root@pve2:~# pvecm add 10.10.10.11
-```text
-```text:no-line-numbers
-B5.  # HA-ресурс vm:101, диск VM на local-lvm узла pve1; pve1 сгорел
-```text
-<details><summary>Ответ</summary>
-
-⚠️ HA не поднимет VM: её диск был на локальном хранилище погибшего узла. Нужно общее
+**B5.** ⚠️ HA не поднимет VM: её диск был на локальном хранилище погибшего узла. Нужно общее
 хранилище или ZFS-репликация (с потерей данных с последней синхронизации).
 
-</details>
-
-```text:no-line-numbers
-B6.  root@pve1:~# qm template 9000
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Шаблон нельзя запустить — ошибка «you can't start a vm if it's a template».
+**B6.** ⚠️ Шаблон нельзя запустить — ошибка «you can't start a vm if it's a template».
 Клонировать и запускать клон.
 
-</details>
-
-```text:no-line-numbers
-     root@pve1:~# qm start 9000
-```text
-```text:no-line-numbers
-B7.  # в шаблоне: --cicustom "user=local:snippets/pkgs.yaml"
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `cicustom user=` полностью заменяет сгенерированный user-data: `ciuser`/`sshkeys`
+**B7.** ⚠️ `cicustom user=` полностью заменяет сгенерированный user-data: `ciuser`/`sshkeys`
 больше не применяются. Добавить пользователя и `ssh_authorized_keys` в свой файл.
 
-</details>
-
-```text:no-line-numbers
-     # pkgs.yaml: #cloud-config + packages: [nginx]
-```text
-```text:no-line-numbers
-     # клоны: nginx есть, а зайти по SSH ключом нельзя
-```text
-```text:no-line-numbers
-B8.  # Datacenter → Firewall → Options → Firewall: Yes   (правил нет)
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Политика по умолчанию для входящего — DROP: можно отрезать себе веб-интерфейс и SSH
+**B8.** ⚠️ Политика по умолчанию для входящего — DROP: можно отрезать себе веб-интерфейс и SSH
 (Proxmox оставляет доступ из локальной сети кластера, но полагаться не стоит). Сначала
 правила на 8006/22, потом включение.
 
-</details>
-
-```text:no-line-numbers
-B9.  # corosync и ночные бэкапы по одному линку 1G; каждую ночь узлы «выпадают» из кластера
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Бэкапы забивают линк, задержки corosync растут — узлы теряют членство, а с HA ещё и
+**B9.** ⚠️ Бэкапы забивают линк, задержки corosync растут — узлы теряют членство, а с HA ещё и
 фенсятся. Отдельная сеть/линк для corosync, второй линк, ограничение полосы бэкапов (`bwlimit`).
 
-</details>
-
-```text:no-line-numbers
-B10.  root@pve1:~# qm create 9001 --name tpl2 --memory 2048 --net0 virtio,bridge=vmbr0
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Через CLI без явных параметров — `cpu: kvm64`-дефолт (в конфиге пусто) и
+**B10.** ⚠️ Через CLI без явных параметров — `cpu: kvm64`-дефолт (в конфиге пусто) и
 `scsihw: lsi`: старая модель CPU и медленный эмулируемый контроллер. Задавать `--cpu` и
 `--scsihw virtio-scsi-single`.
 
-</details>
-
-```text:no-line-numbers
-     root@pve1:~# qm config 9001 | grep -E 'cpu|scsihw'
-```text
-```text:no-line-numbers
-B11.  «Бэкапы у нас есть: vzdump каждую ночь в local на том же узле»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Бэкап на том же узле погибнет вместе с ним. Нужны PBS/отдельное хранилище, копия
+**B11.** ⚠️ Бэкап на том же узле погибнет вместе с ним. Нужны PBS/отдельное хранилище, копия
 вне площадки (3-2-1) и проверка восстановления.
 
-</details>
-
-```text:no-line-numbers
-B12.  root@pve1:~# pveum user token add terraform@pve tf     # без --privsep 0
-```text
-<details><summary>Ответ</summary>
-
-⚠️ С `privsep=1` у токена нет прав, пока их не выдать отдельно:
-`pveum acl modify / --tokens 'terraform@pve!tf' --roles &lt;роль&gt;`, или пересоздать токен с
+**B12.** ⚠️ С `privsep=1` у токена нет прав, пока их не выдать отдельно:
+`pveum acl modify / --tokens 'terraform@pve!tf' --roles <роль>`, или пересоздать токен с
 `--privsep 0`.
 
 </details>
 
-```text:no-line-numbers
-     # terraform: 403 Permission check failed
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Поднять pve1
-**1.** Установи Proxmox VE 9.2 вложенно по разделу 2 конспекта.
+#### C1. 🔑 Поднять pve1
+1. Установи Proxmox VE 9.2 вложенно по разделу 2 конспекта.
+2. Настрой no-subscription, обнови узел, перезагрузи.
+3. Докажи, что внутри pve1 доступен KVM. Сделай на хосте `virsh snapshot-create-as pve1 --name clean`.
 
 <details><summary>Ответ</summary>
 
@@ -882,7 +825,11 @@ B12.  root@pve1:~# pveum user token add terraform@pve tf     # без --privsep 
 
 </details>
 
-**2.** Настрой no-subscription, обнови узел, перезагрузи.
+#### C2. 🔑 Шаблон и три клона
+1. Сделай шаблон 9000 из облачного образа Ubuntu 24.04 с cloud-init и вшитым агентом.
+2. Склонируй `app1..app3` (linked) со статическими адресами `10.10.10.21–23`.
+3. Зайди по SSH, проверь IP через агента (`qm guest cmd`), посмотри `qm cloudinit dump 101 user`.
+4. Сделай один full clone. Сравни, сколько места заняли linked и full (`lvs` на узле).
 
 <details><summary>Ответ</summary>
 
@@ -892,7 +839,9 @@ B12.  root@pve1:~# pveum user token add terraform@pve tf     # без --privsep 
 
 </details>
 
-**3.** Докажи, что внутри pve1 доступен KVM. Сделай на хосте `virsh snapshot-create-as pve1 --name clean`.
+#### C3. LXC
+Создай unprivileged-контейнер `ct1` (Debian 13, 512 МБ, `nesting=1`), зайди через `pct enter`,
+поставь `nginx`. Сделай снапшот `pct snapshot 200 base`, сломай nginx, откатись `pct rollback`.
 
 <details><summary>Ответ</summary>
 
@@ -903,226 +852,86 @@ B12.  root@pve1:~# pveum user token add terraform@pve tf     # без --privsep 
 
 </details>
 
-### C2. 🔑 Шаблон и три клона
-**1.** Сделай шаблон 9000 из облачного образа Ubuntu 24.04 с cloud-init и вшитым агентом.
+#### C4. Хранилища
+1. Добавь NFS-хранилище (экспорт с `nfs01` или хоста, сеть `virt-lab`).
+2. Перенеси диск `app1` на NFS на ходу: `qm disk move 101 scsi0 nfs-lab`.
+3. Сравни в `pvesm status` и объясни, какие функции появились у `app1` (подсказка: миграция).
 
 <details><summary>Ответ</summary>
 
-Проверка: `grep -cE 'vmx|svm' /proc/cpuinfo` в pve1 > 0, `pveversion` показывает
-`pve-manager/9.2...`, `apt update` без ошибок.
-
-</details>
-
-**2.** Склонируй `app1..app3` (linked) со статическими адресами `10.10.10.21–23`.
-
-<details><summary>Ответ</summary>
-
-`lvs` на узле: у linked clone тонкий том с небольшим `Data%` поверх `base-9000-disk-0`,
-у full clone — независимый том с копией данных шаблона. `qm guest cmd 101 network-get-interfaces`
-возвращает JSON с адресами — значит, агент работает.
-
-</details>
-
-**3.** Зайди по SSH, проверь IP через агента (`qm guest cmd`), посмотри `qm cloudinit dump 101 user`.
-
-<details><summary>Ответ</summary>
-
-`pct create 200 local:vztmpl/debian-13-standard_...tar.zst --hostname ct1 --memory 512
---rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=1`,
-`pct start 200`, `pct enter 200`; `pct snapshot 200 base`, `pct rollback 200 base`
-(снапшоты работают, потому что rootfs на LVM-thin).
-
-</details>
-
-**4.** Сделай один full clone. Сравни, сколько места заняли linked и full (`lvs` на узле).
-
-<details><summary>Ответ</summary>
-
-`pvesm add nfs nfs-lab --server &lt;IP&gt; --export &lt;путь&gt; --content images,rootdir,backup`.
+`pvesm add nfs nfs-lab --server <IP> --export <путь> --content images,rootdir,backup`.
 `qm disk move 101 scsi0 nfs-lab` работает на ходу (у linked clone диск станет самостоятельным).
 С диском на общем хранилище VM можно мигрировать между узлами без копирования дисков и
 добавить в HA.
 
 </details>
 
-### C3. LXC
-Создай unprivileged-контейнер `ct1` (Debian 13, 512 МБ, `nesting=1`), зайди через `pct enter`,
-поставь `nginx`. Сделай снапшот `pct snapshot 200 base`, сломай nginx, откатись `pct rollback`.
-
-### C4. Хранилища
-**1.** Добавь NFS-хранилище (экспорт с `nfs01` или хоста, сеть `virt-lab`).
-
-<details><summary>Ответ</summary>
-
-Проверка: `grep -cE 'vmx|svm' /proc/cpuinfo` в pve1 > 0, `pveversion` показывает
-`pve-manager/9.2...`, `apt update` без ошибок.
-
-</details>
-
-**2.** Перенеси диск `app1` на NFS на ходу: `qm disk move 101 scsi0 nfs-lab`.
-
-<details><summary>Ответ</summary>
-
-`lvs` на узле: у linked clone тонкий том с небольшим `Data%` поверх `base-9000-disk-0`,
-у full clone — независимый том с копией данных шаблона. `qm guest cmd 101 network-get-interfaces`
-возвращает JSON с адресами — значит, агент работает.
-
-</details>
-
-**3.** Сравни в `pvesm status` и объясни, какие функции появились у `app1` (подсказка: миграция).
-
-<details><summary>Ответ</summary>
-
-`pct create 200 local:vztmpl/debian-13-standard_...tar.zst --hostname ct1 --memory 512
---rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=1`,
-`pct start 200`, `pct enter 200`; `pct snapshot 200 base`, `pct rollback 200 base`
-(снапшоты работают, потому что rootfs на LVM-thin).
-
-</details>
-
-### C5. VLAN внутри Proxmox
-**1.** Сделай `vmbr0` VLAN-aware (`bridge-vlan-aware yes`, `bridge-vids 2-4094`), примени `ifreload -a`
+#### C5. VLAN внутри Proxmox
+1. Сделай `vmbr0` VLAN-aware (`bridge-vlan-aware yes`, `bridge-vids 2-4094`), примени `ifreload -a`
    (с консоли pve1, не по SSH!).
-
-<details><summary>Ответ</summary>
-
-Проверка: `grep -cE 'vmx|svm' /proc/cpuinfo` в pve1 > 0, `pveversion` показывает
-`pve-manager/9.2...`, `apt update` без ошибок.
-
-</details>
-
-**2.** `app2` и `app3` положи в VLAN 20 (`tag=20`), им — адреса `10.0.20.2/.3` на втором
+2. `app2` и `app3` положи в VLAN 20 (`tag=20`), им — адреса `10.0.20.2/.3` на втором
    интерфейсе или вместо основного.
+3. Докажи: `app2 ↔ app3` видят друг друга, `app1` (без тега) их не видит.
 
 <details><summary>Ответ</summary>
 
-`lvs` на узле: у linked clone тонкий том с небольшим `Data%` поверх `base-9000-disk-0`,
-у full clone — независимый том с копией данных шаблона. `qm guest cmd 101 network-get-interfaces`
-возвращает JSON с адресами — значит, агент работает.
+После `bridge-vlan-aware yes` и `ifreload -a` — `qm set 102 --net0 virtio,bridge=vmbr0,tag=20`
+(так же для 103). Внутри VM адреса из 10.0.20.0/24. `bridge vlan show` на pve1 показывает
+tap-интерфейсы VM с PVID 20. `app1` в VLAN 1 (без тега) не получает ARP-ответов от них.
 
 </details>
 
-**3.** Докажи: `app2 ↔ app3` видят друг друга, `app1` (без тега) их не видит.
-
-<details><summary>Ответ</summary>
-
-`pct create 200 local:vztmpl/debian-13-standard_...tar.zst --hostname ct1 --memory 512
---rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=1`,
-`pct start 200`, `pct enter 200`; `pct snapshot 200 base`, `pct rollback 200 base`
-(снапшоты работают, потому что rootfs на LVM-thin).
-
-</details>
-
-### C6. 🔑 Бэкап и восстановление
-**1.** На `app1` создай файл-маркер с датой. Сделай `vzdump 101 --mode snapshot --compress zstd`.
-
-<details><summary>Ответ</summary>
-
-Проверка: `grep -cE 'vmx|svm' /proc/cpuinfo` в pve1 > 0, `pveversion` показывает
-`pve-manager/9.2...`, `apt update` без ошибок.
-
-</details>
-
-**2.** Удали маркер, «сломай» VM.
-
-<details><summary>Ответ</summary>
-
-`lvs` на узле: у linked clone тонкий том с небольшим `Data%` поверх `base-9000-disk-0`,
-у full clone — независимый том с копией данных шаблона. `qm guest cmd 101 network-get-interfaces`
-возвращает JSON с адресами — значит, агент работает.
-
-</details>
-
-**3.** Восстанови бэкап в VMID 201, запусти (не забудь, что у копии тот же IP — поменяй
+#### C6. 🔑 Бэкап и восстановление
+1. На `app1` создай файл-маркер с датой. Сделай `vzdump 101 --mode snapshot --compress zstd`.
+2. Удали маркер, «сломай» VM.
+3. Восстанови бэкап в VMID 201, запусти (не забудь, что у копии тот же IP — поменяй
    `ipconfig0` до старта или выключи `app1`), найди маркер. Засеки время восстановления.
 
 <details><summary>Ответ</summary>
 
-`pct create 200 local:vztmpl/debian-13-standard_...tar.zst --hostname ct1 --memory 512
---rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=1`,
-`pct start 200`, `pct enter 200`; `pct snapshot 200 base`, `pct rollback 200 base`
-(снапшоты работают, потому что rootfs на LVM-thin).
+`vzdump 101 --storage local --mode snapshot --compress zstd`; восстановление
+`qmrestore /var/lib/vz/dump/vzdump-qemu-101-...vma.zst 201 --storage local-lvm`, затем
+`qm set 201 --ipconfig0 ip=10.10.10.31/24,gw=10.10.10.1` до запуска (иначе конфликт IP с app1;
+MAC у восстановленной копии тот же — если app1 работает, лучше сменить и MAC:
+`qm set 201 --net0 virtio,bridge=vmbr0`). Маркер на месте. Время восстановления записать —
+это твой RTO на стенде.
 
 </details>
 
-### C7. API
-**1.** Создай пользователя `terraform@pve`, выдай роль, создай токен.
+#### C7. API
+1. Создай пользователя `terraform@pve`, выдай роль, создай токен.
+2. `curl` — список VM; `curl -X POST` — запусти VM 102.
+3. То же через `pvesh`. Какие пути API у операций «клонировать» и «изменить конфиг»?
 
 <details><summary>Ответ</summary>
 
-Проверка: `grep -cE 'vmx|svm' /proc/cpuinfo` в pve1 > 0, `pveversion` показывает
-`pve-manager/9.2...`, `apt update` без ошибок.
+`pveum user add terraform@pve`, `pveum acl modify / --users terraform@pve --roles PVEAdmin`,
+`pveum user token add terraform@pve tf --privsep 0`. Запуск:
+`curl -sk -X POST -H 'Authorization: PVEAPIToken=terraform@pve!tf=<secret>' https://10.10.10.11:8006/api2/json/nodes/pve1/qemu/102/status/start`,
+`pvesh create /nodes/pve1/qemu/102/status/start`. Клон — `POST /nodes/{node}/qemu/{vmid}/clone`,
+конфиг — `PUT`/`POST /nodes/{node}/qemu/{vmid}/config`. Все пути — в API Viewer
+(`https://<узел>:8006/pve-docs/api-viewer/`).
 
 </details>
 
-**2.** `curl` — список VM; `curl -X POST` — запусти VM 102.
-
-<details><summary>Ответ</summary>
-
-`lvs` на узле: у linked clone тонкий том с небольшим `Data%` поверх `base-9000-disk-0`,
-у full clone — независимый том с копией данных шаблона. `qm guest cmd 101 network-get-interfaces`
-возвращает JSON с адресами — значит, агент работает.
-
-</details>
-
-**3.** То же через `pvesh`. Какие пути API у операций «клонировать» и «изменить конфиг»?
-
-<details><summary>Ответ</summary>
-
-`pct create 200 local:vztmpl/debian-13-standard_...tar.zst --hostname ct1 --memory 512
---rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=1`,
-`pct start 200`, `pct enter 200`; `pct snapshot 200 base`, `pct rollback 200 base`
-(снапшоты работают, потому что rootfs на LVM-thin).
-
-</details>
-
-### C8. Кластер и HA (бонус, нужно ~16 ГБ RAM под стенд)
-**1.** Три узла, `pvecm create` / `pvecm add`, NFS как общее хранилище.
-
-<details><summary>Ответ</summary>
-
-Проверка: `grep -cE 'vmx|svm' /proc/cpuinfo` в pve1 > 0, `pveversion` показывает
-`pve-manager/9.2...`, `apt update` без ошибок.
-
-</details>
-
-**2.** `app1` на NFS, `ha-manager add vm:101`.
-
-<details><summary>Ответ</summary>
-
-`lvs` на узле: у linked clone тонкий том с небольшим `Data%` поверх `base-9000-disk-0`,
-у full clone — независимый том с копией данных шаблона. `qm guest cmd 101 network-get-interfaces`
-возвращает JSON с адресами — значит, агент работает.
-
-</details>
-
-**3.** На хосте `virsh destroy pve1` (где работает app1). Засеки, через сколько app1 поднимется
+#### C8. Кластер и HA (бонус, нужно ~16 ГБ RAM под стенд)
+1. Три узла, `pvecm create` / `pvecm add`, NFS как общее хранилище.
+2. `app1` на NFS, `ha-manager add vm:101`.
+3. На хосте `virsh destroy pve1` (где работает app1). Засеки, через сколько app1 поднимется
    на другом узле. Что в `ha-manager status` в процессе?
+4. Верни pve1. Что с кворумом при двух выключенных узлах?
 
 <details><summary>Ответ</summary>
 
-`pct create 200 local:vztmpl/debian-13-standard_...tar.zst --hostname ct1 --memory 512
---rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=1`,
-`pct start 200`, `pct enter 200`; `pct snapshot 200 base`, `pct rollback 200 base`
-(снапшоты работают, потому что rootfs на LVM-thin).
-
-</details>
-
-**4.** Верни pve1. Что с кворумом при двух выключенных узлах?
-
-<details><summary>Ответ</summary>
-
-`pvesm add nfs nfs-lab --server &lt;IP&gt; --export &lt;путь&gt; --content images,rootdir,backup`.
-`qm disk move 101 scsi0 nfs-lab` работает на ходу (у linked clone диск станет самостоятельным).
-С диском на общем хранилище VM можно мигрировать между узлами без копирования дисков и
-добавить в HA.
+Через ~1–3 минуты: `ha-manager status` показывает узел `unknown`/`fence`, ресурс
+`fence` → `recovery` → `started` на другом узле. При двух выключенных из трёх кворума нет:
+оставшийся узел не может ничего менять, а HA-ресурсы на нём он сам не перезапускает.
 
 </details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Был один узел, добавили второй «на будущее». Выключили второй на обслуживание —
 на первом VM не стартуют, в интерфейсе нельзя ничего поменять. Что случилось, что делать
@@ -1167,7 +976,7 @@ corosync.
 <details><summary>Ответ</summary>
 
 Загрузиться со старого ядра из меню загрузчика, закрепить его:
-`proxmox-boot-tool kernel pin &lt;версия&gt;`, вернуть сеть, сообщить о проблеме, ждать фикса/обновить
+`proxmox-boot-tool kernel pin <версия>`, вернуть сеть, сообщить о проблеме, ждать фикса/обновить
 прошивку NIC; после — `proxmox-boot-tool kernel unpin`. Обновлять узлы по одному, начиная
 с тестового.
 
@@ -1200,8 +1009,11 @@ corosync.
 
 <details><summary>Ответ</summary>
 
-1) Сразу удалить токен: `pveum user token remove terraform@pve tf`. 2) Посмотреть, что
+1\) Сразу удалить токен: `pveum user token remove terraform@pve tf`. 2) Посмотреть, что
 им делали: журнал задач (Datacenter → Tasks), `/var/log/pveproxy/access.log` на узлах.
+3) Проверить VM/пользователей/ключи на посторонние изменения. 4) Выпустить новый токен
+с минимальными правами, хранить в секретах CI (Vault, переменные CI), а не в коде. 5) Удалить
+секрет из истории git и добавить сканер секретов (gitleaks) в CI.
 
 </details>
 
@@ -1209,15 +1021,14 @@ corosync.
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое Proxmox VE и чем он отличается от VMware vSphere?
 
 <details><summary>Ответ</summary>
 
 Open source платформа на Debian: KVM-VM и LXC-контейнеры, веб-интерфейс и API, кластер,
-   HA, Ceph/ZFS, бэкапы (PBS). В отличие от vSphere — без отдельного vCenter (управлять можно
-   с любого узла), бесплатна с опциональной подпиской, есть системные контейнеры; у vSphere —
-   более зрелая экосистема, DRS/vMotion и сторонние интеграции.
+HA, Ceph/ZFS, бэкапы (PBS). В отличие от vSphere — без отдельного vCenter (управлять можно
+с любого узла), бесплатна с опциональной подпиской, есть системные контейнеры; у vSphere —
+более зрелая экосистема, DRS/vMotion и сторонние интеграции.
 
 </details>
 
@@ -1226,8 +1037,8 @@ Open source платформа на Debian: KVM-VM и LXC-контейнеры, 
 <details><summary>Ответ</summary>
 
 Corosync обеспечивает членство и кворум, pmxcfs реплицирует `/etc/pve` на все узлы. Кворум —
-   большинство голосов (`floor(N/2)+1`), без него узел не меняет конфигурацию — защита от
-   split-brain. Три узла — минимум, чтобы пережить отказ одного; для двух — QDevice.
+большинство голосов (`floor(N/2)+1`), без него узел не меняет конфигурацию — защита от
+split-brain. Три узла — минимум, чтобы пережить отказ одного; для двух — QDevice.
 
 </details>
 
@@ -1236,8 +1047,8 @@ Corosync обеспечивает членство и кворум, pmxcfs ре�
 <details><summary>Ответ</summary>
 
 `ha-manager` следит за ресурсами (VM/CT); при отказе узла тот самофенсится watchdog'ом
-   после потери кворума, а кластер запускает его HA-ресурсы на других узлах (~2 минуты).
-   Нужны 3+ узла, общее хранилище или ZFS-репликация, правила размещения — HA rules.
+после потери кворума, а кластер запускает его HA-ресурсы на других узлах (~2 минуты).
+Нужны 3+ узла, общее хранилище или ZFS-репликация, правила размещения — HA rules.
 
 </details>
 
@@ -1246,8 +1057,8 @@ Corosync обеспечивает членство и кворум, pmxcfs ре�
 <details><summary>Ответ</summary>
 
 Локальные: dir, LVM-thin, ZFS; общие: NFS/CIFS, LVM на iSCSI/FC, Ceph RBD; PBS для бэкапов.
-   Живая миграция: общее хранилище (иначе копирование дисков `--with-local-disks`), совместимый
-   CPU-тип, одинаковые сети (бриджи/VLAN) на узлах.
+Живая миграция: общее хранилище (иначе копирование дисков `--with-local-disks`), совместимый
+CPU-тип, одинаковые сети (бриджи/VLAN) на узлах.
 
 </details>
 
@@ -1256,8 +1067,8 @@ Corosync обеспечивает членство и кворум, pmxcfs ре�
 <details><summary>Ответ</summary>
 
 Облачный образ + cloud-init: импорт диска, диск cloudinit, серийная консоль, агент,
-   `qm template`; клоны получают пользователя, ключ и IP через cloud-init. В идеале шаблон
-   собирается Packer'ом (proxmox-iso/proxmox-clone) по расписанию.
+`qm template`; клоны получают пользователя, ключ и IP через cloud-init. В идеале шаблон
+собирается Packer'ом (proxmox-iso/proxmox-clone) по расписанию.
 
 </details>
 
@@ -1266,8 +1077,8 @@ Corosync обеспечивает членство и кворум, pmxcfs ре�
 <details><summary>Ответ</summary>
 
 LXC — лёгкие Linux-сервисы без своего ядра (DNS, прокси, мониторинг), быстрый старт,
-   высокая плотность. VM — другая ОС, своё ядро/модули, сильная изоляция, живая миграция,
-   Docker/Kubernetes (Proxmox рекомендует Docker запускать в VM).
+высокая плотность. VM — другая ОС, своё ядро/модули, сильная изоляция, живая миграция,
+Docker/Kubernetes (Proxmox рекомендует Docker запускать в VM).
 
 </details>
 
@@ -1276,8 +1087,8 @@ LXC — лёгкие Linux-сервисы без своего ядра (DNS, п�
 <details><summary>Ответ</summary>
 
 vzdump по расписанию (snapshot-режим) в PBS: инкрементально, дедупликация, шифрование,
-   verify, хранение по политике, синхронизация на удалённый PBS; регулярная проверка
-   восстановления и копия вне площадки.
+verify, хранение по политике, синхронизация на удалённый PBS; регулярная проверка
+восстановления и копия вне площадки.
 
 </details>
 
@@ -1286,7 +1097,7 @@ vzdump по расписанию (snapshot-режим) в PBS: инкремен�
 <details><summary>Ответ</summary>
 
 REST API с токенами: Terraform (провайдер bpg/proxmox), Ansible (коллекция community.proxmox
-   с inventory-плагином), Packer для шаблонов, `pvesh`/`curl` в скриптах.
+с inventory-плагином), Packer для шаблонов, `pvesh`/`curl` в скриптах.
 
 </details>
 
@@ -1295,7 +1106,7 @@ REST API с токенами: Terraform (провайдер bpg/proxmox), Ansibl
 <details><summary>Ответ</summary>
 
 `vmbr0` с `bridge-vlan-aware yes` поверх транка (часто bond), у NIC VM — `tag=N`; либо
-   отдельные бриджи на VLAN-интерфейсах; в больших кластерах — SDN-зоны VLAN/VXLAN.
+отдельные бриджи на VLAN-интерфейсах; в больших кластерах — SDN-зоны VLAN/VXLAN.
 
 </details>
 
@@ -1304,10 +1115,8 @@ REST API с токенами: Terraform (провайдер bpg/proxmox), Ansibl
 <details><summary>Ответ</summary>
 
 По одному узлу: мигрировать VM с узла (или maintenance-режим HA), `apt full-upgrade`,
-    перезагрузка, проверка `pvecm status`/`ha-manager status`, вернуть VM, следующий узел.
-    Сначала тестовый узел/кластер, перед этим — бэкапы.
-
----
+перезагрузка, проверка `pvecm status`/`ha-manager status`, вернуть VM, следующий узел.
+Сначала тестовый узел/кластер, перед этим — бэкапы.
 
 </details>
 

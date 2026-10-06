@@ -1,14 +1,14 @@
 ---
 title: "02. SLI, SLO и error budget"
-description: "Блок → SRE и Observability → тема 02. Продолжает"
+description: "Выбор SLI, расчёт бюджета, multi-window multi-burn-rate алерты"
 ---
 
 # 02. SLI, SLO и error budget
 
 > Блок → SRE и Observability → тема 02. Продолжает
-> [../Left/02_Monitoring/07_what_to_monitor.md](/monitoring/07-what-to-monitor)
+> [Мониторинг: 07. Что мониторить: 4 сигнала, USE, RED, SLO](/monitoring/07-what-to-monitor)
 > (раздел «От SLO к порогам алертов») и опирается на
-> [../Left/02_Monitoring/03_promql.md](/monitoring/03-promql) (recording rules).
+> [Мониторинг: 03. Типы метрик и PromQL](/monitoring/03-promql) (recording rules).
 >
 > **После темы ты умеешь:** выбрать SLI для сервиса, обосновать SLO и окно, посчитать error
 > budget в минутах и запросах, написать recording rules и multi-window multi-burn-rate алерты,
@@ -18,7 +18,7 @@ description: "Блок → SRE и Observability → тема 02. Продолж�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  пользователь ──► что для него «хорошо»? ──► SLI = хорошие события / все валидные
                                                    │
                                                    ▼
@@ -31,16 +31,18 @@ description: "Блок → SRE и Observability → тема 02. Продолж�
               1000 из 1 млн запросов       3× и 1×    → тикет
                       │                            │                          │
                       └──────────────── SLO-дашборд в Grafana ────────────────┘
-```text
+```
+
 ---
 
 ## 1. SLI, SLO, SLA — точнее, чем в блоке мониторинга
 
-```text
+```
 SLI  =  хорошие события / валидные события        (всегда доля, от 0 до 1)
 SLO  =  SLI ≥ цель за окно                         «99,9% запросов /checkout успешны за 30 дней»
 SLA  =  SLO, записанный в договор, + последствия  «ниже 99,5% — возврат 10% оплаты»
-```text
+```
+
 | | SLO | SLA |
 |---|-----|-----|
 | Для кого | Для своей команды | Для клиента, юридически |
@@ -78,7 +80,8 @@ sum(rate(http_request_duration_seconds_bucket{job="shop-api",handler="/checkout"
 
 # Freshness: доля минут за 30 дней, когда данные были свежее 15 минут (subquery)
 avg_over_time(((time() - pipeline_last_success_timestamp_seconds) < bool 900)[30d:1m])
-```text
+```
+
 > ⚠️ Латентный SLI считают **через корзину гистограммы**, а не через `histogram_quantile`:
 > «доля быстрых запросов» складывается и усредняется честно, а перцентили — нет.
 > Порог SLO должен совпадать с границей корзины. В Prometheus 3 значения `le`
@@ -94,7 +97,7 @@ avg_over_time(((time() - pipeline_last_success_timestamp_seconds) < bool 900)[30
 | Клиент (RUM, мобильное приложение) | Ровно то, что видит пользователь | Шумно, сложно, данные приходят с задержкой |
 
 Практика: SLI — с балансировщика или приложения, синтетика — как дополнение для
-малотрафиковых сервисов ([../Left/02_Monitoring/04_exporters.md](/monitoring/04-exporters), blackbox).
+малотрафиковых сервисов ([Мониторинг: 04. Exporter'ы](/monitoring/04-exporters), blackbox).
 
 ### Что считать «валидным» событием
 
@@ -142,10 +145,11 @@ avg_over_time(((time() - pipeline_last_success_timestamp_seconds) < bool 900)[30
 
 ## 5. Error budget: считаем
 
-```text
+```
 по времени:    бюджет = (1 − SLO) × длительность окна
 по запросам:   бюджет = (1 − SLO) × число валидных запросов за окно
-```text
+```
+
 | SLO | день | неделя | 28 дней | 30 дней | квартал (90 д) | год (365 д) |
 |-----|------|--------|---------|---------|----------------|-------------|
 | 99% | 14 мин 24 с | 1 ч 40 мин 48 с | 6 ч 43 мин 12 с | 7 ч 12 мин | 21 ч 36 мин | 3 д 15 ч 36 мин |
@@ -157,11 +161,12 @@ avg_over_time(((time() - pipeline_last_success_timestamp_seconds) < bool 900)[30
 
 Проверка в уме: 30 дней = 43 200 минут; 0,1% от них = 43,2 минуты.
 
-```text
+```
 По запросам: 10 млн запросов/мес × 0,1% = 10 000 «плохих» запросов в бюджете.
 Частичный сбой: 10% ошибок в течение 2 часов = 0,1 × 120 мин = 12 «минут полного простоя»
                = 12 / 43,2 ≈ 28% месячного бюджета.
-```text
+```
+
 > 💡 Бюджет по запросам честнее: 10 минут простоя в 3 ночи и 10 минут в час пик —
 > это разное число пострадавших пользователей. SLI из этого конспекта — request-based.
 
@@ -172,13 +177,14 @@ avg_over_time(((time() - pipeline_last_success_timestamp_seconds) < bool 900)[30
 / sum(increase(http_requests_total{job="shop-api",handler="/checkout"}[30d]))
 
 # остаток бюджета (1 = нетронут, 0 = исчерпан, < 0 = SLO нарушен)
-1 - ( &lt;доля ошибок за 30d&gt; ) / 0.001
-```text
+1 - ( <доля ошибок за 30d> ) / 0.001
+```
+
 ---
 
 ## 6. Error budget policy
 
-```text
+```text:no-line-numbers
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ ERROR BUDGET POLICY — shop-api                         согласовано: CTO  │
 ├──────────────────────────────────────────────────────────────────────────┤
@@ -195,17 +201,19 @@ avg_over_time(((time() - pipeline_last_success_timestamp_seconds) < bool 900)[30
 │   к задачам на резервирование, а не к заморозке фич                      │
 │ Пересмотр SLO и policy: раз в квартал                                    │
 └──────────────────────────────────────────────────────────────────────────┘
-```text
+```
+
 ---
 
 ## 7. Burn rate — скорость сжигания бюджета
 
-```text
+```
 burn rate = наблюдаемая доля ошибок / (1 − SLO)
 
 время до исчерпания бюджета = окно / burn rate
 доля бюджета, сгоревшая за время t = burn rate × t / окно
-```text
+```
+
 | Burn rate | Доля ошибок при SLO 99,9% | Весь бюджет (30 д) сгорит за | За 1 час сгорает |
 |-----------|---------------------------|------------------------------|------------------|
 | 1 | 0,1% | 30 дней — ровно к концу окна | 0,14% |
@@ -232,12 +240,13 @@ burn rate = наблюдаемая доля ошибок / (1 − SLO)
 | Несколько burn rate | Ловит и быстрое, и медленное горение, но долго не гаснет после починки |
 | ⭐ **Multi-window multi-burn-rate** | Длинное окно — значимость, короткое — «ещё горит прямо сейчас» |
 
-```text
+```text:no-line-numbers
 Зачем короткое окно (reset time):
 ошибки кончились ──►  ratio_rate1h ещё ~час выше порога (в окне хвост инцидента)
                       ratio_rate5m падает ниже порога через ~5 минут
                       алерт = long AND short ⇒ гаснет через ~5 минут, а не через час
-```text
+```
+
 ---
 
 ## 9. Multi-window multi-burn-rate: пороги
@@ -255,10 +264,11 @@ burn rate = наблюдаемая доля ошибок / (1 − SLO)
 3 × 24 / 720 = 10%; 1 × 72 / 720 = 10%.
 
 Как быстро сработает страница (порог 1,44% на окне 1 час):
-```text
+```
 полный простой (100% ошибок):  0,0144 × 60 мин ≈ 52 секунды
 5% ошибок:                      0,0144 / 0,05 × 60 мин ≈ 17 минут
-```text
+```
+
 ---
 
 ## 10. Recording rules и алерты
@@ -339,7 +349,8 @@ groups:
         annotations:
           summary: "shop-api медленно сжигает error budget (SLO 99,9%)"
           runbook_url: "https://wiki.example.com/runbooks/shop-api-slo"
-```text
+```
+
 Разбор решений:
 - Доля ошибок за окно считается как `rate(ошибок[окно]) / rate(всех[окно])` по сырым
   счётчикам, а **не** как `avg_over_time` от 5-минутной доли: среднее от долей даёт
@@ -347,7 +358,7 @@ groups:
 - `for` не нужен: роль «подтверждения» играет короткое окно. Можно добавить `for: 2m`
   от дребезга.
 - Когда горят оба алерта, warning подавляют inhibit-правилом по лейблу `slo`
-  ([../Left/02_Monitoring/05_alertmanager.md](/monitoring/05-alertmanager)).
+  ([Мониторинг: 05. Алерты и Alertmanager](/monitoring/05-alertmanager)).
 - Латентный SLO (99% быстрее 300 мс) — такие же правила с
   `1 - bucket{le="0.3"} / count` и порогами от бюджета 1%: `14.4 * 0.01` и т.д.
 
@@ -371,11 +382,12 @@ tests:
             exp_annotations:
               summary: "shop-api быстро сжигает error budget (SLO 99,9%)"
               runbook_url: "https://wiki.example.com/runbooks/shop-api-slo"
-```text
+```
 ```bash
 docker run --rm -v "$PWD":/w -w /w --entrypoint promtool prom/prometheus:latest \
   test rules tests/slo-shop-api_test.yml
-```text
+```
+
 ---
 
 ## 11. SLO-дашборд в Grafana
@@ -383,13 +395,13 @@ docker run --rm -v "$PWD":/w -w /w --entrypoint promtool prom/prometheus:latest 
 | Панель | Тип | Запрос |
 |--------|-----|--------|
 | SLI за 30 дней | Stat, порог 99,9% | `1 - (sum(increase(...{status=~"5.."}[30d])) / sum(increase(...[30d])))` |
-| Остаток бюджета | Gauge 0–100% | `1 - (&lt;доля ошибок за 30d&gt;) / 0.001` |
+| Остаток бюджета | Gauge 0–100% | `1 - (<доля ошибок за 30d>) / 0.001` |
 | Burn rate 1h и 6h | Time series, линии порогов 14,4 и 6 | `job:slo_errors_per_request:ratio_rate1h{job="shop-api"} / 0.001` |
 | Доля ошибок vs цель | Time series | `job:slo_errors_per_request:ratio_rate5m{job="shop-api"}` и константа `0.001` |
 | Сгорание бюджета во времени | Time series за 30 дней | Recording rule `..._ratio_rate30d` c `interval: 5m`, иначе панель тяжёлая |
 | Состояние алертов | Alert list | Фильтр по лейблу `slo` |
 
-Приёмы из [../Left/02_Monitoring/06_grafana.md](/monitoring/06-grafana):
+Приёмы из [Мониторинг: 06. Grafana](/monitoring/06-grafana):
 переменная `$service`, единицы `percentunit`, дашборд — в git через provisioning.
 
 > ⚠️ Если 5xx ещё ни разу не было, рядов с `status=~"5.."` нет, и доля ошибок —
@@ -416,18 +428,18 @@ slos:
     description: "Доля не-5xx ответов /checkout"
     sli:
       events:
-        error_query: sum(rate(http_requests_total{job="shop-api",handler="/checkout",status=~"5.."}[&#123;&#123;.window&#125;&#125;]))
-        total_query: sum(rate(http_requests_total{job="shop-api",handler="/checkout"}[&#123;&#123;.window&#125;&#125;]))
+        error_query: sum(rate(http_requests_total{job="shop-api",handler="/checkout",status=~"5.."}[{{.window}}]))
+        total_query: sum(rate(http_requests_total{job="shop-api",handler="/checkout"}[{{.window}}]))
     alerting:
       name: ShopApiCheckoutAvailability
       page_alert:
         labels: { severity: critical }
       ticket_alert:
         labels: { severity: warning }
-```text
+```
 ```bash
 sloth generate -i slo/shop-api.yml > rules/slo-shop-api-generated.yml
-```text
+```
 Что получится: recording rules `slo:sli_error:ratio_rate5m` … `ratio_rate3d` и `ratio_rate30d`,
 служебные `slo:error_budget:ratio`, `slo:period_error_budget_remaining:ratio` и два алерта
 (page и ticket) с теми же окнами и порогами 14,4 / 6 / 3 / 1, что в разделе 10.
@@ -445,7 +457,8 @@ spec:
     ratio:
       errors: { metric: 'http_requests_total{job="shop-api",handler="/checkout",status=~"5.."}' }
       total:  { metric: 'http_requests_total{job="shop-api",handler="/checkout"}' }
-```text
+```
+
 | | Руками | Sloth | Pyrra |
 |---|--------|-------|-------|
 | Понимание механики | ⭐ полное | Нужно для ревью | Нужно для ревью |
@@ -522,13 +535,17 @@ spec:
 9. Правила SLO — в git, с `promtool check` и unit-тестами алертов.
 10. Error budget policy превращает график в решения: без неё бюджет — просто красивая панель.
 
-➡️ Дальше: [03_tracing_opentelemetry.md](/sre/03-tracing-opentelemetry) · задачи: 02_sli_slo_error_budget_tasks.md
+---
 
+## Задачи
+
+> Стенд: из [SRE](/sre/) — shop-api отдаёт `http_requests_total` и
+> `http_request_duration_seconds_bucket`, payments ломается через `POST /chaos`.
+> Фоновый трафик: `while true; do curl -s localhost:8080/checkout >/dev/null; sleep 0.2; done`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Дай определения SLI, SLO и SLA. Почему SLA обычно мягче SLO?
 
@@ -585,6 +602,7 @@ API — доступность и латентность; пайплайн — �
 
 Исключают health checks, мониторинг, нагрузочные тесты. 4xx обычно не считают
 ошибкой сервиса, но 429 от собственного лимитера из-за нехватки мощности и массовые
+404 после кривого релиза — ошибки сервиса.
 
 </details>
 
@@ -657,6 +675,7 @@ burn rate весь бюджет сгорит за 720 / 14,4 = 50 часов, а
 <details><summary>Ответ</summary>
 
 Полный простой длиной 59 минут не вызовет алерта, а при 99,9% бюджет на месяц —
+43 минуты: он сгорит целиком раньше, чем кто-то проснётся.
 
 </details>
 
@@ -684,184 +703,94 @@ Sloth из короткой спецификации генерирует record
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```promql
 B1.  # SLI латентности за 30 дней
-```text
-<details><summary>Ответ</summary>
+     histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[30d]))) < 0.3
 
-⚠️ Перцентиль за 30 дней — не SLI: не даёт долю хороших запросов, не считает бюджет,
+B2.  # SLO: «среднее время ответа < 200 мс»
+     rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m]) < 0.2
+
+B3.  # recording rule для 6-часового окна
+     - record: job:slo_errors_per_request:ratio_rate6h
+       expr: avg_over_time(job:slo_errors_per_request:ratio_rate5m[6h])
+
+B4.  - alert: HighErrors
+       expr: job:slo_errors_per_request:ratio_rate5m > 0.001
+       for: 5m
+       labels: { severity: critical }
+
+B5.  - alert: BudgetBurn
+       expr: job:slo_errors_per_request:ratio_rate1h > (14.4 * 0.001)
+
+B6.  # SLI доступности
+     sum(rate(http_requests_total{status="200"}[5m])) / sum(rate(http_requests_total[5m]))
+
+B7.  # SLO: «99% запросов быстрее 300 мс»
+     sum(rate(http_request_duration_seconds_bucket{le="0.25"}[5m]))
+       / sum(rate(http_request_duration_seconds_count[5m]))
+
+B8.  # Prometheus: --storage.tsdb.retention.time=15d ; SLO: rolling 30 дней
+
+B9.  # SLO 99,99% у сервиса, который синхронно вызывает два внешних API с SLA 99,9%
+
+B10. # SLO 99,9%
+     job:slo_errors_per_request:ratio_rate1h > (14.4 * 0.01)
+
+B11. # recording rule без группировки, алерт с фильтром по job
+     - record: job:slo_errors_per_request:ratio_rate1h
+       expr: sum(rate(http_requests_total{status=~"5.."}[1h])) / sum(rate(http_requests_total[1h]))
+     # alert: job:slo_errors_per_request:ratio_rate1h{job="shop-api"} > 0.0144
+
+B12. # time-based SLI: минута «плохая», если в ней упал хотя бы один запрос
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Перцентиль за 30 дней — не SLI: не даёт долю хороших запросов, не считает бюджет,
 дорог по вычислению. Нужна доля `bucket{le="0.3"} / count`.
 
-</details>
+**B2.** ⚠️ Среднее прячет хвост; SLO по среднему не отражает опыт пользователей.
 
-```text:no-line-numbers
-     histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[30d]))) < 0.3
-```text
-```text:no-line-numbers
-B2.  # SLO: «среднее время ответа < 200 мс»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Среднее прячет хвост; SLO по среднему не отражает опыт пользователей.
-
-</details>
-
-```text:no-line-numbers
-     rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m]) < 0.2
-```text
-```text:no-line-numbers
-B3.  # recording rule для 6-часового окна
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Среднее от долей искажает результат при неравномерном трафике — считать по сырым
+**B3.** ⚠️ Среднее от долей искажает результат при неравномерном трафике — считать по сырым
 счётчикам за 6 часов.
 
-</details>
-
-```text:no-line-numbers
-     - record: job:slo_errors_per_request:ratio_rate6h
-```text
-```text:no-line-numbers
-       expr: avg_over_time(job:slo_errors_per_request:ratio_rate5m[6h])
-```text
-```text:no-line-numbers
-B4.  - alert: HighErrors
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Порог = весь бюджет на коротком окне: страница на любой всплеск, съевший доли
+**B4.** ⚠️ Порог = весь бюджет на коротком окне: страница на любой всплеск, съевший доли
 процента бюджета. Нужен multi-window multi-burn-rate.
 
-</details>
-
-```text:no-line-numbers
-       expr: job:slo_errors_per_request:ratio_rate5m > 0.001
-```text
-```text:no-line-numbers
-       for: 5m
-```text
-```text:no-line-numbers
-       labels: { severity: critical }
-```text
-```text:no-line-numbers
-B5.  - alert: BudgetBurn
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без короткого окна алерт будет гореть ещё почти час после починки.
+**B5.** ⚠️ Без короткого окна алерт будет гореть ещё почти час после починки.
 И нет второй пары (6h/30m) для медленных сбоев.
 
-</details>
-
-```text:no-line-numbers
-       expr: job:slo_errors_per_request:ratio_rate1h > (14.4 * 0.001)
-```text
-```text:no-line-numbers
-B6.  # SLI доступности
-```text
-<details><summary>Ответ</summary>
-
-⚠️ 201, 204, 3xx и все 4xx считаются «плохими». Правильно: хорошие = `status!~"5.."`
+**B6.** ⚠️ 201, 204, 3xx и все 4xx считаются «плохими». Правильно: хорошие = `status!~"5.."`
 (или явно определённый набор).
 
-</details>
-
-```text:no-line-numbers
-     sum(rate(http_requests_total{status="200"}[5m])) / sum(rate(http_requests_total[5m]))
-```text
-```text:no-line-numbers
-B7.  # SLO: «99% запросов быстрее 300 мс»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Корзина не совпадает с порогом: считается «быстрее 250 мс» — SLI занижен.
+**B7.** ⚠️ Корзина не совпадает с порогом: считается «быстрее 250 мс» — SLI занижен.
 Добавить корзину `0.3` в приложение.
 
-</details>
-
-```text:no-line-numbers
-     sum(rate(http_request_duration_seconds_bucket{le="0.25"}[5m]))
-```text
-```text:no-line-numbers
-       / sum(rate(http_request_duration_seconds_count[5m]))
-```text
-```text:no-line-numbers
-B8.  # Prometheus: --storage.tsdb.retention.time=15d ; SLO: rolling 30 дней
-```text
-<details><summary>Ответ</summary>
-
-⚠️ За 30 дней данных нет — SLI и остаток бюджета считаются по 15 дням. Увеличить
+**B8.** ⚠️ За 30 дней данных нет — SLI и остаток бюджета считаются по 15 дням. Увеличить
 retention или использовать долгое хранилище.
 
-</details>
-
-```text:no-line-numbers
-B9.  # SLO 99,99% у сервиса, который синхронно вызывает два внешних API с SLA 99,9%
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Две синхронные зависимости по 99,9% дают потолок ~99,8%. SLO 99,99% недостижим
+**B9.** ⚠️ Две синхронные зависимости по 99,9% дают потолок ~99,8%. SLO 99,99% недостижим
 без кэша, очередей или резервных провайдеров.
 
-</details>
+**B10.** ⚠️ Бюджет взят от 99% (0,01), а не от 99,9% (0,001): алерт в 10 раз менее чувствителен.
 
-```text:no-line-numbers
-B10.  # SLO 99,9%
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Бюджет взят от 99% (0,01), а не от 99,9% (0,001): алерт в 10 раз менее чувствителен.
-
-</details>
-
-```text:no-line-numbers
-     job:slo_errors_per_request:ratio_rate1h > (14.4 * 0.01)
-```text
-```text:no-line-numbers
-B11.  # recording rule без группировки, алерт с фильтром по job
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `sum` без `by (job)` теряет лейбл `job`: фильтр `{job="shop-api"}` ничего не найдёт,
+**B11.** ⚠️ `sum` без `by (job)` теряет лейбл `job`: фильтр `{job="shop-api"}` ничего не найдёт,
 алерт никогда не сработает. Плюс суммируются все сервисы сразу.
 
-</details>
-
-```text:no-line-numbers
-     - record: job:slo_errors_per_request:ratio_rate1h
-```text
-```text:no-line-numbers
-       expr: sum(rate(http_requests_total{status=~"5.."}[1h])) / sum(rate(http_requests_total[1h]))
-```text
-```text:no-line-numbers
-     # alert: job:slo_errors_per_request:ratio_rate1h{job="shop-api"} > 0.0144
-```text
-```text:no-line-numbers
-B12.  # time-based SLI: минута «плохая», если в ней упал хотя бы один запрос
-```text
-<details><summary>Ответ</summary>
-
-⚠️ При большом трафике почти каждая минута станет «плохой» из-за единичных ошибок.
+**B12.** ⚠️ При большом трафике почти каждая минута станет «плохой» из-за единичных ошибок.
 Time-based SLI задают через порог доли: «минута хорошая, если ошибок < 1%».
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 SLI для shop-api
+#### C1. 🔑 SLI для shop-api
 Опиши два SLI для сценария «оформить заказ» (`/checkout`): доступность и латентность.
 Для каждого — спецификация («что считаем хорошим»), реализация (метрика и PromQL),
 что исключаешь из валидных и почему.
 
-### C2. 🔑 Бюджет руками
-**1.** Без калькулятора посчитай бюджет для 99%, 99,5%, 99,9% за 28 и за 30 дней. Сверь с таблицей.
-
 <details><summary>Ответ</summary>
 
 Доступность: хорошие — не-5xx ответы `/checkout`, валидные — все ответы `/checkout`,
@@ -870,127 +799,104 @@ Time-based SLI задают через порог доли: «минута хо�
 
 </details>
 
-**2.** Сервис обрабатывает 3 млн запросов в месяц. Сколько «плохих» запросов разрешено
+#### C2. 🔑 Бюджет руками
+1. Без калькулятора посчитай бюджет для 99%, 99,5%, 99,9% за 28 и за 30 дней. Сверь с таблицей.
+2. Сервис обрабатывает 3 млн запросов в месяц. Сколько «плохих» запросов разрешено
    при каждом из трёх SLO?
+3. 5% ошибок держались 90 минут. Какую долю 30-дневного бюджета при 99,9% это съело?
 
 <details><summary>Ответ</summary>
 
-1) См. таблицу конспекта: 99% — 6 ч 43 мин 12 с / 7 ч 12 мин; 99,5% — 3 ч 21 мин 36 с /
+1\) См. таблицу конспекта: 99% — 6 ч 43 мин 12 с / 7 ч 12 мин; 99,5% — 3 ч 21 мин 36 с /
+3 ч 36 мин; 99,9% — 40 мин 19 с / 43 мин 12 с. 2) 30 000, 15 000 и 3 000 запросов.
+3) 0,05 × 90 = 4,5 минуты полного простоя → 4,5 / 43,2 ≈ 10,4% бюджета.
 
 </details>
 
-**3.** 5% ошибок держались 90 минут. Какую долю 30-дневного бюджета при 99,9% это съело?
-
-<details><summary>Ответ</summary>
-
-) 0,05 × 90 = 4,5 минуты полного простоя → 4,5 / 43,2 ≈ 10,4% бюджета.
-
-</details>
-
-### C3. 🔑 Recording rules на стенде
-**1.** Положи `rules/slo-shop-api.yml` из конспекта (пока только группу recordings).
-
-<details><summary>Ответ</summary>
-
-Доступность: хорошие — не-5xx ответы `/checkout`, валидные — все ответы `/checkout`,
-без health checks и нагрузочных тестов. Латентность: хорошие — ответы быстрее 300 мс
-(корзина `le="0.3"`), валидные — все ответы `/checkout`.
-
-</details>
-
-**2.** `promtool check rules`, затем `curl -X POST localhost:9090/-/reload`.
-
-<details><summary>Ответ</summary>
-
-1) См. таблицу конспекта: 99% — 6 ч 43 мин 12 с / 7 ч 12 мин; 99,5% — 3 ч 21 мин 36 с /
-
-</details>
-
-**3.** На `/rules` убедись, что все 7 правил считаются без ошибок; построй
+#### C3. 🔑 Recording rules на стенде
+1. Положи `rules/slo-shop-api.yml` из конспекта (пока только группу recordings).
+2. `promtool check rules`, затем `curl -X POST localhost:9090/-/reload`.
+3. На `/rules` убедись, что все 7 правил считаются без ошибок; построй
    `job:slo_errors_per_request:ratio_rate5m` на графике.
 
 <details><summary>Ответ</summary>
 
-) 0,05 × 90 = 4,5 минуты полного простоя → 4,5 / 43,2 ≈ 10,4% бюджета.
+Если правило не появилось — проверь `rule_files` в `prometheus.yml` и путь монтирования
+`./rules`; ошибки вычисления видны на `/rules`.
 
 </details>
 
-### C4. Burn-rate алерты и unit-тесты
-**1.** Добавь группу алертов из конспекта.
-
-<details><summary>Ответ</summary>
-
-Доступность: хорошие — не-5xx ответы `/checkout`, валидные — все ответы `/checkout`,
-без health checks и нагрузочных тестов. Латентность: хорошие — ответы быстрее 300 мс
-(корзина `le="0.3"`), валидные — все ответы `/checkout`.
-
-</details>
-
-**2.** Напиши `tests/slo-shop-api_test.yml` с двумя тестами: 2% ошибок → через 70 минут
+#### C4. Burn-rate алерты и unit-тесты
+1. Добавь группу алертов из конспекта.
+2. Напиши `tests/slo-shop-api_test.yml` с двумя тестами: 2% ошибок → через 70 минут
    `ShopApiErrorBudgetBurnFast`; 0,05% ошибок → тишина.
+3. Прогони `promtool test rules`. Специально сломай порог и убедись, что тест падает.
 
 <details><summary>Ответ</summary>
 
-1) См. таблицу конспекта: 99% — 6 ч 43 мин 12 с / 7 ч 12 мин; 99,5% — 3 ч 21 мин 36 с /
+Второй тест — те же серии с `'0+1999x180'` и `'0+1x180'` и `exp_alerts: []`
+(или без `exp_alerts`). Промах в пороге или окне сразу даёт `FAILED` с ожидаемыми
+и полученными алертами.
 
 </details>
 
-**3.** Прогони `promtool test rules`. Специально сломай порог и убедись, что тест падает.
-
-<details><summary>Ответ</summary>
-
-) 0,05 × 90 = 4,5 минуты полного простоя → 4,5 / 43,2 ≈ 10,4% бюджета.
-
-</details>
-
-### C5. Латентный SLO
+#### C5. Латентный SLO
 Заведи SLO «99% запросов /checkout быстрее 300 мс»: recording rules
 `job:slo_slow_requests:ratio_rate*` и алерт с порогами от бюджета 1%. Проверь через
 `POST /chaos?delay_ms=400` на payments.
 
-### C6. SLO-дашборд
+<details><summary>Ответ</summary>
+
+`job:slo_slow_requests:ratio_rate5m = 1 - sum by (job) (rate(..._bucket{le="0.3"}[5m])) /
+sum by (job) (rate(..._count[5m]))`; пороги `14.4 * 0.01`, `6 * 0.01` и т.д.
+
+</details>
+
+#### C6. SLO-дашборд
 Собери дашборд из конспекта: SLI за 30 дней, остаток бюджета, burn rate 1h/6h с линиями
 порогов, доля ошибок против цели, список алертов. Экспортируй JSON в git.
 
-### C7. 🔑 Спровоцировать и измерить
-**1.** Запусти фоновый трафик, затем `curl -X POST "localhost:8081/chaos?error_rate=0.3"`.
+#### C7. 🔑 Спровоцировать и измерить
+1. Запусти фоновый трафик, затем `curl -X POST "localhost:8081/chaos?error_rate=0.3"`.
+2. Засеки, через сколько `ShopApiErrorBudgetBurnFast` станет pending/firing (`/alerts`).
+3. Верни `error_rate=0` и засеки, через сколько алерт погаснет. Сравни с теорией.
 
 <details><summary>Ответ</summary>
 
-Доступность: хорошие — не-5xx ответы `/checkout`, валидные — все ответы `/checkout`,
-без health checks и нагрузочных тестов. Латентность: хорошие — ответы быстрее 300 мс
-(корзина `le="0.3"`), валидные — все ответы `/checkout`.
+При 30% ошибок пороги 1,44% пробиваются быстро: короткое окно — за секунды,
+часовое — примерно за 0,0144 / 0,3 × 60 ≈ 3 минуты (если до этого ошибок не было
+и трафик равномерный). Гаснет алерт за ~5 минут — когда из 5-минутного окна уходят ошибки.
 
 </details>
 
-**2.** Засеки, через сколько `ShopApiErrorBudgetBurnFast` станет pending/firing (`/alerts`).
-
-<details><summary>Ответ</summary>
-
-1) См. таблицу конспекта: 99% — 6 ч 43 мин 12 с / 7 ч 12 мин; 99,5% — 3 ч 21 мин 36 с /
-
-</details>
-
-**3.** Верни `error_rate=0` и засеки, через сколько алерт погаснет. Сравни с теорией.
-
-<details><summary>Ответ</summary>
-
-) 0,05 × 90 = 4,5 минуты полного простоя → 4,5 / 43,2 ≈ 10,4% бюджета.
-
-</details>
-
-### C8. Sloth против ручных правил
+#### C8. Sloth против ручных правил
 Сгенерируй правила Sloth для того же SLO. Сравни окна, пороги и имена метрик с ручными.
 Что Sloth добавил сверх ручного варианта?
 
-### C9. Сколько съел эксперимент
+<details><summary>Ответ</summary>
+
+Окна и пороги совпадают. Sloth добавляет `ratio_rate30d`, метрики цели, бюджета,
+текущего и периодного burn rate, остаток бюджета и `sloth_slo_info`, а также служебные
+лейблы `sloth_*`.
+
+</details>
+
+#### C9. Сколько съел эксперимент
 Посчитай по данным Prometheus, какую долю бюджета съел эксперимент из C7. Почему
 на стенде (где трафик есть всего пару часов) это число сильно отличается от «настоящего»?
+
+<details><summary>Ответ</summary>
+
+Через `increase` за период эксперимента или остаток бюджета за 30d. На стенде
+трафика мало и он есть всего пару часов, поэтому «30-дневный» SLI фактически считается
+по этим часам — эксперимент выглядит катастрофой. В проде тот же сбой растворяется
+в трафике всего месяца.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Ночью пришла страница `ShopApiErrorBudgetBurnFast` и через 3 минуты сама погасла.
 Это ложное срабатывание? Что проверить?
@@ -1092,13 +998,12 @@ SLI мерится в приложении, а ошибки — до него (I
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Чем SLI, SLO и SLA отличаются друг от друга?
 
 <details><summary>Ответ</summary>
 
 SLI — измеряемая доля хороших событий; SLO — внутренняя цель по SLI за окно; SLA —
-   договор с клиентом с последствиями, мягче SLO.
+договор с клиентом с последствиями, мягче SLO.
 
 </details>
 
@@ -1107,8 +1012,8 @@ SLI — измеряемая доля хороших событий; SLO — в�
 <details><summary>Ответ</summary>
 
 От пользовательских сценариев: что для пользователя «хорошо» — ответ без ошибки,
-   быстрее порога, свежие данные. Мерить как можно ближе к пользователю, исключать
-   служебный трафик.
+быстрее порога, свежие данные. Мерить как можно ближе к пользователю, исключать
+служебный трафик.
 
 </details>
 
@@ -1125,7 +1030,7 @@ SLI — измеряемая доля хороших событий; SLO — в�
 <details><summary>Ответ</summary>
 
 Отношение текущей доли ошибок к допустимой (1 − SLO): во сколько раз быстрее нормы
-   тратится бюджет.
+тратится бюджет.
 
 </details>
 
@@ -1134,6 +1039,8 @@ SLI — измеряемая доля хороших событий; SLO — в�
 <details><summary>Ответ</summary>
 
 Алерт срабатывает, когда burn rate выше порога одновременно на длинном и коротком окне:
+14,4 на 1h/5m и 6 на 6h/30m — страница, 3 на 1d/2h и 1 на 3d/6h — тикет. Длинное окно
+даёт точность, короткое — быструю реакцию и быстрое затухание.
 
 </details>
 
@@ -1142,7 +1049,7 @@ SLI — измеряемая доля хороших событий; SLO — в�
 <details><summary>Ответ</summary>
 
 Либо шумно (всплески, съевшие доли процента бюджета), либо медленно (длинное окно,
-   `for`); порог не связан с тем, сколько бюджета реально горит.
+`for`); порог не связан с тем, сколько бюджета реально горит.
 
 </details>
 
@@ -1151,7 +1058,7 @@ SLI — измеряемая доля хороших событий; SLO — в�
 <details><summary>Ответ</summary>
 
 Срабатывает error budget policy: заморозка фич и фокус на надёжности до восстановления,
-   постмортем по крупным инцидентам.
+постмортем по крупным инцидентам.
 
 </details>
 
@@ -1160,7 +1067,7 @@ SLI — измеряемая доля хороших событий; SLO — в�
 <details><summary>Ответ</summary>
 
 Через долю запросов быстрее порога — корзину гистограммы, совпадающую с порогом;
-   часто два порога (99% < 300 мс и 99,9% < 1 с).
+часто два порога (99% < 300 мс и 99,9% < 1 с).
 
 </details>
 
@@ -1169,7 +1076,7 @@ SLI — измеряемая доля хороших событий; SLO — в�
 <details><summary>Ответ</summary>
 
 Для инженерных решений и алертов — rolling (28/30 дней), для отчётов и SLA —
-   календарное.
+календарное.
 
 </details>
 
@@ -1178,9 +1085,7 @@ SLI — измеряемая доля хороших событий; SLO — в�
 <details><summary>Ответ</summary>
 
 Prometheus recording rules руками, Sloth, Pyrra, спецификация OpenSLO; SLO-функции
-    есть и в коммерческих системах наблюдаемости.
-
----
+есть и в коммерческих системах наблюдаемости.
 
 </details>
 

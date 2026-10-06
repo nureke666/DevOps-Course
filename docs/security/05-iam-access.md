@@ -1,17 +1,17 @@
 ---
 title: "05. IAM и доступ"
-description: "Блок → Безопасность → тема 05. Опирается на"
+description: "Политики и роли, OIDC из GitLab CI, bastion/VPN/IAP, SSO, break-glass, SSH-сертификаты"
 ---
 
 # 05. IAM и доступ
 
 > Блок → Безопасность → тема 05. Опирается на
-> [../Left/04_Cloud/01_cloud_models.md](/cloud/01-cloud-models) (IAM как понятие) ·
-> [../Left/04_Cloud/03_network_vpc.md](/cloud/03-network-vpc) (bastion vs VPN) ·
-> [../Kubernetes/17_rbac.md](/kubernetes/17-rbac) (RBAC) ·
-> [../Left/08_Vault/04_auth_methods.md](/vault/04-auth-methods) (OIDC/JWT для людей и CI) ·
-> [../Network/08_ssh.md](/network/08-ssh). Принципы least privilege и zero trust — в
-> [01_security_mindset.md](/security/01-security-mindset).
+> [Облака: 01. Модели облаков: IaaS, PaaS, SaaS](/cloud/01-cloud-models) (IAM как понятие) ·
+> [Облака: 03. Сеть в облаке: VPC](/cloud/03-network-vpc) (bastion vs VPN) ·
+> [Kubernetes: 17. RBAC](/kubernetes/17-rbac) (RBAC) ·
+> [Vault: 04. Auth methods и политики](/vault/04-auth-methods) (OIDC/JWT для людей и CI) ·
+> [Сети: 08. SSH](/network/08-ssh). Принципы least privilege и zero trust — в
+> [01. Security mindset: как думать о безопасности](/security/01-security-mindset).
 >
 > **После темы ты умеешь:** читать и писать IAM-политики (на примере AWS) с least privilege и
 > понимать, как облако принимает решение allow/deny; сопоставлять AWS с Yandex Cloud и GCP;
@@ -23,7 +23,7 @@ description: "Блок → Безопасность → тема 05. Опира�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                 КТО?  (authentication)                      ЧТО МОЖНО?  (authorization)
    ┌──────────────────────────────────────────┐     ┌───────────────────────────────────────┐
    │ люди     → SSO (IdP) + MFA               │     │ policy: Effect · Action · Resource ·  │
@@ -36,7 +36,8 @@ description: "Блок → Безопасность → тема 05. Опира�
                                               ▼
                 ЖИЗНЕННЫЙ ЦИКЛ ДОСТУПА: выдать → пересмотреть (access review) →
                 отозвать (offboarding) · аварийно войти (break-glass) · всё — в аудит-лог
-```text
+```
+
 ---
 
 ## 1. Модель IAM: кто, что, над чем, при каких условиях
@@ -81,7 +82,7 @@ description: "Блок → Безопасность → тема 05. Опира�
     }
   ]
 }
-```text
+```
 - **Effect** — `Allow` или `Deny`; **Action** — `сервис:операция`; **Resource** — ARN;
   **Condition** — дополнительные условия (IP, MFA, теги, префикс, TLS).
 - Обрати внимание: `ListBucket` действует на бакет, `PutObject` — на объекты (`/*`). Путаница
@@ -99,9 +100,10 @@ description: "Блок → Безопасность → тема 05. Опира�
 { "Sid": "DenyInsecureTransport", "Effect": "Deny", "Principal": "*",
   "Action": "s3:*", "Resource": ["arn:aws:s3:::acme-artifacts", "arn:aws:s3:::acme-artifacts/*"],
   "Condition": { "Bool": { "aws:SecureTransport": "false" } } }
-```text
+```
+
 **Как AWS принимает решение** (упрощённо, в пределах аккаунта):
-```text
+```text:no-line-numbers
  запрос ──► есть явный Deny в ЛЮБОЙ применимой политике? ── да ──► DENY
                  │ нет
                  ▼
@@ -113,7 +115,7 @@ description: "Блок → Безопасность → тема 05. Опира�
                  │ да
                  ▼
                ALLOW
-```text
+```
 > ⭐ Explicit Deny сильнее любого Allow. SCP и permission boundary не **дают** права —
 > они только **ограничивают** максимум. Поэтому guardrail'ы («нельзя выключать CloudTrail»,
 > «нельзя создавать ресурсы вне региона») пишут как Deny в SCP.
@@ -124,18 +126,19 @@ description: "Блок → Безопасность → тема 05. Опира�
 
 «Минимальные права» почти никто не пишет с первого раза. Рабочий цикл:
 
-```text
+```text:no-line-numbers
  1. Начать с узкой политики под задачу (или с managed-политики read-only)
  2. Запустить, собрать AccessDenied → добавить ровно недостающее действие
  3. Через 30–90 дней: что из выданного реально использовалось? → урезать
  4. Проверять политики до применения и регулярно после
-```text
+```
+
 | Инструмент AWS | Что делает |
 |----------------|-----------|
 | `aws accessanalyzer validate-policy --policy-type IDENTITY_POLICY --policy-document file://p.json` | Ошибки, предупреждения и «слишком широко» ещё до применения |
 | IAM Access Analyzer: policy generation | Генерирует политику по реальным вызовам из CloudTrail |
 | IAM Access Analyzer: unused access | Находит неиспользуемые роли, ключи, права |
-| `aws iam simulate-principal-policy --policy-source-arn &lt;arn&gt; --action-names s3:PutObject --resource-arns &lt;arn&gt;` | «А можно ли?» без реального вызова |
+| `aws iam simulate-principal-policy --policy-source-arn <arn> --action-names s3:PutObject --resource-arns <arn>` | «А можно ли?» без реального вызова |
 | Last accessed (консоль/API) | Когда сервис или действие использовались последний раз |
 
 Архитектурные приёмы: **отдельные аккаунты/каталоги** для prod и dev (граница blast radius
@@ -147,7 +150,7 @@ description: "Блок → Безопасность → тема 05. Опира�
 ## 4. AWS ↔ Yandex Cloud ↔ GCP
 
 Концепции одинаковые, отличаются названия (подробнее про рынок облаков —
-[../Left/04_Cloud/00_INDEX.md](/cloud/)):
+[Облака](/cloud/)):
 
 | Понятие | AWS | Yandex Cloud | GCP |
 |---------|-----|--------------|-----|
@@ -185,7 +188,7 @@ description: "Блок → Безопасность → тема 05. Опира�
 старые утилиты, S3-совместимые хранилища. Правила: ключ в секрет-менеджере, не в репо и не в
 образе; один ключ — одна система; ротация по расписанию (два ключа: выпустить новый → переключить
 → отозвать старый); алерт на использование с неожиданных адресов; инвентарь
-([../Project/08_secrets_security.md](/project/08-secrets-security)).
+([Пет-проект: 08. Секреты и безопасность](/project/08-secrets-security)).
 
 ---
 
@@ -194,7 +197,7 @@ description: "Блок → Безопасность → тема 05. Опира�
 Классика: в CI-переменной лежит `AWS_SECRET_ACCESS_KEY` с правами деплоя. Утёк лог или
 переменная — утёк прод, и ключ годен, пока его не отзовут. С OIDC секретов в CI **нет вообще**:
 
-```text
+```text:no-line-numbers
   GitLab (issuer)                       AWS STS                           джоба
  ┌──────────────┐  1. JWT на джобу     ┌────────────────────────────┐
  │ подписывает  │ ───────────────────► │ 2. проверяет подпись (JWKS │
@@ -202,7 +205,8 @@ description: "Блок → Безопасность → тема 05. Опира�
  │ project,ref, │   path:grp/app:ref_  │    trust policy роли        │ ─────────────────► deploy
  │ protected…   │   type:branch:ref:.. │                             │
  └──────────────┘                      └────────────────────────────┘
-```text
+```
+
 **1. В AWS:** IAM → Identity providers → OpenID Connect, URL `https://gitlab.com` (или свой
 GitLab), audience — как в `aud` джобы. **2. Роль с trust policy:**
 ```json
@@ -220,7 +224,7 @@ GitLab), audience — как в `aud` джобы. **2. Роль с trust policy:
     }
   }]
 }
-```text
+```
 **3. Джоба:**
 ```yaml
 deploy:prod:
@@ -243,7 +247,7 @@ deploy:prod:
       --output text)
     - export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" $aws_sts_output)
     - aws sts get-caller-identity
-```text
+```
 `ROLE_ARN` — не секрет, его можно держать обычной переменной.
 
 **Что ограничивать в trust policy:**
@@ -256,7 +260,7 @@ deploy:prod:
 - Отдельные роли: `ci-plan` (read-only) для MR, `ci-deploy-prod` — только из main.
 
 Старые переменные `CI_JOB_JWT`/`CI_JOB_JWT_V2` удалены в GitLab 17.0 — только `id_tokens`.
-Тот же механизм работает для Vault (`jwt` auth — [../Left/08_Vault/04_auth_methods.md](/vault/04-auth-methods)),
+Тот же механизм работает для Vault (`jwt` auth — [Vault: 04. Auth methods и политики](/vault/04-auth-methods)),
 для Yandex Cloud (федерация сервисных аккаунтов: JWT обменивается на IAM-токен через
 `https://auth.yandex.cloud/oauth/token`) и для GCP (Workload Identity Federation).
 
@@ -282,33 +286,34 @@ aws ssm start-session --target i-0abc1234def567890 --document-name AWS-StartPort
 gcloud compute ssh app-vm --tunnel-through-iap
 # Yandex Cloud OS Login: доступ по ролям IAM, ключи не раскладываются руками
 yc compute ssh --name app-vm
-```text
+```
+
 ### WireGuard за 10 минут (host ↔ sec01)
 
 ```bash
 # на sec01 и на хосте
 sudo apt install -y wireguard
 umask 077; wg genkey | tee wg.key | wg pubkey > wg.pub     # ⚠️ приватный ключ не покидает машину
-```text
+```
 ```ini
 # sec01: /etc/wireguard/wg0.conf                # хост: /etc/wireguard/wg0.conf
 [Interface]                                     [Interface]
 Address    = 10.8.0.1/24                        Address    = 10.8.0.2/32
-ListenPort = 51820                              PrivateKey = &lt;ключ хоста&gt;
-PrivateKey = &lt;ключ sec01&gt;
+ListenPort = 51820                              PrivateKey = <ключ хоста>
+PrivateKey = <ключ sec01>
                                                 [Peer]
-[Peer]            # ноутбук админа              PublicKey  = &lt;pub sec01&gt;
-PublicKey  = &lt;pub хоста&gt;                        Endpoint   = 192.168.56.30:51820
+[Peer]            # ноутбук админа              PublicKey  = <pub sec01>
+PublicKey  = <pub хоста>                        Endpoint   = 192.168.56.30:51820
 AllowedIPs = 10.8.0.2/32                        AllowedIPs = 10.8.0.0/24   # split tunnel: только сеть VPN
                                                 PersistentKeepalive = 25
-```text
+```
 ```bash
 sudo wg-quick up wg0 && sudo systemctl enable wg-quick@wg0
 sudo wg show                                    # latest handshake, transfer
 ssh vagrant@10.8.0.1                            # вход через туннель
 # SSH только через VPN (⚠️ сначала проверь вход через 10.8.0.1, вторая сессия открыта):
 sudo ufw allow 51820/udp && sudo ufw allow in on wg0 to any port 22 proto tcp
-```text
+```
 - `AllowedIPs` у пира — одновременно «какие адреса маршрутизировать в туннель» и «с каких
   адресов принимать пакеты от этого пира».
 - Чтобы через VPN ходить в сети **за** сервером, нужны `net.ipv4.ip_forward=1` и маршрут/NAT —
@@ -331,9 +336,9 @@ sudo ufw allow 51820/udp && sudo ufw allow in on wg0 to any port 22 proto tcp
 | Короткие сессии для прод-доступа | Украденная сессия быстро протухает |
 | Нет общих учёток (`admin` на всех) | Иначе аудит не скажет, кто это был |
 
-Kubernetes: люди — через OIDC IdP, группы → RoleBinding ([../Kubernetes/17_rbac.md](/kubernetes/17-rbac),
+Kubernetes: люди — через OIDC IdP, группы → RoleBinding ([Kubernetes: 17. RBAC](/kubernetes/17-rbac),
 раздел 8). Там же для CI показан долгоживущий токен из Secret типа `service-account-token` —
-для внешних систем лучше короткоживущий `kubectl create token &lt;sa&gt; --duration=1h` или вообще
+для внешних систем лучше короткоживущий `kubectl create token <sa> --duration=1h` или вообще
 GitOps (у CI нет доступа к кластеру).
 
 ---
@@ -341,17 +346,18 @@ GitOps (у CI нет доступа к кластеру).
 ## 9. Access review, JIT и break-glass
 
 **Access review** — регулярный (обычно ежеквартально) пересмотр «у кого какой доступ»:
-```text
+```text:no-line-numbers
  1. Выгрузить: члены групп IdP, роли в облаке, GitLab members, kubeconfig/RoleBinding, VPN-пиры
  2. Владелец системы/руководитель подтверждает каждую строку: нужен / не нужен
  3. Не нужен → отозвать; никто не подтвердил → отозвать
  4. Сохранить результат — это доказательство для аудита (тема 07)
-```text
+```
 ```bash
 aws iam generate-credential-report
 aws iam get-credential-report --query Content --output text | base64 -d | cut -d, -f1,5,11 | column -ts,
 #  user, password_last_used, access_key_1_last_used_date — кто не заходил 90+ дней
-```text
+```
+
 **JIT (just-in-time)** — постоянных админских прав нет; повышение выдаётся по запросу на 1–4 часа
 с одобрением и записью (инструменты вроде Teleport, временные роли облака, динамические креды Vault).
 
@@ -385,7 +391,7 @@ sudo sshd -t && sudo systemctl reload ssh
 ssh-keygen -s user_ca -I "nurik@laptop" -n ops -V +8h ~/.ssh/id_ed25519.pub   # → id_ed25519-cert.pub
 ssh-keygen -L -f ~/.ssh/id_ed25519-cert.pub                                  # срок, principals
 ssh vagrant@192.168.56.30                                                    # ssh подхватит -cert.pub сам
-```text
+```
 - **Principals** — «роли» в сертификате; `AuthorizedPrincipalsFile` решает, какие principals
   пускать под каким пользователем.
 - Отзыв — через срок (8 часов) и список отозванных `RevokedKeys` (KRL).
@@ -441,7 +447,7 @@ ssh vagrant@192.168.56.30                                                    # s
 | Поднять туннель | `sudo wg-quick up wg0 && sudo wg show` |
 | SSH-сертификат на 8 часов | `ssh-keygen -s user_ca -I id -n ops -V +8h key.pub` |
 | Посмотреть сертификат | `ssh-keygen -L -f key-cert.pub` |
-| Короткий токен SA k8s | `kubectl create token &lt;sa&gt; --duration=1h` |
+| Короткий токен SA k8s | `kubectl create token <sa> --duration=1h` |
 
 ---
 
@@ -458,13 +464,18 @@ ssh vagrant@192.168.56.30                                                    # s
 9. Access review ежеквартально, JIT вместо постоянных админских прав, break-glass с алертом и учениями.
 10. SSH-сертификаты с коротким сроком заменяют раскладку `authorized_keys` и решают отзыв.
 
-➡️ Дальше: [06_k8s_security.md](/security/06-k8s-security) · задачи: 05_iam_access_tasks.md
+---
 
+## Задачи
+
+> Стенд: из [Безопасность](/security/) — хост и `sec01` (192.168.56.30) для WireGuard и
+> SSH CA. Облачный аккаунт не обязателен: политики проверяй `aws accessanalyzer validate-policy`
+> (нужен бесплатный аккаунт AWS) или рассуждением по логике раздела 2. ⚠️ Перед изменением
+> sshd/ufw — снапшот и вторая SSH-сессия.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем authentication отличается от authorization? Из чего состоит любое решение о доступе?
 
@@ -632,238 +643,223 @@ Access review — регулярный пересмотр доступов вл�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```json
 B1.  { "Effect": "Allow", "Action": "s3:*",
-```text
-<details><summary>Ответ</summary>
+       "Resource": "arn:aws:s3:::acme-artifacts" }
+     // CI: PutObject → AccessDenied, «хотя s3:* же!»
 
-⚠️ ARN без `/*` — это бакет, а `PutObject` действует на объекты. Нужен
+B2.  // trust policy роли деплоя
+     { "Effect": "Allow",
+       "Principal": { "Federated": "arn:aws:iam::111122223333:oidc-provider/gitlab.com" },
+       "Action": "sts:AssumeRoleWithWebIdentity",
+       "Condition": { "StringEquals": { "gitlab.com:aud": "https://gitlab.com" } } }
+
+B3.  // identity-политика даёт s3:DeleteObject, а SCP организации:
+     { "Effect": "Deny", "Action": "s3:DeleteObject", "Resource": "*" }
+     // «почему не удаляется, у меня же Allow?»
+
+B4.  "gitlab.com:sub": "project_path:acme/linkd:ref_type:branch:ref:*"      // прод-роль, StringLike
+
+B5.  # .gitlab-ci.yml
+     variables:
+       AWS_ACCESS_KEY_ID: AKIA...               # «masked же»
+       AWS_SECRET_ACCESS_KEY: wJalr...
+
+B6.  # WireGuard: клиент
+     [Peer]
+     AllowedIPs = 0.0.0.0/0                     # «хотел только доступ к серверам»
+
+B7.  # sec01
+     ssh-keygen -s user_ca -I nurik -n ops -V +520w ~/.ssh/id_ed25519.pub
+
+B8.  # Yandex Cloud: сервисному аккаунту бэкапа
+     yc resource-manager cloud add-access-binding <cloud> --role editor --service-account-name backup
+
+B9.  # AWS: на ВМ с веб-приложением
+     HttpTokens = optional   # IMDSv1 разрешён
+
+B10. # break-glass
+     Учётка emergency-admin, пароль в общем чате админов «на всякий случай», MFA нет,
+     ни разу не проверялась, алертов нет.
+
+B11. # все админы ходят на серверы под учёткой ubuntu с одним общим ключом
+
+B12. kubectl -n prod get secret gitlab-deployer-token -o jsonpath='{.data.token}' | base64 -d
+     # токен положили в CI-переменную 2 года назад
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ ARN без `/*` — это бакет, а `PutObject` действует на объекты. Нужен
 `arn:aws:s3:::acme-artifacts/linkd/*` для объектов и бакет — только для `ListBucket`. И `s3:*`
 слишком широко.
 
-</details>
-
-```text:no-line-numbers
-       "Resource": "arn:aws:s3:::acme-artifacts" }
-```text
-```text:no-line-numbers
-     // CI: PutObject → AccessDenied, «хотя s3:* же!»
-```text
-```text:no-line-numbers
-B2.  // trust policy роли деплоя
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Нет условия по `sub` — роль примет любой проект на gitlab.com. Добавить
+**B2.** ⚠️ Нет условия по `sub` — роль примет любой проект на gitlab.com. Добавить
 `gitlab.com:sub` с проектом и веткой (и `project_id`/`ref_protected`).
 
-</details>
-
-```text:no-line-numbers
-     { "Effect": "Allow",
-```text
-```text:no-line-numbers
-       "Principal": { "Federated": "arn:aws:iam::111122223333:oidc-provider/gitlab.com" },
-```text
-```text:no-line-numbers
-       "Action": "sts:AssumeRoleWithWebIdentity",
-```text
-```text:no-line-numbers
-       "Condition": { "StringEquals": { "gitlab.com:aud": "https://gitlab.com" } } }
-```text
-```text:no-line-numbers
-B3.  // identity-политика даёт s3:DeleteObject, а SCP организации:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Explicit Deny в SCP сильнее Allow в identity-политике — удаление запрещено
+**B3.** ⚠️ Explicit Deny в SCP сильнее Allow в identity-политике — удаление запрещено
 организацией. Это guardrail, решать с владельцами SCP.
 
-</details>
-
-```text:no-line-numbers
-     { "Effect": "Deny", "Action": "s3:DeleteObject", "Resource": "*" }
-```text
-```text:no-line-numbers
-     // «почему не удаляется, у меня же Allow?»
-```text
-```text:no-line-numbers
-B4.  "gitlab.com:sub": "project_path:acme/linkd:ref_type:branch:ref:*"      // прод-роль, StringLike
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `ref:*` — любая ветка, включая feature-ветку разработчика или злоумышленника с правом
+**B4.** ⚠️ `ref:*` — любая ветка, включая feature-ветку разработчика или злоумышленника с правом
 push. Для прод-роли — только `ref:main` (protected) и protected environment.
 
-</details>
-
-```text:no-line-numbers
-B5.  # .gitlab-ci.yml
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Статические ключи в CI — в файле в git они ещё и в истории навсегда. Masked не защищает
+**B5.** ⚠️ Статические ключи в CI — в файле в git они ещё и в истории навсегда. Masked не защищает
 от вывода по частям/base64. Ротировать ключ, перейти на OIDC.
 
-</details>
-
-```text:no-line-numbers
-     variables:
-```text
-```text:no-line-numbers
-       AWS_ACCESS_KEY_ID: AKIA...               # «masked же»
-```text
-```text:no-line-numbers
-       AWS_SECRET_ACCESS_KEY: wJalr...
-```text
-```text:no-line-numbers
-B6.  # WireGuard: клиент
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Full tunnel: весь трафик ноутбука пойдёт через сервер (и без форвардинга/NAT
+**B6.** ⚠️ Full tunnel: весь трафик ноутбука пойдёт через сервер (и без форвардинга/NAT
 интернет пропадёт). Для доступа к серверам — `AllowedIPs = 10.8.0.0/24` (и нужные подсети).
 
-</details>
-
-```text:no-line-numbers
-     [Peer]
-```text
-```text:no-line-numbers
-     AllowedIPs = 0.0.0.0/0                     # «хотел только доступ к серверам»
-```text
-```text:no-line-numbers
-B7.  # sec01
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Сертификат на 10 лет — теряется главное преимущество (короткий срок). Выдавать на часы
+**B7.** ⚠️ Сертификат на 10 лет — теряется главное преимущество (короткий срок). Выдавать на часы
 (`-V +8h`), автоматически через SSO/Vault.
 
-</details>
-
-```text:no-line-numbers
-     ssh-keygen -s user_ca -I nurik -n ops -V +520w ~/.ssh/id_ed25519.pub
-```text
-```text:no-line-numbers
-B8.  # Yandex Cloud: сервисному аккаунту бэкапа
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `editor` на всё облако — сервис бэкапа может менять и удалять любые ресурсы.
+**B8.** ⚠️ `editor` на всё облако — сервис бэкапа может менять и удалять любые ресурсы.
 Сервисная роль на конкретный бакет/каталог (например, `storage.uploader` на бакет бэкапов).
 
-</details>
-
-```text:no-line-numbers
-     yc resource-manager cloud add-access-binding &lt;cloud&gt; --role editor --service-account-name backup
-```text
-```text:no-line-numbers
-B9.  # AWS: на ВМ с веб-приложением
-```text
-<details><summary>Ответ</summary>
-
-⚠️ IMDSv1 отдаёт креды роли на обычный GET — SSRF в приложении = креды роли. `HttpTokens=required`,
+**B9.** ⚠️ IMDSv1 отдаёт креды роли на обычный GET — SSRF в приложении = креды роли. `HttpTokens=required`,
 hop limit 1.
 
-</details>
-
-```text:no-line-numbers
-     HttpTokens = optional   # IMDSv1 разрешён
-```text
-```text:no-line-numbers
-B10.  # break-glass
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Всё не так: пароль скомпрометирован по определению, нет MFA, нет алерта, не проверено.
+**B10.** ⚠️ Всё не так: пароль скомпрометирован по определению, нет MFA, нет алерта, не проверено.
 Сейф/разделение кредов, аппаратный MFA, алерт на вход, учения, ротация после использования.
 
-</details>
-
-```text:no-line-numbers
-     Учётка emergency-admin, пароль в общем чате админов «на всякий случай», MFA нет,
-```text
-```text:no-line-numbers
-     ни разу не проверялась, алертов нет.
-```text
-```text:no-line-numbers
-B11.  # все админы ходят на серверы под учёткой ubuntu с одним общим ключом
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Общий ключ: аудит не скажет, кто это был, отзыв одного человека = замена ключа у всех,
+**B11.** ⚠️ Общий ключ: аудит не скажет, кто это был, отзыв одного человека = замена ключа у всех,
 увольнение не отзывает доступ. Персональные учётки, SSH-сертификаты или OS Login/SSM.
 
-</details>
-
-```text:no-line-numbers
-B12.  kubectl -n prod get secret gitlab-deployer-token -o jsonpath='{.data.token}' | base64 -d
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Долгоживущий токен SA без срока в CI уже два года, его никто не ротирует. Для
+**B12.** ⚠️ Долгоживущий токен SA без срока в CI уже два года, его никто не ротирует. Для
 внешней системы — `kubectl create token --duration`, OIDC-интеграция или GitOps, где у CI нет
 доступа к кластеру.
 
 </details>
 
-```text:no-line-numbers
-     # токен положили в CI-переменную 2 года назад
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Least-privilege политика для CI
+#### C1. 🔑 Least-privilege политика для CI
 Напиши identity-политику для роли CI, которая загружает артефакты в `s3://acme-artifacts/linkd/`
 и может видеть список только этого префикса. Добавь bucket policy «только по TLS». Проверь
 `validate-policy` (или объясни письменно, почему каждое действие и ARN именно такие).
 
-### C2. 🔑 Найди дыры в trust policy
+<details><summary>Ответ</summary>
+
+Identity-политика — как в разделе 2 (`PutObject` на `acme-artifacts/linkd/*`, `ListBucket`
+на бакет с `s3:prefix` = `linkd/*`). Bucket policy — `Deny` при `aws:SecureTransport=false` на
+бакет и объекты. `validate-policy` не должен давать ошибок; предупреждения про широкие права —
+повод сузить.
+
+</details>
+
+#### C2. 🔑 Найди дыры в trust policy
 Возьми trust policy из B2, B4 и ещё одну свою с `StringLike` на `project_path:acme/*`. Для каждой:
 кто сможет принять роль? Перепиши безопасно: отдельные роли `ci-plan` (любая ветка проекта,
 read-only) и `ci-deploy-prod` (только `main`, на gitlab.com — плюс `project_id` и `ref_protected`).
 
-### C3. OIDC-джоба
+<details><summary>Ответ</summary>
+
+B2 — любой проект gitlab.com; B4 — любая ветка `acme/linkd`; `project_path:acme/*` — любой
+проект группы (включая новые). Исправление: `ci-plan` — `StringLike` на
+`project_path:acme/linkd:ref_type:branch:ref:*` + политика read-only; `ci-deploy-prod` — `StringEquals`
+на `project_path:acme/linkd:ref_type:branch:ref:main` + `gitlab.com:project_id` + `gitlab.com:ref_protected = "true"`.
+
+</details>
+
+#### C3. OIDC-джоба
 Напиши job `deploy:prod` с `id_tokens`, `assume-role-with-web-identity` и проверкой
 `aws sts get-caller-identity`. Объясни, почему `ROLE_ARN` можно не прятать, а что будет, если
 кто-то запустит эту джобу из feature-ветки.
 
-### C4. Карта соответствий AWS ↔ Yandex Cloud ↔ GCP
+<details><summary>Ответ</summary>
+
+Джоба — как в разделе 6. ARN — идентификатор, а не секрет: без валидного ID-токена с нужным
+`sub` роль не принять. Из feature-ветки `sub` будет `…ref:feature-x` — STS откажет
+(`AccessDenied: Not authorized to perform sts:AssumeRoleWithWebIdentity`); плюс `rules` не запустит
+джобу вне main.
+
+</details>
+
+#### C4. Карта соответствий AWS ↔ Yandex Cloud ↔ GCP
 Для своего проекта (или linkd) распиши: какие identity нужны (CI, приложение, бэкап, люди),
 какие роли и на какой ресурс в Yandex Cloud, как CI получает креды без ключей, где аудит.
 
-### C5. 🔑 WireGuard host ↔ sec01
+<details><summary>Ответ</summary>
+
+Пример: CI → федерация сервисных аккаунтов с ролью на каталог prod
+(только нужные сервисные роли), приложение → SA на ВМ/поде с ролью на свой бакет и Lockbox-секрет,
+бэкап → SA с правом записи в бакет бэкапов, люди → федерация удостоверений (SSO) с группами,
+аудит → Audit Trails в отдельный бакет/каталог.
+
+</details>
+
+#### C5. 🔑 WireGuard host ↔ sec01
 Подними туннель по разделу 7: `10.8.0.1` на `sec01`, `10.8.0.2` на хосте, split tunnel.
 Проверь `wg show` (есть handshake), войди `ssh vagrant@10.8.0.1`. Затем разреши SSH только через
 `wg0` в ufw и убедись, что вход по `192.168.56.30` не работает, а по `10.8.0.1` — работает.
 
-### C6. 🔑 SSH CA с сертификатами на 8 часов
+<details><summary>Ответ</summary>
+
+`sudo wg show` — `latest handshake: … seconds ago`, байты в обе стороны. После правила
+`ufw allow in on wg0 to any port 22 proto tcp` нужно удалить общее правило для 22 (из темы 02),
+иначе SSH по 192.168.56.30 останется открыт: `sudo ufw status numbered` → `sudo ufw delete <N>`.
+Проверка: `ssh vagrant@192.168.56.30` — таймаут, `ssh vagrant@10.8.0.1` — вход.
+
+</details>
+
+#### C6. 🔑 SSH CA с сертификатами на 8 часов
 Создай `user_ca`, настрой `TrustedUserCAKeys` и `AuthorizedPrincipalsFile` на `sec01`, выпусти
 сертификат на 8 часов с principal `ops`, войди. Выпусти сертификат на 1 минуту и убедись, что
 после истечения вход отклоняется. Убери свой ключ из `authorized_keys` и проверь, что вход по
 сертификату остаётся.
 
-### C7. Access review
+<details><summary>Ответ</summary>
+
+`ssh-keygen -L -f ~/.ssh/id_ed25519-cert.pub` показывает `Valid: from … to …` и
+`Principals: ops`. С `-V +1m` после истечения в `journalctl -u ssh` —
+`error: Certificate invalid: expired`. Без записи в `authorized_keys` вход по сертификату работает,
+потому что доверие — к CA.
+
+</details>
+
+#### C7. Access review
 Составь чек-лист ежеквартального access review для своего стенда/проекта: список систем (облако,
 GitLab, kind/k8s, VPN, серверы, Vault), откуда брать список доступов, кто подтверждает, что делать
 с неподтверждёнными, куда сохранять результат.
 
-### C8. Break-glass runbook
+<details><summary>Ответ</summary>
+
+Список систем + источник: IdP-группы, IAM/роли облака (credential report, Access Analyzer),
+GitLab members API, `kubectl get rolebindings,clusterrolebindings -A`, пиры `wg show`, учётки на
+серверах (`getent group sudo ssh-users`), Vault policies/entities. Подтверждает владелец системы;
+неподтверждённое отзывается; результат — в тикете/репозитории с датой.
+
+</details>
+
+#### C8. Break-glass runbook
 Напиши runbook на страницу: где лежат креды и кто может их достать, как войти, какой алерт
 придёт и кому, что сделать после (ротация, разбор), как и когда проводятся учения.
 
-### C9. Offboarding за 15 минут
+<details><summary>Ответ</summary>
+
+Runbook: где креды (сейф, два хранителя), кто имеет право использовать (IC инцидента),
+шаги входа, алерт (страница дежурному и безопасности на вход учёткой), после использования —
+ротация, запись в таймлайн, разбор; учения раз в квартал с проверкой алерта.
+
+</details>
+
+#### C9. Offboarding за 15 минут
 Опиши, что нужно отозвать при увольнении девопса в компании со SSO, SCIM, OIDC в CI, SSH-сертификатами
 и WireGuard. Чего не хватило бы без SSO?
+
+<details><summary>Ответ</summary>
+
+Отключить в IdP (SCIM снимет учётки в GitLab, облаке, Grafana), завершить сессии, удалить
+пир WireGuard, отозвать выданные SSH-сертификаты (или дождаться 8 часов) и добавить в KRL, проверить
+личные токены GitLab/облака и ключи, созданные вне SSO, передать владение ресурсами. Без SSO — ручной
+обход десятка систем со списком «по памяти», что и приводит к D5.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** В публичном репозитории нашли access key пользователя `ci-deploy` с правами
 `AdministratorAccess`. Твои действия в первые 30 минут.
@@ -874,7 +870,7 @@ GitLab, kind/k8s, VPN, серверы, Vault), откуда брать спис�
 `delete-access-key`), не удаляя пользователя до разбора. Смотреть CloudTrail по этому ключу:
 что делал, создавал ли новых пользователей/ключи/роли, запускал ли ресурсы (майнеры). Отозвать
 созданное атакующим, проверить регионы. Дальше — OIDC вместо ключа и урезание прав; порядок
-действий — тема 07 и [../CICD/13_quality_security.md](/cicd/13-quality-security).
+действий — тема 07 и [CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security).
 
 </details>
 
@@ -954,13 +950,12 @@ IAP/SSM port forwarding с записью сессии. Всё — с тикет
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как дать GitLab CI доступ в облако безопасно?
 
 <details><summary>Ответ</summary>
 
 OIDC: GitLab выдаёт джобе ID-токен, облако по trust policy с условием `sub` (проект + ветка)
-   выдаёт временные креды на час; отдельные роли для plan и prod, никаких ключей в переменных.
+выдаёт временные креды на час; отдельные роли для plan и prod, никаких ключей в переменных.
 
 </details>
 
@@ -969,7 +964,7 @@ OIDC: GitLab выдаёт джобе ID-токен, облако по trust poli
 <details><summary>Ответ</summary>
 
 Роль — набор прав, который временно принимают (человек, сервис, CI) и получают креды на время;
-   нет долгоживущего секрета, который утечёт, проще аудит и отзыв.
+нет долгоживущего секрета, который утечёт, проще аудит и отзыв.
 
 </details>
 
@@ -978,7 +973,7 @@ OIDC: GitLab выдаёт джобе ID-токен, облако по trust poli
 <details><summary>Ответ</summary>
 
 Explicit Deny → ограничители (SCP, boundary) → нужен Allow в identity/resource политике →
-   иначе implicit deny.
+иначе implicit deny.
 
 </details>
 
@@ -987,7 +982,7 @@ Explicit Deny → ограничители (SCP, boundary) → нужен Allow 
 <details><summary>Ответ</summary>
 
 Минимально необходимые права на нужный срок; начинаю узко, добавляю по AccessDenied, урезаю по
-   данным Access Analyzer, проверяю политики до применения, разделяю аккаунты prod/dev.
+данным Access Analyzer, проверяю политики до применения, разделяю аккаунты prod/dev.
 
 </details>
 
@@ -996,7 +991,7 @@ Explicit Deny → ограничители (SCP, boundary) → нужен Allow 
 <details><summary>Ответ</summary>
 
 По возможности identity-aware (SSM/IAP/OS Login): нет открытых портов, SSO+MFA, аудит сессий;
-   VPN — для доступа к сети с сегментацией; bastion — если другого нет, с харденингом и логами.
+VPN — для доступа к сети с сегментацией; bastion — если другого нет, с харденингом и логами.
 
 </details>
 
@@ -1005,7 +1000,7 @@ Explicit Deny → ограничители (SCP, boundary) → нужен Allow 
 <details><summary>Ответ</summary>
 
 Отключаю в IdP (SCIM снимает учётки), завершаю сессии, удаляю VPN-пиры, SSH-сертификаты истекают
-   сами, проверяю личные токены и ключи вне SSO, access review по его доступам.
+сами, проверяю личные токены и ключи вне SSO, access review по его доступам.
 
 </details>
 
@@ -1014,7 +1009,7 @@ Explicit Deny → ограничители (SCP, boundary) → нужен Allow 
 <details><summary>Ответ</summary>
 
 SSO — единый вход через IdP; SAML 2.0 — XML-протокол федерации (часто для консолей и SaaS);
-   OIDC — надстройка над OAuth 2.0 с JWT (Kubernetes, Vault, CI).
+OIDC — надстройка над OAuth 2.0 с JWT (Kubernetes, Vault, CI).
 
 </details>
 
@@ -1023,7 +1018,7 @@ SSO — единый вход через IdP; SAML 2.0 — XML-протокол 
 <details><summary>Ответ</summary>
 
 Аварийный доступ на случай, когда обычный (SSO) недоступен: отдельная учётка с аппаратным MFA,
-   креды в сейфе, алерт на использование, учения и ротация после.
+креды в сейфе, алерт на использование, учения и ротация после.
 
 </details>
 
@@ -1032,7 +1027,7 @@ SSO — единый вход через IdP; SAML 2.0 — XML-протокол 
 <details><summary>Ответ</summary>
 
 SSH-сертификаты от CA с коротким сроком и principals (или OS Login/SSM), без раскладки ключей;
-   конфиг sshd — Ansible-ролью; вход — только через VPN/IAP.
+конфиг sshd — Ansible-ролью; вход — только через VPN/IAP.
 
 </details>
 
@@ -1041,9 +1036,7 @@ SSH-сертификаты от CA с коротким сроком и principal
 <details><summary>Ответ</summary>
 
 Workload identity: ServiceAccount пода связывается с облачной ролью (IRSA/EKS Pod Identity,
-    GKE Workload Identity, в YC — федерация сервисных аккаунтов с k8s), под получает временные креды.
-
----
+GKE Workload Identity, в YC — федерация сервисных аккаунтов с k8s), под получает временные креды.
 
 </details>
 

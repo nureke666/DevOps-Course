@@ -378,7 +378,7 @@ aws ec2 associate-iam-instance-profile --instance-id i-0123456789abcdef0 \
   правами и ротацией.
 - Yandex Cloud `kz1` — это тот же `yc`, только профиль `--region=kz` и зона `kz1-a`.
 - Цены у облаков РК — в тенге; сравнивай конфигурации в калькуляторах, а не «на глаз».
-  Подробнее: [10_kz_clouds.md](/cloud/10-kz-clouds).
+  Подробнее: [10. Казахстанские облака](/cloud/10-kz-clouds).
 
 ---
 
@@ -412,8 +412,8 @@ aws ec2 associate-iam-instance-profile --instance-id i-0123456789abcdef0 \
   на дисках — антипаттерн.
 - Golden image (собранный Packer'ом) ускоряет масштабирование: новая нода поднимается
   за минуты, а не за полчаса установки пакетов. Группы автомасштабирования (AWS ASG,
-  Yandex Instance Groups) — следующий шаг: [08_aws_deep.md](/cloud/08-aws-deep),
-  [09_yandex_cloud.md](/cloud/09-yandex-cloud).
+  Yandex Instance Groups) — следующий шаг: [08. AWS глубже](/cloud/08-aws-deep),
+  [09. Yandex Cloud глубже](/cloud/09-yandex-cloud).
 - Проверка зрелости: можно ли удалить любую ВМ и восстановить сервис автоматически?
   Если нет — это «домашний питомец», а не облачная инфраструктура.
 

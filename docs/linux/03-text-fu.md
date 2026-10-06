@@ -374,7 +374,7 @@ grep -B5 "error" app.log          # 5 строк ДО (Before)
 grep -C5 "error" app.log          # 5 строк вокруг (Context)
 ```
 
-Базовые regex (подробнее в теме [04_advanced_text_fu.md](/linux/04-advanced-text-fu)):
+Базовые regex (подробнее в теме [04. Advanced Text-Fu](/linux/04-advanced-text-fu)):
 ```bash
 grep "^ERROR" log          # строка НАЧИНАЕТСЯ с ERROR
 grep "failed$" log         # ЗАКАНЧИВАЕТСЯ на failed

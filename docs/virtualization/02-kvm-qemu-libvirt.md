@@ -1,14 +1,14 @@
 ---
 title: "02. KVM, QEMU и libvirt руками: virsh, cloud-init, qcow2, снапшоты"
-description: "Блок → Виртуализация on-prem → тема 02. Опирается на 01virtualizationintro.md,"
+description: "⭐ virsh, virt-install + cloud-init, qcow2 и overlay, пулы, снапшоты, CPU/RAM, миграция, guest agent"
 ---
 
 # 02. KVM, QEMU и libvirt руками: virsh, cloud-init, qcow2, снапшоты
 
-> Блок → Виртуализация on-prem → тема 02. Опирается на [01_virtualization_intro.md](/virtualization/01-virtualization-intro),
-> [../Linux/00_vagrant.md](/linux/00-vagrant) (libvirt уже стоит, группа `libvirt` настроена),
-> [../Linux/09_devices.md](/linux/09-devices) (имена дисков `vda`/`sda`) и
-> [../Linux/10_the_filesystem.md](/linux/10-the-filesystem) (разделы, ФС, расширение).
+> Блок → Виртуализация on-prem → тема 02. Опирается на [01. Виртуализация: зачем, как устроена, кто на рынке](/virtualization/01-virtualization-intro),
+> [Linux: 00. Стенд: Vagrant + libvirt/KVM](/linux/00-vagrant) (libvirt уже стоит, группа `libvirt` настроена),
+> [Linux: 09. Devices](/linux/09-devices) (имена дисков `vda`/`sda`) и
+> [Linux: 10. Файловая система](/linux/10-the-filesystem) (разделы, ФС, расширение).
 >
 > **После темы ты умеешь:** управлять VM через `virsh`, поднимать VM из облачного образа
 > с cloud-init одной командой `virt-install`, работать с qcow2 и overlay-дисками через
@@ -19,7 +19,7 @@ description: "Блок → Виртуализация on-prem → тема 02. �
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
   облачный образ noble-server-cloudimg-amd64.img  (qcow2, ~600 МБ, без пароля)
           │  sudo cp → /var/lib/libvirt/images/noble-base.qcow2   (read-only база)
           ▼
@@ -34,22 +34,23 @@ description: "Блок → Виртуализация on-prem → тема 02. �
      ├── virsh setvcpus/setmem                            ресурсы
      ├── virsh migrate --live                             переезд на другой хост
      └── qemu-guest-agent  ◄── virtio-serial ──►  IP, fsfreeze, корректный shutdown
-```text
+```
+
 ---
 
 ## 1. Где что лежит
 
 | Путь | Что там | Правило |
 |------|---------|---------|
-| `/etc/libvirt/qemu/&lt;vm&gt;.xml` | Постоянное описание VM | Не править руками — только `virsh edit` |
+| `/etc/libvirt/qemu/<vm>.xml` | Постоянное описание VM | Не править руками — только `virsh edit` |
 | `/etc/libvirt/qemu/networks/` | Сети libvirt (+ `autostart/` — симлинки) | `virsh net-edit` |
 | `/etc/libvirt/storage/` | Описания storage pools | `virsh pool-edit` |
 | `/var/lib/libvirt/images/` | Пул `default`: диски VM | Место кончается здесь первым |
 | `/var/lib/libvirt/boot/` | ISO, которые загрузил virt-install | Чистить от старых |
 | `/var/lib/libvirt/qemu/nvram/` | Переменные UEFI у VM с UEFI | Удаляется `undefine --nvram` |
-| `/var/lib/libvirt/qemu/snapshot/&lt;vm&gt;/` | Метаданные снапшотов | — |
+| `/var/lib/libvirt/qemu/snapshot/<vm>/` | Метаданные снапшотов | — |
 | `/var/lib/libvirt/dnsmasq/` | Аренды DHCP сетей libvirt | `virsh net-dhcp-leases` удобнее |
-| `/var/log/libvirt/qemu/&lt;vm&gt;.log` | Лог QEMU: полная командная строка, ошибки старта | ⭐ первое место при «VM не стартует» |
+| `/var/log/libvirt/qemu/<vm>.log` | Лог QEMU: полная командная строка, ошибки старта | ⭐ первое место при «VM не стартует» |
 | `/run/libvirt/qemu/` | Живое состояние запущенных VM | Только читать |
 
 ```bash
@@ -57,7 +58,8 @@ virsh uri                           # qemu:///system (см. тему 01)
 virsh version                       # версии libvirt и QEMU
 virsh nodeinfo                      # CPU и RAM хоста глазами libvirt
 virsh capabilities | less           # что умеет хост: модели CPU, типы машин
-```text
+```
+
 ---
 
 ## 2. virsh: жизненный цикл VM
@@ -81,11 +83,12 @@ virsh capabilities | less           # что умеет хост: модели C
 | `virsh undefine vm1` | Удалить описание VM (диски остаются) |
 | `virsh undefine vm1 --remove-all-storage --nvram` | Удалить VM вместе с дисками и UEFI-переменными |
 
-```text
+```text:no-line-numbers
  shutdown  ─►  гость получает ACPI, сам останавливает службы, пишет буферы на диск   ✅
  destroy   ─►  процесс QEMU убит сразу: как выдернуть питание. Незаписанное — потеряно ⚠️
                используют, когда гость завис и на shutdown не реагирует
-```text
+```
+
 > ⚠️ Слово `destroy` пугает, но VM не удаляет — просто жёстко выключает. Удаляет `undefine`.
 > А вот `undefine --remove-all-storage` без снапшота/бэкапа — точка невозврата.
 
@@ -109,7 +112,8 @@ qemu-img info noble-server-cloudimg-amd64.img   # file format: qcow2, virtual si
 sudo cp noble-server-cloudimg-amd64.img /var/lib/libvirt/images/noble-base.qcow2
 virsh pool-refresh default                      # чтобы libvirt увидел файл
 virsh vol-list default
-```text
+```
+
 > 💡 Ubuntu 24.04 (noble) выбран потому, что его знает osinfo-db на хосте Ubuntu 24.04.
 > Для 26.04 (resolute) образ лежит в `.../resolute/current/`, а в `--osinfo` при старой
 > osinfo-db подставляй `linux2024`.
@@ -120,7 +124,7 @@ virsh vol-list default
 virsh vol-create-as default vm1.qcow2 20G --format qcow2 \
   --backing-vol /var/lib/libvirt/images/noble-base.qcow2 --backing-vol-format qcow2
 qemu-img info -U --backing-chain /var/lib/libvirt/images/vm1.qcow2
-```text
+```
 Overlay весит килобайты, виртуальный размер — 20 ГБ. При первом старте cloud-init сам
 растянет корневой раздел на весь диск (модуль `growpart`).
 
@@ -128,7 +132,7 @@ Overlay весит килобайты, виртуальный размер — 2
 
 ```bash
 mkdir -p ~/labs/virt/lab1 && cd ~/labs/virt/lab1
-cat > user-data.yaml <&lt;EOF
+cat > user-data.yaml <<EOF
 #cloud-config
 hostname: vm1
 users:
@@ -144,11 +148,11 @@ runcmd:
   - [systemctl, start, qemu-guest-agent]
 EOF
 
-cat&gt; meta-data.yaml <&lt;EOF
+cat > meta-data.yaml <<EOF
 instance-id: vm1-001
 local-hostname: vm1
 EOF
-```text
+```
 - `user-data` — что сделать (первая строка **обязана** быть `#cloud-config`).
 - `meta-data` — кто ты: `instance-id` (сменился → cloud-init считает VM новой и отработает
   заново), имя хоста. Подробно — тема 06.
@@ -165,26 +169,28 @@ virt-install \
   --cloud-init user-data=user-data.yaml,meta-data=meta-data.yaml \
   --import \
   --graphics none --noautoconsole
-```text
+```
+
 | Флаг | Зачем |
 |------|-------|
 | `--osinfo ubuntu24.04` | ⭐ Обязателен в virt-install 4.x: по нему выбираются правильные дефолты (q35, virtio). Список — `virt-install --osinfo list` |
 | `--disk vol=pool/volume` | Взять готовый том из пула (или `path=/путь,format=qcow2`) |
-| `--network network=virt-lab` | Сеть стенда из [00_INDEX.md](/virtualization/); без неё — `network=default` |
+| `--network network=virt-lab` | Сеть стенда из [Виртуализация](/virtualization/); без неё — `network=default` |
 | `--cloud-init user-data=...,meta-data=...` | virt-install сам соберёт ISO `cidata` и подключит его только на первый старт |
 | `--import` | Не устанавливать ОС, а загрузиться с готового диска (с `--cloud-init` подразумевается) |
 | `--graphics none` | Без VNC/SPICE, только серийная консоль |
 | `--noautoconsole` | Не подключаться к консоли, вернуть терминал сразу |
 
-По умолчанию virt-install 4.x добавит `q35`, `<cpu mode='host-passthrough'/&gt;`, virtio-rng,
+По умолчанию virt-install 4.x добавит `q35`, `<cpu mode='host-passthrough'/>`, virtio-rng,
 balloon и канал для guest agent — проверь в `virsh dumpxml vm1`.
 
 ```bash
 virsh console vm1                       # смотреть загрузку; Ctrl+] — выйти
 virsh domifaddr vm1                     # IP из аренды DHCP
-ssh devops@&lt;IP&gt; cloud-init status --wait --long    # status: done, errors: []
-ssh devops@&lt;IP&gt; 'lsblk; df -h /'        # vda растянут до 20G
-```text
+ssh devops@<IP> cloud-init status --wait --long    # status: done, errors: []
+ssh devops@<IP> 'lsblk; df -h /'        # vda растянут до 20G
+```
+
 ### 3.5. Вариант без `--cloud-init`: seed-ISO руками
 
 Старые virt-install, Proxmox, VMware и любые гипервизоры понимают тот же формат NoCloud —
@@ -200,13 +206,15 @@ virt-install --name vm1 --memory 2048 --vcpus 2 --osinfo ubuntu24.04 \
   --disk vol=default/vm1.qcow2,bus=virtio \
   --disk /var/lib/libvirt/images/vm1-seed.iso,device=cdrom \
   --network network=virt-lab,model=virtio --import --graphics none --noautoconsole
-```text
+```
+
 ### 3.6. Убрать за собой
 
 ```bash
 virsh destroy vm1
 virsh undefine vm1 --remove-all-storage     # удалит vm1.qcow2, но НЕ базу noble-base.qcow2
-```text
+```
+
 ---
 
 ## 4. qcow2 и qemu-img
@@ -223,13 +231,13 @@ virsh undefine vm1 --remove-all-storage     # удалит vm1.qcow2, но НЕ 
 
 ### Backing files и overlay
 
-```text
+```text:no-line-numbers
   noble-base.qcow2   (база, только чтение — НИКОГДА не запускать и не менять)
         ▲          ▲
         │          │
   vm1.qcow2    vm2.qcow2     ← overlay: только изменённые блоки конкретной VM
                               чтение: нет блока в overlay → читаем из базы
-```text
+```
 Так в Proxmox работают linked clones, в OpenStack — диски из образов, в Vagrant — боксы.
 
 ```bash
@@ -242,17 +250,18 @@ qemu-img convert -O qcow2 vm2.qcow2 vm2-flat.qcow2        # «сплющить»
 qemu-img convert -O qcow2 -c big.qcow2 small.qcow2        # сжать (шаблоны, передача)
 qemu-img convert -f vmdk -O qcow2 app.vmdk app.qcow2      # ⭐ миграция с VMware
 qemu-img check vm2.qcow2                  # проверить целостность (VM выключена)
-```text
+```
+
 > ⚠️ `qemu-img create -b base.qcow2` без `-F qcow2` на современных QEMU — ошибка
 > `Backing file specified without backing format`. Раньше формат угадывался, и это было
 > дырой в безопасности.
 
 После увеличения диска **внутри гостя** растяни раздел и ФС
-(подробно — [../Linux/10_the_filesystem.md](/linux/10-the-filesystem)):
+(подробно — [Linux: 10. Файловая система](/linux/10-the-filesystem)):
 ```bash
 sudo growpart /dev/vda 1      # раздел 1 — на весь диск (пакет cloud-guest-utils)
 sudo resize2fs /dev/vda1      # ext4; для XFS — sudo xfs_growfs /
-```text
+```
 Онлайн, без выключения: `virsh blockresize vm1 vda 30G`, затем то же внутри гостя.
 
 > 💡 `libguestfs-tools` — «швейцарский нож» для образов без запуска VM:
@@ -291,7 +300,8 @@ virsh pool-refresh default                                # после ручн�
 
 # подключить второй диск к работающей VM
 virsh attach-disk vm1 /srv/vmstore/data1.qcow2 vdb --subdriver qcow2 --persistent
-```text
+```
+
 ---
 
 ## 6. Снапшоты
@@ -320,7 +330,8 @@ virsh snapshot-delete vm1 pre-deploy # libvirt ≥ 9.0 сам сольёт overl
 # ручное слияние (старые libvirt или «осиротевшие» overlay)
 virsh blockcommit vm1 vda --active --pivot --verbose
 virsh snapshot-delete vm1 pre-deploy --metadata   # убрать только запись о снапшоте
-```text
+```
+
 **Подводные камни:**
 - ⭐ **Снапшот — не бэкап.** Он лежит на том же хранилище: умер диск/массив — умерли и VM, и снапшоты.
 - Длинная цепочка overlay замедляет I/O и раздувает место. Снапшот — на часы-дни, не на месяцы.
@@ -342,7 +353,8 @@ virsh setvcpus vm1 4 --maximum --config   # поднять максимум → 
 virsh setmaxmem vm1 8G --config           # максимум памяти (VM выключена)
 virsh setmem vm1 4G --live --config       # в пределах максимума, через balloon
 virt-install ... --vcpus 4,sockets=1,cores=4,threads=1   # топология (важно для лицензий по сокетам)
-```text
+```
+
 **CPU mode** — что гость видит вместо процессора:
 
 | Режим | Что видит гость | Миграция | Когда |
@@ -360,7 +372,7 @@ virt-install ... --vcpus 4,sockets=1,cores=4,threads=1   # топология (�
   хоста убивает самый толстый процесс QEMU, и VM «сама выключилась».
 - **Hugepages** (кратко): страницы по 2 МБ/1 ГБ вместо 4 КБ — меньше промахов TLB для
   больших VM (БД, NFV). `echo 2048 | sudo tee /proc/sys/vm/nr_hugepages` (4 ГБ из 2-МБ страниц)
-  и в XML `&lt;memoryBacking&gt;&lt;hugepages/&gt;</memoryBacking>`. Память под них резервируется заранее.
+  и в XML `<memoryBacking><hugepages/></memoryBacking>`. Память под них резервируется заранее.
 - **NUMA:** на двухсокетном хосте большую VM держат в пределах одного сокета
   (`virsh vcpupin`, `virsh numatune`), иначе память «ходит» через межсокетную шину.
 
@@ -368,7 +380,7 @@ virt-install ... --vcpus 4,sockets=1,cores=4,threads=1   # топология (�
 
 ## 8. Живая миграция (live migration)
 
-```text
+```text:no-line-numbers
  kvm01                                        kvm02
  ┌───────────┐  1. копируем всю RAM           ┌───────────┐
  │  vm1  ────┼───────────────────────────────►│  vm1'     │  (приёмник на паузе)
@@ -377,14 +389,16 @@ virt-install ... --vcpus 4,sockets=1,cores=4,threads=1   # топология (�
  │  пауза ◄──┼── 3. стоп на миллисекунды, ────┼──► старт  │
  └───────────┘     последние страницы + CPU   └───────────┘
      диск: общий (NFS/Ceph/SAN) — не копируется;  локальный — --copy-storage-all (долго)
-```text
+```
+
 ```bash
 virsh migrate --live --persistent --undefinesource --verbose \
   vm1 qemu+ssh://admin@kvm02/system
 virsh domjobinfo vm1            # прогресс: сколько осталось, скорость, «грязные» страницы
 # если VM пишет в память быстрее, чем сеть копирует: --auto-converge (притормаживает vCPU)
 # или --postcopy (переключиться сразу, дотягивать страницы по требованию — рискованнее)
-```text
+```
+
 Требования: libvirt/QEMU на обоих хостах, SSH/TLS между ними, **общее хранилище** или копия
 дисков, та же сеть (VLAN/bridge с тем же именем), совместимый CPU (см. таблицу выше).
 В Proxmox это `qm migrate 101 pve2 --online`, в VMware — vMotion.
@@ -401,14 +415,15 @@ virsh domjobinfo vm1            # прогресс: сколько остало�
 sudo apt install -y qemu-guest-agent && sudo systemctl start qemu-guest-agent
 
 # на хосте
-virsh qemu-agent-command vm1 '{"execute":"guest-ping"}'   # {"return":{&#125;&#125; — агент жив
+virsh qemu-agent-command vm1 '{"execute":"guest-ping"}'   # {"return":{}} — агент жив
 virsh domifaddr vm1 --source agent       # IP от агента: все интерфейсы, любые сети
 virsh guestinfo vm1 --os --hostname      # ОС, версия, имя
 virsh domfsinfo vm1                      # смонтированные ФС гостя
 virsh domfsfreeze vm1 && virsh domfsthaw vm1   # заморозить/разморозить ФС (так делает --quiesce)
 virsh shutdown vm1 --mode agent          # выключить через агент, а не ACPI
 virsh set-user-password vm1 devops 'NewPass!'   # сменить пароль без SSH
-```text
+```
+
 Без агента: IP знаешь только из DHCP своей сети, снапшоты без fsfreeze, shutdown только
 по ACPI. В Proxmox агент включают опцией `agent: 1`, в VMware его аналог — VMware Tools
 (`open-vm-tools`).
@@ -427,7 +442,7 @@ virsh set-user-password vm1 devops 'NewPass!'   # сменить пароль б
 | `qemu-img: Failed to get shared "write" lock` | Диск используется работающей VM | Читать с `-U`; менять — только выключив VM |
 | Место на хосте тает | Тонкие диски растут, снапшоты и overlay копятся | `virsh vol-list --details`, чистить снапшоты, `virt-sparsify` |
 | `virsh shutdown` ничего не делает | В госте нет ACPI-обработчика или гость завис | `--mode agent`, подождать, в крайнем случае `destroy` |
-| `domifaddr` пустой | Не та сеть (bridge без DHCP libvirt) или нет агента | `--source agent`, `virsh net-dhcp-leases &lt;сеть&gt;` |
+| `domifaddr` пустой | Не та сеть (bridge без DHCP libvirt) или нет агента | `--source agent`, `virsh net-dhcp-leases <сеть>` |
 | Миграция: `unsupported configuration: ... CPU` | `host-passthrough` на разных процессорах | `host-model` или общая модель CPU |
 
 ---
@@ -468,7 +483,7 @@ virsh set-user-password vm1 devops 'NewPass!'   # сменить пароль б
 | Живая миграция | `virsh migrate --live --persistent --undefinesource vm qemu+ssh://host/system` |
 | Проверить агента | `virsh qemu-agent-command vm '{"execute":"guest-ping"}'` |
 | Удалить VM с дисками | `virsh undefine vm --remove-all-storage --nvram` |
-| Лог старта VM | `/var/log/libvirt/qemu/&lt;vm&gt;.log` |
+| Лог старта VM | `/var/log/libvirt/qemu/<vm>.log` |
 
 ---
 
@@ -485,19 +500,23 @@ virsh set-user-password vm1 devops 'NewPass!'   # сменить пароль б
 9. Живая миграция: общее хранилище, та же сеть, совместимый CPU (`host-passthrough` мешает).
 10. `qemu-guest-agent` даёт IP, fsfreeze для снапшотов и корректный shutdown — ставь в каждый шаблон.
 
-➡️ Дальше: [03_virt_networking.md](/virtualization/03-virt-networking) · задачи: 02_kvm_qemu_libvirt_tasks.md
+---
 
+## Задачи
+
+> Стенд: хост из [Виртуализация](/virtualization/) — сеть `virt-lab`, пул `default`, база
+> `/var/lib/libvirt/images/noble-base.qcow2`, VM `vm1` из раздела 3 конспекта.
+> Перед задачами блока C: `virsh snapshot-create-as vm1 --name clean`.
 
 ---
 
 ### Блок A. Теория
 
-
 **A1.** Где libvirt хранит описание VM? Почему его не правят в редакторе напрямую?
 
 <details><summary>Ответ</summary>
 
-В `/etc/libvirt/qemu/&lt;vm&gt;.xml`. Демон держит конфигурацию в памяти и не перечитывает
+В `/etc/libvirt/qemu/<vm>.xml`. Демон держит конфигурацию в памяти и не перечитывает
 файл: правка руками не применится, а при следующей записи libvirt её затрёт. `virsh edit`
 проверяет XML и сохраняет через API.
 
@@ -651,195 +670,102 @@ DHCP своей сети, снапшоты без fsfreeze, выключение
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```
 B1.  $ qemu-img create -f qcow2 -b noble-base.qcow2 vm2.qcow2 20G
-```text
-<details><summary>Ответ</summary>
 
-⚠️ Нет `-F qcow2` — современный qemu-img откажется: `Backing file specified without
+B2.  $ virt-install --name vm2 --memory 2048 --disk vol=default/vm2.qcow2 --import
+     # (без --osinfo)
+
+B3.  # user-data.yaml
+     hostname: vm2
+     users:
+       - name: devops
+         ssh_authorized_keys: [ssh-ed25519 AAAA...]
+
+B4.  «Я сделал virsh destroy prod-db — всё, базу удалил, восстанавливаем из бэкапа?»
+
+B5.  $ virt-install ... --disk path=/home/nurik/vms/vm2.qcow2 ...
+     ERROR  Cannot access storage file '/home/nurik/vms/vm2.qcow2' (as uid:64055, gid:994): Permission denied
+
+B6.  # «обновим пакеты в базе, чтобы все VM стали свежее»
+     $ virt-install --name base-upd --disk path=/var/lib/libvirt/images/noble-base.qcow2 --import ...
+     $ ssh ... sudo apt full-upgrade
+
+B7.  $ virsh list
+      Id   Name   State
+      3    vm1    running
+     $ sudo qemu-img resize /var/lib/libvirt/images/vm1.qcow2 +10G
+
+B8.  # реплика PostgreSQL в кластере Patroni
+     $ virsh snapshot-revert pg-replica-2 week-ago
+
+B9.  $ virsh setvcpus vm1 8 --live
+     error: invalid argument: requested vcpus is greater than max allowable vcpus for the live domain: 8 > 2
+
+B10. # VM с UEFI, хост Ubuntu 24.04 (libvirt 10.0)
+     $ virsh snapshot-create-as win-vm before-update
+
+B11. # kvm01 — свежий EPYC, kvm02 — EPYC на три поколения старше, у VM host-passthrough
+     $ virsh migrate --live app1 qemu+ssh://kvm02/system
+
+B12. $ virsh snapshot-list app1 | wc -l
+     34
+     # external-снапшоты «на всякий случай» копились полгода, VM стала медленной
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Нет `-F qcow2` — современный qemu-img откажется: `Backing file specified without
 backing format`. Нужно `-b noble-base.qcow2 -F qcow2`.
 
-</details>
-
-```text:no-line-numbers
-B2.  $ virt-install --name vm2 --memory 2048 --disk vol=default/vm2.qcow2 --import
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Фатальная ошибка «--os-variant/--osinfo OS name is required». Указать `--osinfo
+**B2.** ⚠️ Фатальная ошибка «--os-variant/--osinfo OS name is required». Указать `--osinfo
 ubuntu24.04` (или `linux2024`). Заодно не хватает `--cloud-init` — войти будет нечем.
 
-</details>
-
-```text:no-line-numbers
-     # (без --osinfo)
-```text
-```text:no-line-numbers
-B3.  # user-data.yaml
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Нет первой строки `#cloud-config` — cloud-init не распознает файл как cloud-config
+**B3.** ⚠️ Нет первой строки `#cloud-config` — cloud-init не распознает файл как cloud-config
 и ничего не применит. Плюс у пользователя нет `sudo` и `shell`.
 
-</details>
-
-```text:no-line-numbers
-     hostname: vm2
-```text
-```text:no-line-numbers
-     users:
-```text
-```text:no-line-numbers
-       - name: devops
-```text
-```text:no-line-numbers
-         ssh_authorized_keys: [ssh-ed25519 AAAA...]
-```text
-```text:no-line-numbers
-B4.  «Я сделал virsh destroy prod-db — всё, базу удалил, восстанавливаем из бэкапа?»
-```text
-<details><summary>Ответ</summary>
-
-✅ `destroy` только жёстко выключил VM, диск на месте. `virsh start prod-db`, проверить
+**B4.** ✅ `destroy` только жёстко выключил VM, диск на месте. `virsh start prod-db`, проверить
 журнал БД — она восстановится как после отключения питания.
 
-</details>
-
-```text:no-line-numbers
-B5.  $ virt-install ... --disk path=/home/nurik/vms/vm2.qcow2 ...
-```text
-<details><summary>Ответ</summary>
-
-⚠️ QEMU работает от `libvirt-qemu` и под AppArmor, в домашний каталог его не пускают.
+**B5.** ⚠️ QEMU работает от `libvirt-qemu` и под AppArmor, в домашний каталог его не пускают.
 Держать диски в пуле `/var/lib/libvirt/images` (или завести пул в `/srv`).
 
-</details>
-
-```text:no-line-numbers
-     ERROR  Cannot access storage file '/home/nurik/vms/vm2.qcow2' (as uid:64055, gid:994): Permission denied
-```text
-```text:no-line-numbers
-B6.  # «обновим пакеты в базе, чтобы все VM стали свежее»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ База изменилась под существующими overlay — все VM на ней будут испорчены.
+**B6.** ⚠️ База изменилась под существующими overlay — все VM на ней будут испорчены.
 Правильно: новый файл базы (или Packer, тема 06), новые VM — от новой базы.
 
-</details>
+**B7.** ⚠️ Менять диск работающей VM через qemu-img нельзя (qemu-img откажется из-за
+блокировки, а с принуждением — испортит образ). Онлайн — `virsh blockresize vm1 vda <размер>`.
 
-```text:no-line-numbers
-     $ virt-install --name base-upd --disk path=/var/lib/libvirt/images/noble-base.qcow2 --import ...
-```text
-```text:no-line-numbers
-     $ ssh ... sudo apt full-upgrade
-```text
-```text:no-line-numbers
-B7.  $ virsh list
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Менять диск работающей VM через qemu-img нельзя (qemu-img откажется из-за
-блокировки, а с принуждением — испортит образ). Онлайн — `virsh blockresize vm1 vda &lt;размер&gt;`.
-
-</details>
-
-```text:no-line-numbers
-      Id   Name   State
-```text
-```text:no-line-numbers
-      3    vm1    running
-```text
-```text:no-line-numbers
-     $ sudo qemu-img resize /var/lib/libvirt/images/vm1.qcow2 +10G
-```text
-```text:no-line-numbers
-B8.  # реплика PostgreSQL в кластере Patroni
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Реплика «уехала» на неделю назад, её данные разошлись с лидером; Patroni/PostgreSQL
+**B8.** ⚠️ Реплика «уехала» на неделю назад, её данные разошлись с лидером; Patroni/PostgreSQL
 её не примет или она сломает репликацию. Реплику пересоздают с лидера (`pg_basebackup`/reinit),
 а не откатывают снапшотом.
 
-</details>
-
-```text:no-line-numbers
-     $ virsh snapshot-revert pg-replica-2 week-ago
-```text
-```text:no-line-numbers
-B9.  $ virsh setvcpus vm1 8 --live
-```text
-<details><summary>Ответ</summary>
-
-⚠️ На ходу нельзя превысить максимум vCPU, заданный в конфигурации. Выключить VM,
+**B9.** ⚠️ На ходу нельзя превысить максимум vCPU, заданный в конфигурации. Выключить VM,
 `virsh setvcpus vm1 8 --maximum --config`, запустить, потом `--live` до максимума.
 
-</details>
-
-```text:no-line-numbers
-     error: invalid argument: requested vcpus is greater than max allowable vcpus for the live domain: 8 > 2
-```text
-```text:no-line-numbers
-B10.  # VM с UEFI, хост Ubuntu 24.04 (libvirt 10.0)
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Internal-снапшоты VM с UEFI (pflash NVRAM) поддержаны только с libvirt 10.9 —
+**B10.** ⚠️ Internal-снапшоты VM с UEFI (pflash NVRAM) поддержаны только с libvirt 10.9 —
 на 10.0 будет ошибка. Делать external (`--disk-only`) или обновить libvirt.
 
-</details>
-
-```text:no-line-numbers
-     $ virsh snapshot-create-as win-vm before-update
-```text
-```text:no-line-numbers
-B11.  # kvm01 — свежий EPYC, kvm02 — EPYC на три поколения старше, у VM host-passthrough
-```text
-<details><summary>Ответ</summary>
-
-⚠️ На старом CPU нет инструкций, которые гость уже видит и может использовать, —
+**B11.** ⚠️ На старом CPU нет инструкций, которые гость уже видит и может использовать, —
 миграция откажет или гость упадёт. Для кластера из разных CPU — `host-model` или общая
 модель (`custom`).
 
-</details>
-
-```text:no-line-numbers
-     $ virsh migrate --live app1 qemu+ssh://kvm02/system
-```text
-```text:no-line-numbers
-B12.  $ virsh snapshot-list app1 | wc -l
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Каждое чтение идёт по цепочке из десятков файлов — I/O медленный, место растёт.
+**B12.** ⚠️ Каждое чтение идёт по цепочке из десятков файлов — I/O медленный, место растёт.
 Слить снапшоты (`snapshot-delete` или `blockcommit`), снапшоты держать часы-дни, для
 долгого хранения — бэкапы.
 
 </details>
 
-```text:no-line-numbers
-     34
-```text
-```text:no-line-numbers
-     # external-снапшоты «на всякий случай» копились полгода, VM стала медленной
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 VM из облачного образа
+#### C1. 🔑 VM из облачного образа
 Повтори раздел 3 конспекта для `vm2` с другим пользователем и пакетами `nginx` и `htop`.
 Докажи, что cloud-init отработал: имя хоста, пользователь и его sudo, установленные пакеты,
 корень растянут до размера overlay, `cloud-init status --long` без ошибок. Где лежат логи
 cloud-init в госте?
 
-### C2. 🔑 Жизненный цикл
-**1.** Засеки время `virsh shutdown vm2` и `virsh destroy vm2` (после старта). В чём разница для гостя?
-
 <details><summary>Ответ</summary>
 
 Логи: `/var/log/cloud-init.log` (подробный) и `/var/log/cloud-init-output.log` (вывод
@@ -848,57 +774,29 @@ cloud-init в госте?
 
 </details>
 
-**2.** Включи автостарт, перезагрузи libvirt (`sudo systemctl restart libvirtd`) — VM не должны
+#### C2. 🔑 Жизненный цикл
+1. Засеки время `virsh shutdown vm2` и `virsh destroy vm2` (после старта). В чём разница для гостя?
+2. Включи автостарт, перезагрузи libvirt (`sudo systemctl restart libvirtd`) — VM не должны
    упасть. Почему?
-
-<details><summary>Ответ</summary>
-
-1) `shutdown` — секунды-десятки секунд, гость сам гасит службы; `destroy` — мгновенно,
-гость ничего не успевает. 2) Запущенные VM — отдельные процессы QEMU, рестарт демона libvirt их
-не трогает; `autostart` влияет на загрузку хоста. 3) `managedsave` сохраняет RAM в файл и
-выключает VM; `virsh list --all --managed-save` показывает `saved`; после `start` процесс
-`sleep` на месте — память восстановлена.
-
-</details>
-
-**3.** Сделай `managedsave`, посмотри `virsh list --all` и `--managed-save`, стартуй снова.
+3. Сделай `managedsave`, посмотри `virsh list --all` и `--managed-save`, стартуй снова.
    Что сохранилось в памяти гостя (запусти перед этим `sleep 10000 &`)?
 
 <details><summary>Ответ</summary>
 
-`qemu-img create -f qcow2 -b /var/lib/libvirt/images/noble-base.qcow2 -F qcow2 ov-a.qcow2 20G`.
-`ls -lh` показывает размер файла с «дырами» (для qcow2 — выделенные кластеры), `du` — реально
-занятое место; `qemu-img info` показывает virtual size 20 GiB и disk size ~200 МБ + метаданные.
-`qemu-img convert -O qcow2 ov-a.qcow2 flat.qcow2` — в `info` нет строки `backing file`,
-файл самостоятельный и размером с базу + изменения.
+1\) `shutdown` — секунды-десятки секунд, гость сам гасит службы; `destroy` — мгновенно,
+гость ничего не успевает. 2) Запущенные VM — отдельные процессы QEMU, рестарт демона libvirt их
+не трогает; `autostart` влияет на загрузку хоста. 3) `managedsave` сохраняет RAM в файл и
+выключает VM; `virsh list --all --managed-save` показывает `saved`; после `start` процесс
+`sleep` на месте — память восстановлена.
 
 </details>
 
-### C3. 🔑 Overlay своими руками
-**1.** Создай два overlay поверх базы: `ov-a.qcow2`, `ov-b.qcow2` (через `qemu-img` в отдельном
+#### C3. 🔑 Overlay своими руками
+1. Создай два overlay поверх базы: `ov-a.qcow2`, `ov-b.qcow2` (через `qemu-img` в отдельном
    каталоге, `sudo`).
-
-<details><summary>Ответ</summary>
-
-Логи: `/var/log/cloud-init.log` (подробный) и `/var/log/cloud-init-output.log` (вывод
-команд). Проверки: `hostname`, `id devops`, `sudo -l`, `dpkg -l nginx htop`, `lsblk`/`df -h /`,
-`cloud-init status --long`. Данные, которые получил cloud-init: `sudo cloud-init query --all`.
-
-</details>
-
-**2.** Запусти VM на `ov-a`, запиши внутри 200 МБ (`dd if=/dev/urandom of=/big bs=1M count=200`).
-
-<details><summary>Ответ</summary>
-
-1) `shutdown` — секунды-десятки секунд, гость сам гасит службы; `destroy` — мгновенно,
-гость ничего не успевает. 2) Запущенные VM — отдельные процессы QEMU, рестарт демона libvirt их
-не трогает; `autostart` влияет на загрузку хоста. 3) `managedsave` сохраняет RAM в файл и
-выключает VM; `virsh list --all --managed-save` показывает `saved`; после `start` процесс
-`sleep` на месте — память восстановлена.
-
-</details>
-
-**3.** Сравни размеры: `ls -lh`, `du -h`, `qemu-img info`. Почему `ls` и `du` показывают разное?
+2. Запусти VM на `ov-a`, запиши внутри 200 МБ (`dd if=/dev/urandom of=/big bs=1M count=200`).
+3. Сравни размеры: `ls -lh`, `du -h`, `qemu-img info`. Почему `ls` и `du` показывают разное?
+4. Сплющи `ov-a` в самостоятельный файл через `qemu-img convert`, проверь, что backing file исчез.
 
 <details><summary>Ответ</summary>
 
@@ -910,7 +808,12 @@ cloud-init в госте?
 
 </details>
 
-**4.** Сплющи `ov-a` в самостоятельный файл через `qemu-img convert`, проверь, что backing file исчез.
+#### C4. Свой пул и второй диск
+1. Создай пул-каталог `vmstore` в `/srv/vmstore` с автостартом.
+2. Создай том 5 ГБ, подключи к `vm1` как `vdb` на ходу.
+3. Внутри гостя: раздел, ext4, монтирование через fstab с `nofail`
+   ([Linux: 10. Файловая система](/linux/10-the-filesystem)).
+4. Отключи диск (`virsh detach-disk vm1 vdb --persistent`) и удали том.
 
 <details><summary>Ответ</summary>
 
@@ -922,185 +825,80 @@ cloud-init в госте?
 
 </details>
 
-### C4. Свой пул и второй диск
-**1.** Создай пул-каталог `vmstore` в `/srv/vmstore` с автостартом.
-
-<details><summary>Ответ</summary>
-
-Логи: `/var/log/cloud-init.log` (подробный) и `/var/log/cloud-init-output.log` (вывод
-команд). Проверки: `hostname`, `id devops`, `sudo -l`, `dpkg -l nginx htop`, `lsblk`/`df -h /`,
-`cloud-init status --long`. Данные, которые получил cloud-init: `sudo cloud-init query --all`.
-
-</details>
-
-**2.** Создай том 5 ГБ, подключи к `vm1` как `vdb` на ходу.
-
-<details><summary>Ответ</summary>
-
-1) `shutdown` — секунды-десятки секунд, гость сам гасит службы; `destroy` — мгновенно,
-гость ничего не успевает. 2) Запущенные VM — отдельные процессы QEMU, рестарт демона libvirt их
-не трогает; `autostart` влияет на загрузку хоста. 3) `managedsave` сохраняет RAM в файл и
-выключает VM; `virsh list --all --managed-save` показывает `saved`; после `start` процесс
-`sleep` на месте — память восстановлена.
-
-</details>
-
-**3.** Внутри гостя: раздел, ext4, монтирование через fstab с `nofail`
-   ([../Linux/10_the_filesystem.md](/linux/10-the-filesystem)).
-
-<details><summary>Ответ</summary>
-
-`qemu-img create -f qcow2 -b /var/lib/libvirt/images/noble-base.qcow2 -F qcow2 ov-a.qcow2 20G`.
-`ls -lh` показывает размер файла с «дырами» (для qcow2 — выделенные кластеры), `du` — реально
-занятое место; `qemu-img info` показывает virtual size 20 GiB и disk size ~200 МБ + метаданные.
-`qemu-img convert -O qcow2 ov-a.qcow2 flat.qcow2` — в `info` нет строки `backing file`,
-файл самостоятельный и размером с базу + изменения.
-
-</details>
-
-**4.** Отключи диск (`virsh detach-disk vm1 vdb --persistent`) и удали том.
-
-<details><summary>Ответ</summary>
-
-`virsh pool-define-as vmstore dir --target /srv/vmstore`, `pool-build`, `pool-start`,
-`pool-autostart`; `virsh vol-create-as vmstore data.qcow2 5G --format qcow2`;
-`virsh attach-disk vm1 /srv/vmstore/data.qcow2 vdb --subdriver qcow2 --persistent`.
-В госте: `lsblk` → `vdb`, `parted`/`fdisk`, `mkfs.ext4`, запись в fstab по UUID с `nofail`.
-Перед `detach-disk` отмонтировать и убрать строку из fstab.
-
-</details>
-
-### C5. 🔑 Снапшоты: сломать и откатить
-**1.** Internal-снапшот `before-break`, затем в госте `sudo apt remove -y openssh-server`.
-
-<details><summary>Ответ</summary>
-
-Логи: `/var/log/cloud-init.log` (подробный) и `/var/log/cloud-init-output.log` (вывод
-команд). Проверки: `hostname`, `id devops`, `sudo -l`, `dpkg -l nginx htop`, `lsblk`/`df -h /`,
-`cloud-init status --long`. Данные, которые получил cloud-init: `sudo cloud-init query --all`.
-
-</details>
-
-**2.** Откатись, проверь SSH.
-
-<details><summary>Ответ</summary>
-
-1) `shutdown` — секунды-десятки секунд, гость сам гасит службы; `destroy` — мгновенно,
-гость ничего не успевает. 2) Запущенные VM — отдельные процессы QEMU, рестарт демона libvirt их
-не трогает; `autostart` влияет на загрузку хоста. 3) `managedsave` сохраняет RAM в файл и
-выключает VM; `virsh list --all --managed-save` показывает `saved`; после `start` процесс
-`sleep` на месте — память восстановлена.
-
-</details>
-
-**3.** External-снапшот `pre-deploy` c `--disk-only --atomic --quiesce`. Посмотри `domblklist`
+#### C5. 🔑 Снапшоты: сломать и откатить
+1. Internal-снапшот `before-break`, затем в госте `sudo apt remove -y openssh-server`.
+2. Откатись, проверь SSH.
+3. External-снапшот `pre-deploy` c `--disk-only --atomic --quiesce`. Посмотри `domblklist`
    и `qemu-img info -U --backing-chain` активного файла.
+4. Удали снапшот через `snapshot-delete`, убедись, что цепочка схлопнулась.
 
 <details><summary>Ответ</summary>
 
-`qemu-img create -f qcow2 -b /var/lib/libvirt/images/noble-base.qcow2 -F qcow2 ov-a.qcow2 20G`.
-`ls -lh` показывает размер файла с «дырами» (для qcow2 — выделенные кластеры), `du` — реально
-занятое место; `qemu-img info` показывает virtual size 20 GiB и disk size ~200 МБ + метаданные.
-`qemu-img convert -O qcow2 ov-a.qcow2 flat.qcow2` — в `info` нет строки `backing file`,
-файл самостоятельный и размером с базу + изменения.
+`virsh snapshot-create-as vm1 --name before-break`; после отката `snapshot-revert`
+SSH снова работает (у internal-снапшота работающей VM откатится и память — гость «продолжит»
+с момента снапшота). External: `domblklist` покажет новый файл вида
+`/var/lib/libvirt/images/vm1.pre-deploy`, в `--backing-chain` его базой будет `vm1.qcow2`,
+а у того — `noble-base.qcow2`. После `snapshot-delete` активным снова стал `vm1.qcow2`.
 
 </details>
 
-**4.** Удали снапшот через `snapshot-delete`, убедись, что цепочка схлопнулась.
-
-<details><summary>Ответ</summary>
-
-`virsh pool-define-as vmstore dir --target /srv/vmstore`, `pool-build`, `pool-start`,
-`pool-autostart`; `virsh vol-create-as vmstore data.qcow2 5G --format qcow2`;
-`virsh attach-disk vm1 /srv/vmstore/data.qcow2 vdb --subdriver qcow2 --persistent`.
-В госте: `lsblk` → `vdb`, `parted`/`fdisk`, `mkfs.ext4`, запись в fstab по UUID с `nofail`.
-Перед `detach-disk` отмонтировать и убрать строку из fstab.
-
-</details>
-
-### C6. CPU и RAM
-**1.** Выключи `vm1`, подними максимум vCPU до 4 и памяти до 4 ГБ, текущие оставь 2/2.
-
-<details><summary>Ответ</summary>
-
-Логи: `/var/log/cloud-init.log` (подробный) и `/var/log/cloud-init-output.log` (вывод
-команд). Проверки: `hostname`, `id devops`, `sudo -l`, `dpkg -l nginx htop`, `lsblk`/`df -h /`,
-`cloud-init status --long`. Данные, которые получил cloud-init: `sudo cloud-init query --all`.
-
-</details>
-
-**2.** Запусти и добавь vCPU и память на ходу. Проверь в госте `nproc` и `free -h`.
-
-<details><summary>Ответ</summary>
-
-1) `shutdown` — секунды-десятки секунд, гость сам гасит службы; `destroy` — мгновенно,
-гость ничего не успевает. 2) Запущенные VM — отдельные процессы QEMU, рестарт демона libvirt их
-не трогает; `autostart` влияет на загрузку хоста. 3) `managedsave` сохраняет RAM в файл и
-выключает VM; `virsh list --all --managed-save` показывает `saved`; после `start` процесс
-`sleep` на месте — память восстановлена.
-
-</details>
-
-**3.** Дай `stress`/`yes` нагрузку в двух VM с 4 vCPU каждая на хосте с малым числом ядер
+#### C6. CPU и RAM
+1. Выключи `vm1`, подними максимум vCPU до 4 и памяти до 4 ГБ, текущие оставь 2/2.
+2. Запусти и добавь vCPU и память на ходу. Проверь в госте `nproc` и `free -h`.
+3. Дай `stress`/`yes` нагрузку в двух VM с 4 vCPU каждая на хосте с малым числом ядер
    (или временно ограничь хост). Найди steal time в `top` гостя.
 
 <details><summary>Ответ</summary>
 
-`qemu-img create -f qcow2 -b /var/lib/libvirt/images/noble-base.qcow2 -F qcow2 ov-a.qcow2 20G`.
-`ls -lh` показывает размер файла с «дырами» (для qcow2 — выделенные кластеры), `du` — реально
-занятое место; `qemu-img info` показывает virtual size 20 GiB и disk size ~200 МБ + метаданные.
-`qemu-img convert -O qcow2 ov-a.qcow2 flat.qcow2` — в `info` нет строки `backing file`,
-файл самостоятельный и размером с базу + изменения.
+`virsh setvcpus vm1 4 --maximum --config`, `virsh setmaxmem vm1 4G --config`, старт,
+`virsh setvcpus vm1 4 --live`, `virsh setmem vm1 4G --live`. Новые vCPU в госте могут прийти
+offline — `echo 1 | sudo tee /sys/devices/system/cpu/cpuN/online` (в Ubuntu обычно udev
+включает сам). Steal time растёт, когда суммарно vCPU под нагрузкой больше физических ядер.
 
 </details>
 
-### C7. 🔑 Guest agent
-**1.** `guest-ping`, `domifaddr --source agent`, `guestinfo --os --hostname`.
+#### C7. 🔑 Guest agent
+1. `guest-ping`, `domifaddr --source agent`, `guestinfo --os --hostname`.
+2. Заморозь ФС (`domfsfreeze`) и попробуй в госте `touch /tmp/x`. Что происходит? Разморозь.
+3. Останови агент в госте и повтори п.1. Какие команды перестали работать?
 
 <details><summary>Ответ</summary>
 
-Логи: `/var/log/cloud-init.log` (подробный) и `/var/log/cloud-init-output.log` (вывод
-команд). Проверки: `hostname`, `id devops`, `sudo -l`, `dpkg -l nginx htop`, `lsblk`/`df -h /`,
-`cloud-init status --long`. Данные, которые получил cloud-init: `sudo cloud-init query --all`.
+1\) Работают все три. 2) `touch` зависнет, пока ФС заморожена (запись блокируется) —
+завершится после `domfsthaw`. Держать ФС замороженной долго нельзя. 3) Без агента
+`guest-ping` и `guestinfo` — ошибка «guest agent is not connected», `domifaddr --source agent`
+не работает, `domifaddr` по умолчанию (lease) — работает.
 
 </details>
 
-**2.** Заморозь ФС (`domfsfreeze`) и попробуй в госте `touch /tmp/x`. Что происходит? Разморозь.
-
-<details><summary>Ответ</summary>
-
-1) `shutdown` — секунды-десятки секунд, гость сам гасит службы; `destroy` — мгновенно,
-гость ничего не успевает. 2) Запущенные VM — отдельные процессы QEMU, рестарт демона libvirt их
-не трогает; `autostart` влияет на загрузку хоста. 3) `managedsave` сохраняет RAM в файл и
-выключает VM; `virsh list --all --managed-save` показывает `saved`; после `start` процесс
-`sleep` на месте — память восстановлена.
-
-</details>
-
-**3.** Останови агент в госте и повтори п.1. Какие команды перестали работать?
-
-<details><summary>Ответ</summary>
-
-`qemu-img create -f qcow2 -b /var/lib/libvirt/images/noble-base.qcow2 -F qcow2 ov-a.qcow2 20G`.
-`ls -lh` показывает размер файла с «дырами» (для qcow2 — выделенные кластеры), `du` — реально
-занятое место; `qemu-img info` показывает virtual size 20 GiB и disk size ~200 МБ + метаданные.
-`qemu-img convert -O qcow2 ov-a.qcow2 flat.qcow2` — в `info` нет строки `backing file`,
-файл самостоятельный и размером с базу + изменения.
-
-</details>
-
-### C8. Увеличить диск без остановки
+#### C8. Увеличить диск без остановки
 Увеличь диск `vm1` на 5 ГБ на ходу и растяни раздел и ФС внутри. Докажи `df -h`.
 
-### C9. Миграция с VMware в миниатюре
+<details><summary>Ответ</summary>
+
+`virsh blockresize vm1 vda 25G`, в госте `lsblk` (vda уже 25G), `sudo growpart /dev/vda 1`,
+`sudo resize2fs /dev/vda1`, `df -h /`.
+
+</details>
+
+#### C9. Миграция с VMware в миниатюре
 Сконвертируй диск выключенной `vm2` в `vmdk`, затем обратно в `qcow2` в новый файл. Подними из
 него VM `vm2-import` через `virt-install --import` (без cloud-init). Загрузилась ли VM? Какие
 проблемы встретятся при настоящей миграции с ESXi?
 
+<details><summary>Ответ</summary>
+
+`qemu-img convert -O vmdk vm2.qcow2 vm2.vmdk`, затем `-f vmdk -O qcow2`. VM загрузится:
+это тот же Linux с virtio-драйверами. В настоящей миграции с ESXi: в госте нет virtio
+(особенно Windows — ставить virtio-win до переноса), другие имена сетевых интерфейсов
+(ens192 → enp1s0), VMware Tools вместо qemu-guest-agent, UEFI/BIOS должен совпасть,
+снапшоты VMware надо слить до экспорта, большие диски долго копируются.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** VM не стартует после переноса диска: `Cannot access storage file ... Permission denied`.
 Путь существует, права `rw-r--r--`. Что проверить?
@@ -1167,7 +965,7 @@ DHCP client ID из machine-id, поэтому DHCP выдаёт всем оди
 <details><summary>Ответ</summary>
 
 Резервировать адрес в DHCP сети libvirt:
-`virsh net-update virt-lab add ip-dhcp-host "&lt;host mac='52:54:00:..' name='app1' ip='10.10.10.50'/&gt;" --live --config`
+`virsh net-update virt-lab add ip-dhcp-host "<host mac='52:54:00:..' name='app1' ip='10.10.10.50'/>" --live --config`
 (MAC — из `virsh domiflist`), либо статический адрес через cloud-init `network-config`.
 Инвентарь лучше строить динамически (тема 06), а не списком IP.
 
@@ -1189,14 +987,13 @@ redo log при старте (crash recovery). Правильно: снапшо�
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как быстро поднять VM с Linux из командной строки?
 
 <details><summary>Ответ</summary>
 
 Скачать облачный образ, сделать overlay (`virsh vol-create-as ... --backing-vol`), написать
-   `user-data`/`meta-data` и выполнить `virt-install --import --osinfo ... --cloud-init
-   user-data=...,meta-data=... --network ... --graphics none`. Через минуту — SSH по ключу.
+`user-data`/`meta-data` и выполнить `virt-install --import --osinfo ... --cloud-init
+user-data=...,meta-data=... --network ... --graphics none`. Через минуту — SSH по ключу.
 
 </details>
 
@@ -1213,7 +1010,7 @@ raw — байт в байт, быстрее, без функций; qcow2 — �
 <details><summary>Ответ</summary>
 
 Backing file — базовый образ только для чтения; overlay/linked clone хранит только свои
-   изменения и читает остальное из базы. Так делают десятки VM из одного шаблона за секунды.
+изменения и читает остальное из базы. Так делают десятки VM из одного шаблона за секунды.
 
 </details>
 
@@ -1222,8 +1019,8 @@ Backing file — базовый образ только для чтения; ove
 <details><summary>Ответ</summary>
 
 Снапшот — точка отката на том же хранилище, без отдельного хранения; бэкап — копия
-   в другом месте с хранением по политике и проверенным восстановлением. Снапшот
-   бэкап не заменяет.
+в другом месте с хранением по политике и проверенным восстановлением. Снапшот
+бэкап не заменяет.
 
 </details>
 
@@ -1232,7 +1029,7 @@ Backing file — базовый образ только для чтения; ove
 <details><summary>Ответ</summary>
 
 Internal хранится внутри qcow2 и может включать RAM; external — отдельный overlay-файл,
-   базовый диск становится только для чтения, overlay потом сливают (blockcommit).
+базовый диск становится только для чтения, overlay потом сливают (blockcommit).
 
 </details>
 
@@ -1241,8 +1038,8 @@ Internal хранится внутри qcow2 и может включать RAM;
 <details><summary>Ответ</summary>
 
 Память копируется на приёмник, пока VM работает, потом докопируются изменённые страницы,
-   финальное переключение — миллисекунды. Нужны общее хранилище или копия дисков, та же сеть,
-   совместимый CPU, связь между libvirt.
+финальное переключение — миллисекунды. Нужны общее хранилище или копия дисков, та же сеть,
+совместимый CPU, связь между libvirt.
 
 </details>
 
@@ -1251,7 +1048,7 @@ Internal хранится внутри qcow2 и может включать RAM;
 <details><summary>Ответ</summary>
 
 Overcommit — выделено больше ресурсов, чем есть. CPU переподписывают умеренно, контроль —
-   steal time в гостях; RAM — осторожно, иначе своп или OOM-killer на хосте.
+steal time в гостях; RAM — осторожно, иначе своп или OOM-killer на хосте.
 
 </details>
 
@@ -1260,7 +1057,7 @@ Overcommit — выделено больше ресурсов, чем есть. 
 <details><summary>Ответ</summary>
 
 Узнать IP, ОС и ФС гостя, корректно выключить, заморозить ФС для консистентного снапшота
-   или бэкапа, выполнить команду в госте. Proxmox и бэкап-системы на него опираются.
+или бэкапа, выполнить команду в госте. Proxmox и бэкап-системы на него опираются.
 
 </details>
 
@@ -1268,8 +1065,8 @@ Overcommit — выделено больше ресурсов, чем есть. 
 
 <details><summary>Ответ</summary>
 
-`virsh blockresize vm vda &lt;размер&gt;` (в Proxmox — `qm disk resize`), затем в госте
-   `growpart /dev/vda 1` и `resize2fs`/`xfs_growfs`. LVM внутри — ещё `pvresize` и `lvextend`.
+`virsh blockresize vm vda <размер>` (в Proxmox — `qm disk resize`), затем в госте
+`growpart /dev/vda 1` и `resize2fs`/`xfs_growfs`. LVM внутри — ещё `pvresize` и `lvextend`.
 
 </details>
 
@@ -1278,9 +1075,7 @@ Overcommit — выделено больше ресурсов, чем есть. 
 <details><summary>Ответ</summary>
 
 Процесс QEMU мгновенно убивается — как выдернуть питание. Незаписанные данные гостя
-    теряются, диск и описание VM остаются; `virsh start` поднимет её снова.
-
----
+теряются, диск и описание VM остаются; `virsh start` поднимет её снова.
 
 </details>
 

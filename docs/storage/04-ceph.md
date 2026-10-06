@@ -1,14 +1,14 @@
 ---
 title: "04. Ceph: распределённое хранилище"
-description: "Блок → Хранилища и stateful → тема 04. Опирается на 01storagebasics.md"
+description: "MON/MGR/OSD, PG, CRUSH, cephadm, ceph -s, RBD/CephFS/RGW"
 ---
 
 # 04. Ceph: распределённое хранилище
 
-> Блок → Хранилища и stateful → тема 04. Опирается на [01_storage_basics.md](/storage/01-storage-basics)
-> (репликация vs erasure coding, durability, консистентность), [02_lvm_filesystems.md](/storage/02-lvm-filesystems)
-> (OSD создаются поверх LVM) и [03_nfs_minio.md](/storage/03-nfs-minio) (S3 и erasure coding в MinIO).
-> Ceph в Kubernetes через Rook — в [05_k8s_stateful.md](/storage/05-k8s-stateful).
+> Блок → Хранилища и stateful → тема 04. Опирается на [01. Основы хранения: блок, файл, объект, IOPS, RAID](/storage/01-storage-basics)
+> (репликация vs erasure coding, durability, консистентность), [02. LVM, файловые системы и RAID на Linux](/storage/02-lvm-filesystems)
+> (OSD создаются поверх LVM) и [03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio) (S3 и erasure coding в MinIO).
+> Ceph в Kubernetes через Rook — в [05. Stateful в Kubernetes: CSI, StatefulSet, Rook-Ceph, снапшоты](/storage/05-k8s-stateful).
 >
 > **После темы ты умеешь:** объяснить, зачем Ceph и когда он не нужен; рассказать архитектуру
 > (MON, MGR, OSD, MDS, RGW, RADOS, пулы, PG, CRUSH); выбрать `size/min_size` или EC-пул;
@@ -20,7 +20,7 @@ description: "Блок → Хранилища и stateful → тема 04. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
   КЛИЕНТЫ         ВМ/k8s-поды: RBD         поды/серверы: CephFS        приложения: S3
                         │ librbd/krbd              │ MDS (метаданные)       │ RGW (HTTP)
                         └──────────────┬───────────┴─────────────┬──────────┘
@@ -33,7 +33,8 @@ description: "Блок → Хранилища и stateful → тема 04. Оп�
   │  пул rbd (size 3)    пул cephfs_data (size 3)    пул default.rgw.buckets.data (EC 4+2)   │
   └──────────────────────────────────────────────────────────────────────────────────────────┘
         ceph1 (vdb)                  ceph2 (vdb)                  ceph3 (vdb)
-```text
+```
+
 ---
 
 ## 1. Зачем Ceph и когда он не нужен
@@ -75,7 +76,7 @@ description: "Блок → Хранилища и stateful → тема 04. Оп�
 
 ## 3. RADOS, пулы, PG и CRUSH
 
-```text
+```text:no-line-numbers
  объект "rbd_data.1a2b.0000000000000017" (4 МиБ кусок RBD-тома)
       │  hash(имя) mod pg_num
       ▼
@@ -83,7 +84,8 @@ description: "Блок → Хранилища и stateful → тема 04. Оп�
       │  CRUSH(PG, карта кластера, правило пула)
       ▼
  acting set [osd.3, osd.7, osd.1]   ← первый — primary: принимает запись, рассылает репликам
-```text
+```
+
 | Понятие | Смысл |
 |---------|-------|
 | **Пул** | Логический раздел: свой `size`, правило CRUSH, число PG, приложение (rbd/cephfs/rgw) |
@@ -93,17 +95,18 @@ description: "Блок → Хранилища и stateful → тема 04. Оп�
 | **Device class** | `hdd` / `ssd` / `nvme` — назначается автоматически; правило может брать только SSD |
 
 Иерархия CRUSH и правило под быстрые диски:
-```text
+```text:no-line-numbers
 root default
 ├── host ceph1 ── osd.0 (ssd)
 ├── host ceph2 ── osd.1 (ssd)
 └── host ceph3 ── osd.2 (ssd)
-```text
+```
 ```bash
 ceph osd tree                                              # иерархия и статус OSD
 ceph osd crush rule create-replicated fast default host ssd   # реплики на разных host, только ssd
 ceph osd pool set rbd crush_rule fast                      # пул переедет (пойдёт перемещение данных)
-```text
+```
+
 **Сколько PG:** считать руками больше не нужно — `pg_autoscaler` (включён по умолчанию)
 держит порядка 100 PG на OSD и степень двойки на пул. Смотреть: `ceph osd pool autoscale-status`.
 Слишком мало PG — неравномерное заполнение OSD; слишком много — лишняя нагрузка на память и peering.
@@ -126,18 +129,20 @@ set → **подтверждение клиенту после записи на
 ```bash
 ceph osd pool get rbd size; ceph osd pool get rbd min_size
 ceph osd pool set rbd size 3
-```text
+```
+
 Почему `min_size 2`, а не 1: при `min_size 1` запись принимается на единственную копию; умри
 этот диск до восстановления — потеряны данные, которые уже подтвердили клиенту. `size 2 / min_size 1`
 — классический путь к потере данных; в проде только `3/2`.
 
-**Erasure coding** (теория — в [01_storage_basics.md](/storage/01-storage-basics)):
+**Erasure coding** (теория — в [01. Основы хранения: блок, файл, объект, IOPS, RAID](/storage/01-storage-basics)):
 ```bash
 ceph osd erasure-code-profile set ec42 k=4 m=2 crush-failure-domain=host
 ceph osd pool create ecpool erasure ec42
 ceph osd pool set ecpool allow_ec_overwrites true          # нужно для RBD и CephFS
 rbd create rbd/vol-ec --size 10G --data-pool ecpool        # метаданные — в реплицируемом rbd
-```text
+```
+
 | | Replicated 3× | EC 4+2 | EC 2+1 |
 |---|---------------|--------|--------|
 | Полезная ёмкость | 33% | 67% | 67% |
@@ -155,7 +160,7 @@ rbd create rbd/vol-ec --size 10G --data-pool ecpool        # метаданны�
 ## 5. BlueStore — как OSD хранит данные
 
 - OSD пишет **прямо на сырое устройство**, без файловой системы (`ceph-volume` создаёт на
-  диске LVM-том — в `lsblk` он виден как `ceph--&lt;uuid&gt;-osd--block--&lt;uuid&gt;`).
+  диске LVM-том — в `lsblk` он виден как `ceph--<uuid>-osd--block--<uuid>`).
 - Метаданные объектов — в RocksDB на мини-ФС BlueFS. RocksDB (**DB**) и журнал (**WAL**) можно
   вынести на NVMe, а данные держать на HDD — сильно ускоряет HDD-кластеры.
 - Контрольные суммы (crc32c) на все данные: порча обнаруживается при чтении и при **scrub**.
@@ -190,7 +195,7 @@ cephadm ставит все демоны **контейнерами** (Podman и
 через orchestrator: описываешь, сколько чего и где, — он приводит кластер к описанию.
 
 Требования к хостам: Python 3, systemd, Podman (3.x+ для Quincy и новее) или Docker, синхронное
-время (chrony), `lvm2`. Стенд — `ceph-lab` из [00_INDEX.md](/storage/): ceph1..3 (192.168.61.11–13),
+время (chrony), `lvm2`. Стенд — `ceph-lab` из [Хранилища](/storage/): ceph1..3 (192.168.61.11–13),
 по 4 ГБ RAM и сырому диску `vdb` на 20G.
 
 ```bash
@@ -207,7 +212,7 @@ cephadm bootstrap --mon-ip 192.168.61.11 --skip-monitoring-stack
 #   dashboard https://192.168.61.11:8443 — логин и пароль печатаются в конце (сохрани!)
 #   --skip-monitoring-stack: без Prometheus/Grafana/Alertmanager — экономим RAM стенда
 cephadm shell -- ceph -s                             # CLI внутри контейнера с конфигом кластера
-```text
+```
 ```bash
 # добавить ноды: ключ cephadm → authorized_keys root на новых хостах
 ssh-copy-id -f -i /etc/ceph/ceph.pub root@ceph2      # на Vagrant-VM пароля root нет — ключ
@@ -223,7 +228,8 @@ ceph orch device ls --refresh                        # AVAILABLE=Yes тольк�
 ceph orch apply osd --all-available-devices          # декларативно: все подходящие диски → OSD
 ceph orch daemon add osd ceph2:/dev/vdb              # …или точечно
 ceph orch ps; ceph orch ls                           # демоны и сервисы
-```text
+```
+
 Диск считается **available**, если на нём нет разделов, ФС, LVM, он не смонтирован и больше 5 ГБ.
 `--all-available-devices` — это сервис `osd.all-available-devices`: он **продолжает** забирать
 любой новый подходящий диск (в том числе после `zap`). Остановить: `ceph orch apply osd
@@ -235,7 +241,8 @@ ceph orch apply mon --placement="3 ceph1 ceph2 ceph3"
 ceph orch apply mgr --placement="2"
 ceph orch upgrade start --ceph-version 20.2.4       # rolling-апгрейд всех демонов
 ceph orch upgrade status
-```text
+```
+
 > ⚠️ `ceph orch device zap HOST /dev/vdX --force` и `ceph orch osd rm … --zap` **стирают диск**.
 > Только на доп. дисках учебных VM.
 
@@ -243,7 +250,7 @@ ceph orch upgrade status
 
 ## 8. Здоровье кластера
 
-```text
+```text:no-line-numbers
 $ ceph -s
   cluster:
     id:     4f1c…
@@ -260,7 +267,8 @@ $ ceph -s
     usage:   1.4 GiB used, 59 GiB / 60 GiB avail
     pgs:     120/360 objects degraded (33.333%)
              33 active+undersized+degraded                      ← I/O идёт, избыточность снижена
-```text
+```
+
 `HEALTH_OK` → `HEALTH_WARN` (проблема, данные доступны) → `HEALTH_ERR` (нужна реакция немедленно).
 `ceph health detail` расшифровывает каждую проверку с кодом:
 
@@ -296,7 +304,8 @@ ceph osd tree; ceph osd df tree    # статус и заполнение OSD п
 ceph df                            # RAW и по пулам (STORED vs USED ≈ ×3)
 ceph pg stat; ceph pg dump_stuck   # застрявшие PG
 ceph osd perf                      # commit/apply latency по OSD — ищем медленный диск
-```text
+```
+
 ---
 
 ## 9. RBD — блочные тома
@@ -313,7 +322,7 @@ rbd snap ls rbd/vol1; rbd snap rollback rbd/vol1@before-upgrade
 sudo rbd map rbd/vol1 && rbd showmapped      # → /dev/rbd0
 sudo mkfs.xfs /dev/rbd0 && sudo mount /dev/rbd0 /mnt/rbd
 sudo umount /mnt/rbd && sudo rbd unmap /dev/rbd0
-```text
+```
 Кто пользуется RBD: CSI-драйвер в Kubernetes (Rook, ceph-csi), Proxmox, OpenStack Cinder,
 libvirt (librbd напрямую, без `/dev/rbd`). Снапшоты RBD живут **в том же кластере** — это точка
 отката, а не бэкап; вывезти можно `rbd export` / `rbd export-diff` или Velero data mover (тема 07).
@@ -329,7 +338,7 @@ ceph fs status cephfs; ceph mds stat       # 1 active, standby
 sudo mkdir -p /mnt/cephfs
 sudo mount -t ceph 192.168.61.11:6789:/ /mnt/cephfs -o name=admin
 ceph fs subvolume create cephfs team-a --size 10737418240   # так CSI выдаёт RWX-тома с квотой
-```text
+```
 - Настоящая POSIX-ФС с одновременной записью с многих клиентов — основа **RWX** в k8s (`rook-cephfs`).
 - MDS — узкое место метаданных: миллионы мелких файлов и `ls` по огромным каталогам его грузят;
   масштабируют несколькими active MDS (`max_mds`) и standby.
@@ -342,11 +351,11 @@ ceph fs subvolume create cephfs team-a --size 10737418240   # так CSI выд�
 ```bash
 ceph orch apply rgw myrgw --placement="1 ceph1" --port=8080
 radosgw-admin user create --uid=demo --display-name="Demo"   # выведет access_key и secret_key
-# дальше любой S3-клиент: mc alias set ceph http://192.168.61.11:8080 &lt;access&gt; &lt;secret&gt;
-```text
+# дальше любой S3-клиент: mc alias set ceph http://192.168.61.11:8080 <access> <secret>
+```
 - Данные бакетов — обычно в EC-пуле (экономия места), индексы бакетов — в реплицируемом на SSD.
 - Multisite — асинхронная репликация зон между кластерами (DR на вторую площадку).
-- Для S3 без блочных томов Ceph избыточен: см. альтернативы в [03_nfs_minio.md](/storage/03-nfs-minio).
+- Для S3 без блочных томов Ceph избыточен: см. альтернативы в [03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio).
 
 ---
 
@@ -354,14 +363,15 @@ radosgw-admin user create --uid=demo --display-name="Demo"   # выведет ac
 
 **Минимум три ноды.** Три MON для кворума и три failure domain для `size 3`. Но есть нюанс:
 
-```text
+```text:no-line-numbers
  3 хоста, size 3, failure domain host — умер один хост:
    PG: active+undersized+degraded   → I/O идёт (2 ≥ min_size 2)
    recovery НЕКУДА: четвёртого хоста нет, третья копия не появится, пока хост не вернётся
  4+ хоста — умер один:
    через mon_osd_down_out_interval (600 с) OSD помечаются out → PG досоздаются на оставшихся
    ⇒ оставшимся хостам нужно СВОБОДНОЕ место под данные упавшего
-```text
+```
+
 **Заполнение.** Пороги: `nearfull` 85%, `backfillfull` 90% (дальше recovery не пишет на OSD),
 `full` 95% (запись в кластер **останавливается**). Если при потере хоста его данные переедут
 на остальные, заполнение вырастет примерно в `N/(N−1)` раз: при 5 хостах 75% станет ~94%.
@@ -376,7 +386,8 @@ OSD; recovery после отказа хоста гонит по сети вес
 ```bash
 ceph config set osd osd_mclock_profile high_client_ops    # днём: клиенты важнее
 ceph config set osd osd_mclock_profile high_recovery_ops  # ночью: быстрее вернуть избыточность
-```text
+```
+
 **Обслуживание.**
 ```bash
 ceph osd set noout                     # плановая перезагрузка: не помечать OSD out и не гнать recovery
@@ -388,7 +399,8 @@ ceph orch host maintenance exit ceph3
 # замена умершего диска: OSD удалить с сохранением ID, новый диск подхватит спецификация
 ceph orch osd rm 2 --replace --zap
 ceph orch osd rm status
-```text
+```
+
 **Мониторинг.** Модуль `prometheus` в MGR (`ceph mgr module enable prometheus`, порт 9283)
 + готовые дашборды и алерты (`ceph-mixin`): health, OSD down/out, nearfull, PG не `active+clean`,
 latency OSD, clock skew. Часы — chrony на всех нодах, иначе `MON_CLOCK_SKEW` и странные таймауты.
@@ -416,7 +428,7 @@ latency OSD, clock skew. Часы — chrony на всех нодах, инач�
 ## 💼 Как это в DevOps
 
 - В on-prem Ceph чаще всего живёт под Proxmox/OpenStack или под Kubernetes через Rook
-  ([05_k8s_stateful.md](/storage/05-k8s-stateful)). Девопс его не всегда строит, но **обязан** читать
+  ([05. Stateful в Kubernetes: CSI, StatefulSet, Rook-Ceph, снапшоты](/storage/05-k8s-stateful)). Девопс его не всегда строит, но **обязан** читать
   `ceph -s`, понимать, почему PVC тормозят при recovery, и не ронять кластер перезагрузками без `noout`.
 - Ёмкость планируют с запасом на отказ хоста: «сколько будет занято, если один хост умрёт и его
   данные переедут» — вопрос из каждого capacity review.
@@ -469,13 +481,17 @@ latency OSD, clock skew. Часы — chrony на всех нодах, инач�
 10. Нужны 10+ Гбит/с сеть, синхронное время, HBA вместо RAID, `noout` на время обслуживания.
 11. Актуальный релиз — Tentacle 20.2.x; Squid поддерживается до 2026-10-31.
 
-➡️ Дальше: [05_k8s_stateful.md](/storage/05-k8s-stateful) · задачи: 04_ceph_tasks.md
+---
 
+## Задачи
+
+> Стенд: `ceph-lab` из [Хранилища](/storage/) — ceph1..3 (192.168.61.11–13), по 4 ГБ RAM,
+> сырой диск `vdb` 20G на каждой. Перед практикой: `vagrant snapshot save before_04`.
+> Команды `ceph …` — внутри `cephadm shell` на ceph1. ⚠️ zap и удаление OSD — только здесь.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Какие три интерфейса отдаёт Ceph и на каком общем ядре они построены?
 
@@ -653,290 +669,221 @@ Reef архивирован, Umbrella 21 — RC. Кластер на Squid ну�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```bash
 B1.  ceph osd pool create data && ceph osd pool set data size 2 && ceph osd pool set data min_size 1
-```text
-<details><summary>Ответ</summary>
 
-🔴 `2/1` — запись подтверждается при одной живой копии; отказ второго диска в окне
+B2.  ceph osd erasure-code-profile set ec21 k=2 m=1 crush-failure-domain=host
+     ceph osd pool create ecdata erasure ec21           # кластер из трёх хостов
+     # «потеряем хост — ничего страшного, m=1»
+
+B3.  ceph osd erasure-code-profile set ec42 k=4 m=2 crush-failure-domain=host
+     ceph osd pool create ec42pool erasure ec42         # хостов три
+
+B4.  # кластер из 3 MON; два MON-хоста выключили на обслуживание одновременно
+
+B5.  ceph orch device zap ceph2 /dev/vdb --force       # хотим «переразметить» диск,
+     # сервис osd.all-available-devices включён
+
+B6.  # сервер ceph3 перезагружают для обновления ядра, флаги не ставили; ребут занял 15 минут
+
+B7.  # ceph df: RAW USED 82%; в кластере 4 хоста; «до 95% ещё далеко»
+
+B8.  # OSD развёрнуты на логических дисках RAID5 аппаратного контроллера
+
+B9.  # health: HEALTH_WARN clock skew detected on mon.ceph3
+
+B10. rbd snap create rbd/pgdata@nightly     # «это наш ночной бэкап базы»
+
+B11. # сеть кластера 1 Гбит/с, один хост с 8 × 16 ТБ HDD умер
+
+B12. cephadm bootstrap --mon-ip 192.168.61.11
+     ceph orch host add ceph2                # DNS для ceph2 не настроен, IP не указан
+
+B13. ceph osd pool create rbd
+     rbd create rbd/vol1 --size 2G           # rbd pool init не выполняли
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** 🔴 `2/1` — запись подтверждается при одной живой копии; отказ второго диска в окне
 восстановления = потеря подтверждённых данных. `size 3`, `min_size 2`.
 
-</details>
-
-```text:no-line-numbers
-B2.  ceph osd erasure-code-profile set ec21 k=2 m=1 crush-failure-domain=host
-```text
-<details><summary>Ответ</summary>
-
-⚠️ У EC-пула `min_size = k+1 = 3`: потеря одного хоста из трёх переводит PG в inactive —
+**B2.** ⚠️ У EC-пула `min_size = k+1 = 3`: потеря одного хоста из трёх переводит PG в inactive —
 I/O стоит. Данные целы, но сервис лежит. Нужен replicated 3× или 4+ хостов с `min_size` k+1.
 
-</details>
-
-```text:no-line-numbers
-     ceph osd pool create ecdata erasure ec21           # кластер из трёх хостов
-```text
-```text:no-line-numbers
-     # «потеряем хост — ничего страшного, m=1»
-```text
-```text:no-line-numbers
-B3.  ceph osd erasure-code-profile set ec42 k=4 m=2 crush-failure-domain=host
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Для 4+2 с failure domain host нужно 6 хостов; при трёх PG не смогут разместиться
+**B3.** ⚠️ Для 4+2 с failure domain host нужно 6 хостов; при трёх PG не смогут разместиться
 (CRUSH не найдёт 6 разных хостов) — пул не станет `active+clean`.
 
-</details>
-
-```text:no-line-numbers
-     ceph osd pool create ec42pool erasure ec42         # хостов три
-```text
-```text:no-line-numbers
-B4.  # кластер из 3 MON; два MON-хоста выключили на обслуживание одновременно
-```text
-<details><summary>Ответ</summary>
-
-🔴 Из трёх MON остался один — кворума нет, кластер встанет. Обслуживать MON по одному,
+**B4.** 🔴 Из трёх MON остался один — кворума нет, кластер встанет. Обслуживать MON по одному,
 дожидаясь возвращения в кворум.
 
-</details>
-
-```text:no-line-numbers
-B5.  ceph orch device zap ceph2 /dev/vdb --force       # хотим «переразметить» диск,
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Затёртый диск снова «available» — сервис тут же создаст на нём OSD. Сначала
+**B5.** ⚠️ Затёртый диск снова «available» — сервис тут же создаст на нём OSD. Сначала
 `--unmanaged=true` для сервиса OSD.
 
-</details>
-
-```text:no-line-numbers
-     # сервис osd.all-available-devices включён
-```text
-```text:no-line-numbers
-B6.  # сервер ceph3 перезагружают для обновления ядра, флаги не ставили; ребут занял 15 минут
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Через 10 минут OSD ceph3 пометятся out, начнётся перераспределение (на 4+ хостах), а
+**B6.** ⚠️ Через 10 минут OSD ceph3 пометятся out, начнётся перераспределение (на 4+ хостах), а
 после возврата — обратное. Лишняя нагрузка и риск. Нужно `ceph osd set noout` или
 `ceph orch host maintenance enter ceph3`.
 
-</details>
-
-```text:no-line-numbers
-B7.  # ceph df: RAW USED 82%; в кластере 4 хоста; «до 95% ещё далеко»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ При отказе хоста заполнение вырастет примерно до 82% × 4/3 ≈ 109% — не влезет,
+**B7.** ⚠️ При отказе хоста заполнение вырастет примерно до 82% × 4/3 ≈ 109% — не влезет,
 OSD упрутся в backfillfull/full, запись встанет. Расширять кластер уже сейчас.
 
-</details>
-
-```text:no-line-numbers
-B8.  # OSD развёрнуты на логических дисках RAID5 аппаратного контроллера
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Ceph не видит отдельных дисков и их ошибок, двойная избыточность (RAID5 + реплики)
+**B8.** ⚠️ Ceph не видит отдельных дисков и их ошибок, двойная избыточность (RAID5 + реплики)
 и write penalty. Контроллер в HBA/JBOD, один OSD на диск.
 
-</details>
-
-```text:no-line-numbers
-B9.  # health: HEALTH_WARN clock skew detected on mon.ceph3
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Часы ceph3 расходятся больше чем на 0,05 с. Чинить chrony/NTP (`chronyc tracking`),
+**B9.** ⚠️ Часы ceph3 расходятся больше чем на 0,05 с. Чинить chrony/NTP (`chronyc tracking`),
 иначе нестабильный кворум и проблемы cephx.
 
-</details>
-
-```text:no-line-numbers
-B10.  rbd snap create rbd/pgdata@nightly     # «это наш ночной бэкап базы»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Снапшот RBD лежит в том же кластере и в том же пуле — умер кластер, умер и «бэкап».
+**B10.** ⚠️ Снапшот RBD лежит в том же кластере и в том же пуле — умер кластер, умер и «бэкап».
 К тому же он crash-consistent без PITR. Бэкап БД — инструментами БД; том — `rbd export-diff`
 или Velero data mover в другое хранилище.
 
-</details>
-
-```text:no-line-numbers
-B11.  # сеть кластера 1 Гбит/с, один хост с 8 × 16 ТБ HDD умер
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Надо перекопировать ~128 ТБ по сети 1 Гбит/с (~125 МБ/с) — это больше десяти суток
+**B11.** ⚠️ Надо перекопировать ~128 ТБ по сети 1 Гбит/с (~125 МБ/с) — это больше десяти суток
 при идеальных условиях, всё это время избыточность снижена и клиенты страдают. 10–25 Гбит/с,
 отдельная cluster network, более мелкие хосты.
 
-</details>
-
-```text:no-line-numbers
-B12.  cephadm bootstrap --mon-ip 192.168.61.11
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без IP cephadm будет резолвить имя через DNS — не найдёт хост. Указывать IP явно:
+**B12.** ⚠️ Без IP cephadm будет резолвить имя через DNS — не найдёт хост. Указывать IP явно:
 `ceph orch host add ceph2 192.168.61.12` (и разложить ключ `/etc/ceph/ceph.pub`).
 
-</details>
-
-```text:no-line-numbers
-     ceph orch host add ceph2                # DNS для ceph2 не настроен, IP не указан
-```text
-```text:no-line-numbers
-B13.  ceph osd pool create rbd
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Пул не помечен приложением `rbd` — будет предупреждение `POOL_APP_NOT_ENABLED`, а
+**B13.** ⚠️ Пул не помечен приложением `rbd` — будет предупреждение `POOL_APP_NOT_ENABLED`, а
 `rbd pool init` ещё и инициализирует служебные объекты. Выполнить `rbd pool init rbd`.
 
 </details>
 
-```text:no-line-numbers
-     rbd create rbd/vol1 --size 2G           # rbd pool init не выполняли
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Кластер из трёх нод
+#### C1. 🔑 Кластер из трёх нод
 Подними Ceph Tentacle 20.2.4 через cephadm на ceph1..3 (`--skip-monitoring-stack`), добавь хосты,
 создай OSD на всех `vdb`. Добейся `HEALTH_OK`. Покажи `ceph -s`, `ceph osd tree`, `ceph orch ps`.
 Как ты раздал SSH-ключ cephadm на Vagrant-VM без пароля root?
 
-### C2. 🔑 RBD-том
+<details><summary>Ответ</summary>
+
+Команды — раздел 7 конспекта и лаба 3 в [08. Практика: 5 лаб по хранилищам и stateful](/storage/08-practice-labs).
+Ключ: `PUB=$(vagrant ssh ceph1 -c 'sudo cat /etc/ceph/ceph.pub' | tr -d '\r')`, затем для
+ceph2/ceph3 `vagrant ssh cephN -c "echo '$PUB' | sudo tee -a /root/.ssh/authorized_keys"`
+(sshd в Ubuntu по умолчанию разрешает root вход по ключу — `PermitRootLogin prohibit-password`).
+Итог: `mon: 3 daemons, quorum ceph1,ceph2,ceph3`, `osd: 3 osds: 3 up, 3 in`, `HEALTH_OK`.
+
+</details>
+
+#### C2. 🔑 RBD-том
 Создай пул `rbd`, том `vol1` на 2G, смонтируй его на ceph1 с XFS, запиши 500 МБ, посчитай
 `sha256sum`. Увеличь том до 4G онлайн и дорасти ФС. Сделай снапшот и откати к нему.
 
-### C3. 🔑 Отказ OSD
+<details><summary>Ответ</summary>
+
+```bash
+ceph osd pool create rbd && rbd pool init rbd && rbd create rbd/vol1 --size 2G
+sudo apt-get install -y ceph-common            # на ceph1 вне контейнера
+sudo rbd map rbd/vol1 && sudo mkfs.xfs /dev/rbd0 && sudo mkdir -p /mnt/rbd && sudo mount /dev/rbd0 /mnt/rbd
+sudo dd if=/dev/urandom of=/mnt/rbd/blob bs=1M count=500 status=none && sha256sum /mnt/rbd/blob
+sudo rbd resize rbd/vol1 --size 4G && sudo xfs_growfs /mnt/rbd
+sudo rbd snap create rbd/vol1@s1
+# откат: размонтировать и отключить, потом rollback
+sudo umount /mnt/rbd && sudo rbd unmap /dev/rbd0 && sudo rbd snap rollback rbd/vol1@s1
+```
+
+</details>
+
+#### C3. 🔑 Отказ OSD
 Останови `osd.2` (`ceph orch daemon stop osd.2`) и в соседнем окне смотри `watch -n2 ceph -s`.
 Запиши, какие коды появились в `ceph health detail` и какие состояния PG. Верни OSD и засеки время
 до `HEALTH_OK`.
 
-### C4. Потеря хоста и двух хостов
-**1.** `vagrant halt ceph3`, подожди больше 10 минут. OSD помечен out? Идёт ли recovery? Почему?
-
 <details><summary>Ответ</summary>
 
-Команды — раздел 7 конспекта и лаба 3 в [08_practice_labs.md](/softskills/08-practice-labs).
-Ключ: `PUB=$(vagrant ssh ceph1 -c 'sudo cat /etc/ceph/ceph.pub' | tr -d '\r')`, затем для
-ceph2/ceph3 `vagrant ssh cephN -c "echo '$PUB' | sudo tee -a /root/.ssh/authorized_keys"`
-(sshd в Ubuntu по умолчанию разрешает root вход по ключу — `PermitRootLogin prohibit-password`).
-Итог: `mon: 3 daemons, quorum ceph1,ceph2,ceph3`, `osd: 3 osds: 3 up, 3 in`, `HEALTH_OK`.
+Появятся `OSD_DOWN` и `PG_DEGRADED` (`Degraded data redundancy … pgs undersized`), PG —
+`active+undersized+degraded`. После `ceph orch daemon start osd.2` — короткий `peering`, затем
+`recovering` (досоздание изменённых за время простоя объектов) и `active+clean`. На пустом стенде
+это секунды-минуты; время зависит от объёма изменений.
 
 </details>
 
-**2.** Выключи ещё ceph2. Что происходит с записью на `/mnt/rbd`? С кворумом MON?
+#### C4. Потеря хоста и двух хостов
+1. `vagrant halt ceph3`, подожди больше 10 минут. OSD помечен out? Идёт ли recovery? Почему?
+2. Выключи ещё ceph2. Что происходит с записью на `/mnt/rbd`? С кворумом MON?
+3. Верни обе ноды, дождись `active+clean`, сверь `sha256sum`.
 
 <details><summary>Ответ</summary>
 
-```bash
-ceph osd pool create rbd && rbd pool init rbd && rbd create rbd/vol1 --size 2G
-sudo apt-get install -y ceph-common            # на ceph1 вне контейнера
-sudo rbd map rbd/vol1 && sudo mkfs.xfs /dev/rbd0 && sudo mkdir -p /mnt/rbd && sudo mount /dev/rbd0 /mnt/rbd
-sudo dd if=/dev/urandom of=/mnt/rbd/blob bs=1M count=500 status=none && sha256sum /mnt/rbd/blob
-sudo rbd resize rbd/vol1 --size 4G && sudo xfs_growfs /mnt/rbd
-sudo rbd snap create rbd/vol1@s1
-# откат: размонтировать и отключить, потом rollback
-sudo umount /mnt/rbd && sudo rbd unmap /dev/rbd0 && sudo rbd snap rollback rbd/vol1@s1
-```text
-</details>
-
-**3.** Верни обе ноды, дождись `active+clean`, сверь `sha256sum`.
-
-<details><summary>Ответ</summary>
-
-) После `vagrant up` — кворум, peering, recovery, `active+clean`; sha256 совпадает.
+1\) Через 600 с OSD ceph3 станет `out`, но recovery не пойдёт: при `size 3` и failure
+domain host нужны три разных хоста, а живых два — PG остаются `active+undersized+degraded`,
+запись идёт. 2) С двумя выключенными хостами у PG одна копия < `min_size 2` → PG inactive,
+запись на `/mnt/rbd` зависает; MON: из трёх жив один — кворума нет, `ceph -s` сам зависнет.
+3) После `vagrant up` — кворум, peering, recovery, `active+clean`; sha256 совпадает.
 
 </details>
 
-### C5. Плановое обслуживание
+#### C5. Плановое обслуживание
 Перезагрузи ceph2 «правильно»: с `noout` или `ceph orch host maintenance`. Сравни с C4.1: что не
 произошло и почему это важно на больших кластерах?
 
-### C6. CRUSH и пулы
-**1.** Посмотри device class OSD (`ceph osd tree`, колонка CLASS). Создай правило `fast` только для
+<details><summary>Ответ</summary>
+
+`ceph osd set noout` → `vagrant reload ceph2` (или `ceph orch host maintenance enter ceph2`
+→ ребут → `exit`) → `ceph osd unset noout`. Не случилось пометки OSD out и перераспределения
+данных; на больших кластерах это часы лишнего трафика и риск упереться в заполнение.
+
+</details>
+
+#### C6. CRUSH и пулы
+1. Посмотри device class OSD (`ceph osd tree`, колонка CLASS). Создай правило `fast` только для
    этого класса с failure domain `host` и назначь его пулу `rbd`.
+2. Выведи `ceph osd pool autoscale-status` и объясни колонки PG_NUM и NEW PG_NUM.
 
 <details><summary>Ответ</summary>
 
-Команды — раздел 7 конспекта и лаба 3 в [08_practice_labs.md](/softskills/08-practice-labs).
-Ключ: `PUB=$(vagrant ssh ceph1 -c 'sudo cat /etc/ceph/ceph.pub' | tr -d '\r')`, затем для
-ceph2/ceph3 `vagrant ssh cephN -c "echo '$PUB' | sudo tee -a /root/.ssh/authorized_keys"`
-(sshd в Ubuntu по умолчанию разрешает root вход по ключу — `PermitRootLogin prohibit-password`).
-Итог: `mon: 3 daemons, quorum ceph1,ceph2,ceph3`, `osd: 3 osds: 3 up, 3 in`, `HEALTH_OK`.
+1\) `ceph osd crush rule create-replicated fast default host <class>` (класс из колонки
+CLASS, на virtio-дисках обычно `hdd`), `ceph osd pool set rbd crush_rule fast`. 2) PG_NUM —
+текущее число PG пула, NEW PG_NUM — сколько хочет autoscaler (пусто — менять не нужно); плюс
+TARGET/RATIO — ожидаемый объём, если задан.
 
 </details>
 
-**2.** Выведи `ceph osd pool autoscale-status` и объясни колонки PG_NUM и NEW PG_NUM.
+#### C7. CephFS и RGW
+1. Создай CephFS, смонтируй на ceph1 и ceph2 одновременно, запиши файл с одной ноды, прочитай с другой.
+2. Разверни RGW на ceph1:8080, создай пользователя, подключись к нему `mc` с хоста и создай бакет.
 
 <details><summary>Ответ</summary>
 
-```bash
-ceph osd pool create rbd && rbd pool init rbd && rbd create rbd/vol1 --size 2G
-sudo apt-get install -y ceph-common            # на ceph1 вне контейнера
-sudo rbd map rbd/vol1 && sudo mkfs.xfs /dev/rbd0 && sudo mkdir -p /mnt/rbd && sudo mount /dev/rbd0 /mnt/rbd
-sudo dd if=/dev/urandom of=/mnt/rbd/blob bs=1M count=500 status=none && sha256sum /mnt/rbd/blob
-sudo rbd resize rbd/vol1 --size 4G && sudo xfs_growfs /mnt/rbd
-sudo rbd snap create rbd/vol1@s1
-# откат: размонтировать и отключить, потом rollback
-sudo umount /mnt/rbd && sudo rbd unmap /dev/rbd0 && sudo rbd snap rollback rbd/vol1@s1
-```text
-</details>
-
-### C7. CephFS и RGW
-**1.** Создай CephFS, смонтируй на ceph1 и ceph2 одновременно, запиши файл с одной ноды, прочитай с другой.
-
-<details><summary>Ответ</summary>
-
-Команды — раздел 7 конспекта и лаба 3 в [08_practice_labs.md](/softskills/08-practice-labs).
-Ключ: `PUB=$(vagrant ssh ceph1 -c 'sudo cat /etc/ceph/ceph.pub' | tr -d '\r')`, затем для
-ceph2/ceph3 `vagrant ssh cephN -c "echo '$PUB' | sudo tee -a /root/.ssh/authorized_keys"`
-(sshd в Ubuntu по умолчанию разрешает root вход по ключу — `PermitRootLogin prohibit-password`).
-Итог: `mon: 3 daemons, quorum ceph1,ceph2,ceph3`, `osd: 3 osds: 3 up, 3 in`, `HEALTH_OK`.
+1\) `ceph fs volume create cephfs`; на ceph1 и ceph2 (с `_admin`-меткой или скопированными
+`ceph.conf` и ключом): `sudo mount -t ceph 192.168.61.11:6789:/ /mnt/cephfs -o name=admin`, файл
+виден с обеих нод сразу. 2) `ceph orch apply rgw myrgw --placement="1 ceph1" --port=8080`,
+`radosgw-admin user create --uid=demo --display-name="Demo"` → ключи; на хосте
+`mc alias set ceph http://192.168.61.11:8080 <access> <secret> && mc mb ceph/test`.
 
 </details>
 
-**2.** Разверни RGW на ceph1:8080, создай пользователя, подключись к нему `mc` с хоста и создай бакет.
-
-<details><summary>Ответ</summary>
-
-```bash
-ceph osd pool create rbd && rbd pool init rbd && rbd create rbd/vol1 --size 2G
-sudo apt-get install -y ceph-common            # на ceph1 вне контейнера
-sudo rbd map rbd/vol1 && sudo mkfs.xfs /dev/rbd0 && sudo mkdir -p /mnt/rbd && sudo mount /dev/rbd0 /mnt/rbd
-sudo dd if=/dev/urandom of=/mnt/rbd/blob bs=1M count=500 status=none && sha256sum /mnt/rbd/blob
-sudo rbd resize rbd/vol1 --size 4G && sudo xfs_growfs /mnt/rbd
-sudo rbd snap create rbd/vol1@s1
-# откат: размонтировать и отключить, потом rollback
-sudo umount /mnt/rbd && sudo rbd unmap /dev/rbd0 && sudo rbd snap rollback rbd/vol1@s1
-```text
-</details>
-
-### C8. Здоровье и crash
+#### C8. Здоровье и crash
 Найди в кластере (или спровоцируй `kill -9` процесса OSD внутри контейнера) `RECENT_CRASH`.
 Покажи `ceph crash ls`, `ceph crash info`, закрой предупреждение. Что обязательно сделать до `archive-all`?
 
-### C9. Ёмкость «с запасом на отказ»
+<details><summary>Ответ</summary>
+
+`ceph crash ls` → ID, `ceph crash info <id>` → демон, версия, backtrace. До
+`ceph crash archive-all` — разобраться в причине (диск в `dmesg`, OOM, известный баг версии) и
+записать; архивирование только гасит предупреждение.
+
+</details>
+
+#### C9. Ёмкость «с запасом на отказ»
 Кластер: 5 хостов по 40 ТБ сырых, реплики 3×, занято 60% сырого. Посчитай полезную ёмкость,
 сколько данных хранится и каким будет заполнение после смерти одного хоста и восстановления.
 Пройдёт ли кластер через это без `backfillfull`?
 
+<details><summary>Ответ</summary>
+
+Сырое 200 ТБ, полезное ≈ 66,7 ТБ; занято 60% сырого = 120 ТБ сырого = 40 ТБ данных.
+После потери хоста остаётся 160 ТБ сырого, копии досоздаются: 120 / 160 = 75% — ниже nearfull
+85%, пройдёт. При 70% заполнении было бы 87,5% (nearfull), при 75% — ~94% (упор в backfillfull 90%).
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** `HEALTH_ERR`: `1 full osd(s)`, приложения не могут писать на RBD-тома.
 
@@ -954,7 +901,7 @@ OSD достиг 95% — кластер остановил запись. Сро�
 <details><summary>Ответ</summary>
 
 Не хватает копий до `min_size` или нужные OSD недоступны — I/O стоит, это авария.
-`ceph health detail`, `ceph pg dump_stuck inactive`, `ceph pg &lt;pgid&gt; query` (что ждёт peering),
+`ceph health detail`, `ceph pg dump_stuck inactive`, `ceph pg <pgid> query` (что ждёт peering),
 `ceph osd tree` — какие OSD/хосты down после работ в стойке (питание, сеть, cluster network).
 Вернуть OSD — PG станут active.
 
@@ -974,9 +921,9 @@ high_client_ops`, ночью — `high_recovery_ops`; найти причину 
 
 <details><summary>Ответ</summary>
 
-Scrub нашёл расхождение копий. `rados list-inconsistent-obj &lt;pgid&gt; --format=json-pretty`
+Scrub нашёл расхождение копий. `rados list-inconsistent-obj <pgid> --format=json-pretty`
 — какие объекты и на каком OSD ошибка; проверить диск (SMART, `dmesg`); если виноват диск —
-заменить OSD; затем `ceph pg repair &lt;pgid&gt;`. Повторяющиеся ошибки на одном OSD — выводить диск.
+заменить OSD; затем `ceph pg repair <pgid>`. Повторяющиеся ошибки на одном OSD — выводить диск.
 
 </details>
 
@@ -1026,14 +973,13 @@ Squid поддерживается до 2026-10-31. План: прочитать
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое Ceph и из каких компонентов он состоит?
 
 <details><summary>Ответ</summary>
 
 Программно-определяемое хранилище, отдающее блок (RBD), файл (CephFS) и объект (RGW) поверх
-   RADOS. Демоны: MON (кворум, карты), MGR (метрики, orchestrator), OSD (по одному на диск),
-   MDS (метаданные CephFS), RGW (S3).
+RADOS. Демоны: MON (кворум, карты), MGR (метрики, orchestrator), OSD (по одному на диск),
+MDS (метаданные CephFS), RGW (S3).
 
 </details>
 
@@ -1042,7 +988,7 @@ Squid поддерживается до 2026-10-31. План: прочитать
 <details><summary>Ответ</summary>
 
 Объект хэшируется в PG пула, CRUSH по карте кластера и правилу вычисляет набор OSD с учётом
-   failure domain. Клиент считает сам — нет центральной таблицы и шлюза на пути данных.
+failure domain. Клиент считает сам — нет центральной таблицы и шлюза на пути данных.
 
 </details>
 
@@ -1051,7 +997,7 @@ Squid поддерживается до 2026-10-31. План: прочитать
 <details><summary>Ответ</summary>
 
 Число копий и минимум копий для приёма I/O. В проде `3/2`: переживает отказ одной копии
-   без остановки и не принимает запись на единственную копию.
+без остановки и не принимает запись на единственную копию.
 
 </details>
 
@@ -1060,7 +1006,7 @@ Squid поддерживается до 2026-10-31. План: прочитать
 <details><summary>Ответ</summary>
 
 Репликация — для RBD под БД и ВМ, метаданных, мелкой случайной записи. EC — для крупных
-   объектов, архива, данных RGW, когда важна ёмкость и хостов достаточно (k+m и больше).
+объектов, архива, данных RGW, когда важна ёмкость и хостов достаточно (k+m и больше).
 
 </details>
 
@@ -1069,7 +1015,7 @@ Squid поддерживается до 2026-10-31. План: прочитать
 <details><summary>Ответ</summary>
 
 Кворум MON (большинство из 3) и три failure domain для трёх копий. Реально лучше 4–5 хостов,
-   чтобы после отказа было куда восстанавливать.
+чтобы после отказа было куда восстанавливать.
 
 </details>
 
@@ -1078,8 +1024,8 @@ Squid поддерживается до 2026-10-31. План: прочитать
 <details><summary>Ответ</summary>
 
 `health` + коды, кворум MON, OSD up/in, состояния PG, заполнение. При WARN — `ceph health
-   detail`, дальше по коду: OSD down → `ceph osd tree` и диск; nearfull → место; clock skew →
-   chrony; degraded → смотреть, идёт ли recovery.
+detail`, дальше по коду: OSD down → `ceph osd tree` и диск; nearfull → место; clock skew →
+chrony; degraded → смотреть, идёт ли recovery.
 
 </details>
 
@@ -1088,7 +1034,7 @@ Squid поддерживается до 2026-10-31. План: прочитать
 <details><summary>Ответ</summary>
 
 На 95% запись останавливается; при отказе хоста данные переезжают на остальные и
-   заполнение растёт — нужен запас. Держат ниже ~70–80%.
+заполнение растёт — нужен запас. Держат ниже ~70–80%.
 
 </details>
 
@@ -1097,8 +1043,8 @@ Squid поддерживается до 2026-10-31. План: прочитать
 <details><summary>Ответ</summary>
 
 Отказ диска: OSD down → через 10 минут out → копии досоздаются на других OSD. Отказ сервера:
-   то же для всех его OSD — нужен свободный объём на других хостах; при 3 хостах и size 3
-   восстанавливаться некуда, кластер живёт в degraded.
+то же для всех его OSD — нужен свободный объём на других хостах; при 3 хостах и size 3
+восстанавливаться некуда, кластер живёт в degraded.
 
 </details>
 
@@ -1107,7 +1053,7 @@ Squid поддерживается до 2026-10-31. План: прочитать
 <details><summary>Ответ</summary>
 
 `ceph osd set noout` (или `ceph orch host maintenance enter`), работы, возврат, `unset noout`,
-   дождаться `active+clean` перед следующей нодой.
+дождаться `active+clean` перед следующей нодой.
 
 </details>
 
@@ -1116,9 +1062,7 @@ Squid поддерживается до 2026-10-31. План: прочитать
 <details><summary>Ответ</summary>
 
 Мало серверов и слабая сеть, небольшие объёмы, нет компетенций; базы с собственной
-    репликацией (лучше локальные NVMe); нужен только S3 (проще MinIO-подобные решения).
-
----
+репликацией (лучше локальные NVMe); нужен только S3 (проще MinIO-подобные решения).
 
 </details>
 

@@ -1,14 +1,14 @@
 ---
 title: "06. Автоматизация: шаблоны, cloud-init, Packer, Terraform, Ansible, VMware"
-description: "Блок → Виртуализация on-prem → тема 06. Опирается на 02kvmqemulibvirt.md"
+description: "cloud-init глубоко, Packer, Terraform (libvirt 0.9, bpg/proxmox), динамический inventory, golden image, VMware vSphere"
 ---
 
 # 06. Автоматизация: шаблоны, cloud-init, Packer, Terraform, Ansible, VMware
 
-> Блок → Виртуализация on-prem → тема 06. Опирается на [02_kvm_qemu_libvirt.md](/virtualization/02-kvm-qemu-libvirt)
-> (cloud-init, overlay), [04_proxmox.md](/virtualization/04-proxmox) (шаблоны, API-токены), блок Terraform
-> [../Left/06_Terraform/00_INDEX.md](/terraform/) (провайдер, ресурс, стейт)
-> и [../Ansible/03_inventory.md](/ansible/03-inventory) (динамический inventory).
+> Блок → Виртуализация on-prem → тема 06. Опирается на [02. KVM, QEMU и libvirt руками: virsh, cloud-init, qcow2, снапшоты](/virtualization/02-kvm-qemu-libvirt)
+> (cloud-init, overlay), [04. Proxmox VE: VM, LXC, шаблоны, хранилища, кластер, HA, бэкапы, API](/virtualization/04-proxmox) (шаблоны, API-токены), блок Terraform
+> [Terraform](/terraform/) (провайдер, ресурс, стейт)
+> и [Ansible: 03. Inventory](/ansible/03-inventory) (динамический inventory).
 >
 > **После темы ты умеешь:** собрать хороший шаблон VM, писать cloud-init (user-data, meta-data,
 > network-config) и отлаживать его, собирать «золотой образ» Packer'ом (qemu и proxmox),
@@ -20,7 +20,7 @@ description: "Блок → Виртуализация on-prem → тема 06. �
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
   ОБРАЗ (редко)              ИНФРАСТРУКТУРА (часто)          КОНФИГУРАЦИЯ (всегда)
   ─────────────              ─────────────────────           ────────────────────
   облачный образ             Terraform                       Ansible
@@ -33,7 +33,8 @@ description: "Блок → Виртуализация on-prem → тема 06. �
        ▼                           ▼
   golden image / шаблон ─────►  VM ───────────────────────────►  сервис
   noble-golden-2026.09.27     «скот, а не питомцы»: сломалась — пересоздаём кодом
-```text
+```
+
 ---
 
 ## 1. Что автоматизируем и почему в три слоя
@@ -71,7 +72,7 @@ description: "Блок → Виртуализация on-prem → тема 06. �
 
 ### Источники данных и стадии
 
-```text
+```text:no-line-numbers
  datasource: NoCloud (ISO/диск «cidata», libvirt, Proxmox), ConfigDrive (OpenStack),
              VMware (guestinfo), EC2/GCE/Azure (сервис метаданных облака) ...
       │
@@ -80,7 +81,8 @@ description: "Блок → Виртуализация on-prem → тема 06. �
  network → поднять сеть, получить user-data; bootcmd, write_files, growpart, users, ssh-ключи
  config  → ntp, timezone, настройки apt, ...
  final   → packages, runcmd, scripts, final_message                  → cloud-init status: done
-```text
+```
+
 Большинство модулей — **один раз на экземпляр** (по `instance-id`): `users`, `packages`,
 `runcmd`. `bootcmd` — при **каждой** загрузке. Сменился `instance-id` — это «новая VM»,
 модули отработают снова.
@@ -110,7 +112,8 @@ write_files:
 runcmd:
   - [systemctl, enable, --now, qemu-guest-agent]
 final_message: "cloud-init done after $UPTIME s"
-```text
+```
+
 - Формы user-data: `#cloud-config` (YAML), обычный скрипт (`#!/bin/bash`), MIME multipart (оба сразу).
 - **vendor-data** — настройки «от платформы», которые **сливаются** с user-data, а не
   заменяют его. В Proxmox удобно: `--cicustom "vendor=local:snippets/vendor.yaml"` ставит
@@ -124,7 +127,7 @@ final_message: "cloud-init done after $UPTIME s"
 # meta-data
 instance-id: app1-2026-09-27
 local-hostname: app1
-```text
+```
 ```yaml
 # network-config — версия 2, это синтаксис netplan
 version: 2
@@ -139,7 +142,8 @@ ethernets:
         via: 10.10.10.1
     nameservers:
       addresses: [10.10.10.1]
-```text
+```
+
 ### Отладка
 
 ```bash
@@ -150,7 +154,8 @@ sudo cloud-init query --all | less          # что пришло от datasourc
 sudo cloud-init query userdata              # user-data как его увидел cloud-init
 cloud-init schema -c user-data.yaml --annotate   # проверить YAML ДО запуска (где стоит cloud-init)
 sudo cloud-init clean --logs --reboot       # прогнать заново (только на стенде!)
-```text
+```
+
 ---
 
 ## 4. Packer: золотой образ
@@ -225,14 +230,14 @@ build {
     ]
   }
 }
-```text
+```
 ```bash
 cd packer
 packer init .              # скачать плагины
 packer fmt -check .        # стиль (для CI)
 packer validate .
 packer build .             # → output/noble-golden-2026.09.27/noble-golden-2026.09.27.qcow2
-```text
+```
 `--configs all` в `cloud-init clean` удаляет и сгенерированные файлы (sshd с паролями,
 netplan) — в шаблоне не останется `PasswordAuthentication yes`. Нужен доступ к `/dev/kvm`
 (группа `kvm`) и `xorriso` для `cd_content`.
@@ -285,7 +290,7 @@ build {
     playbook_file = "../ansible/base.yml"   # hardening той же ролью, что и в проде
   }
 }
-```text
+```
 IP клона Packer узнаёт через **qemu-guest-agent** — в базовом шаблоне агент обязан быть.
 `proxmox-iso` — то же, но с установкой с ISO (autoinstall/kickstart через `boot_command`).
 
@@ -402,7 +407,7 @@ data "libvirt_domain_interface_addresses" "vm" {
 output "ips" {
   value = { for k, d in data.libvirt_domain_interface_addresses.vm : k => d.interfaces[0].addrs[0].addr }
 }
-```text
+```
 ```yaml
 # terraform/libvirt/user-data.tftpl
 #cloud-config
@@ -417,11 +422,11 @@ users:
 packages: [qemu-guest-agent]
 runcmd:
   - [systemctl, start, qemu-guest-agent]
-```text
+```
 ```bash
 terraform init && terraform plan && terraform apply
 terraform output -json ips       # {"web1":"10.10.10.1xx","web2":"10.10.10.1yy"}
-```text
+```
 Серийная консоль и канал агента описываются в `devices.consoles` / `devices.channels` — так же,
 как в XML libvirt (схема повторяет его один в один).
 
@@ -453,7 +458,7 @@ terraform {
 provider "proxmox" {
   endpoint = "https://10.10.10.11:8006/"
   insecure = true                  # самоподписанный сертификат стенда
-  # токен — из окружения: export PROXMOX_VE_API_TOKEN='terraform@pve!tf=&lt;secret&gt;'
+  # токен — из окружения: export PROXMOX_VE_API_TOKEN='terraform@pve!tf=<secret>'
 }
 
 resource "proxmox_virtual_environment_vm" "app" {
@@ -496,7 +501,7 @@ output "ips" {
   # адреса от агента по интерфейсам: [0] — lo, [1] — первый NIC
   value = { for k, vm in proxmox_virtual_environment_vm.app : k => vm.ipv4_addresses[1][0] }
 }
-```text
+```
 LXC — ресурс `proxmox_virtual_environment_container`, загрузка облачного образа на узел —
 `proxmox_virtual_environment_download_file`.
 
@@ -504,14 +509,15 @@ LXC — ресурс `proxmox_virtual_environment_container`, загрузка �
 
 ## 7. Ansible: динамический inventory
 
-Зачем и как устроены inventory-плагины — [../Ansible/03_inventory.md](/ansible/03-inventory),
+Зачем и как устроены inventory-плагины — [Ansible: 03. Inventory](/ansible/03-inventory),
 раздел 6. Здесь — два плагина для on-prem.
 
 **Вариант 0 — из outputs Terraform** (просто и надёжно для маленьких стендов):
 ```bash
 { echo "[web]"; terraform output -json ips \
   | jq -r 'to_entries[] | "\(.key) ansible_host=\(.value) ansible_user=devops"'; } > inventory.ini
-```text
+```
+
 **community.libvirt** (коллекция 2.x): VM с хоста libvirt.
 ```yaml
 # inventory/kvm.libvirt.yml
@@ -527,7 +533,7 @@ compose:
     | map(attribute='value.addrs') | flatten
     | selectattr('type', 'equalto', 0)
     | map(attribute='addr') | first
-```text
+```
 Адреса плагин берёт у **qemu-guest-agent**, а Python-модуль `libvirt` должен стоять в том же
 окружении, где Ansible (`python3-libvirt` из apt или `pip install libvirt-python`).
 
@@ -549,12 +555,12 @@ keyed_groups:
 compose:
   ansible_host: (proxmox_agent_interfaces | rejectattr('name', 'equalto', 'lo') | first)['ip-addresses'][0].split('/')[0]
   ansible_user: "'devops'"
-```text
+```
 ```bash
 ansible-galaxy collection install community.libvirt community.proxmox
 ansible-inventory -i inventory/lab.proxmox.yml --graph
 ansible -i inventory/lab.proxmox.yml tag_web -m ping
-```text
+```
 Связка: Terraform ставит VM **теги** (`tags = ["web"]` в bpg) → плагин строит группы по тегам →
 плейбук целится в `tag_web`. Никаких списков IP руками.
 
@@ -562,7 +568,7 @@ ansible -i inventory/lab.proxmox.yml tag_web -m ping
 
 ## 8. Конвейер golden image
 
-```text
+```text:no-line-numbers
  git push (packer/, ansible/roles/base)         + по расписанию (1-е число) и при критичных CVE
         │
         ▼
@@ -581,7 +587,8 @@ ansible -i inventory/lab.proxmox.yml tag_web -m ping
         ▼
  окружения: Terraform ссылается на версию шаблона → новые VM из свежего образа,
             старые пересоздаются по графику (rolling), а не «apt upgrade руками»
-```text
+```
+
 Что это даёт: одинаковые VM во всех окружениях, быстрый старт (обновления уже внутри),
 аудит («из какого образа эта VM»), откат на прошлую версию образа.
 
@@ -617,7 +624,8 @@ govc snapshot.create -vm app01 before-upgrade
 govc vm.clone -vm tpl-ubuntu-2404 -on=false -folder /DC1/vm/apps app02
 govc datastore.ls -ds datastore1
 govc find / -type m -runtime.powerState poweredOn
-```text
+```
+
 **Terraform:** провайдер переехал в `vmware/vsphere` (ветка 2.x; `hashicorp/vsphere` больше не
 обновляется). Схема клона из шаблона:
 ```hcl
@@ -641,7 +649,7 @@ resource "vsphere_virtual_machine" "app" {
     template_uuid = data.vsphere_virtual_machine.tpl.id
   }
 }
-```text
+```
 Образы для vSphere собирают Packer'ом (builders `vsphere-iso`, `vsphere-clone`; плагин теперь
 развивает VMware в `vmware/packer-plugin-vsphere`), инвентарь — `community.vmware` в Ansible.
 
@@ -696,7 +704,7 @@ resource "vsphere_virtual_machine" "app" {
 | Токен в окружении | `PROXMOX_VE_API_TOKEN` (bpg), `PROXMOX_TOKEN_SECRET` (inventory), `PKR_VAR_*` (Packer) |
 | Inventory libvirt | `plugin: community.libvirt.libvirt` + `compose: ansible_host / ansible_connection` |
 | Inventory Proxmox | `plugin: community.proxmox.proxmox`, файл `*.proxmox.yml` |
-| Проверить inventory | `ansible-inventory -i &lt;src&gt; --graph` |
+| Проверить inventory | `ansible-inventory -i <src> --graph` |
 | vSphere CLI | `govc ls`, `govc vm.info`, `govc vm.power -on`, `govc vm.clone` |
 | Terraform vSphere | `vmware/vsphere`: `vsphere_virtual_machine` + `clone { template_uuid }` |
 
@@ -715,13 +723,18 @@ resource "vsphere_virtual_machine" "app" {
 9. Динамический inventory: `community.libvirt.libvirt` (адреса через агент, переопредели `ansible_connection`) и `community.proxmox.proxmox` (файл `*.proxmox.yml`, группы по тегам).
 10. VMware: ESXi + vCenter, datastore, vDS/port group, vMotion, DRS, HA; автоматизация — govc, `vmware/vsphere`, Packer vsphere-*.
 
-➡️ Дальше: [07_practice_labs.md](/mlops/07-practice-labs) · задачи: 06_virt_automation_tasks.md
+---
 
+## Задачи
+
+> Стенд: хост с libvirt (сеть `virt-lab`, пул `default`), Packer, Terraform (или OpenTofu —
+> [Terraform](/terraform/)), Ansible;
+> для задач про Proxmox — `pve1` с шаблоном 9000 и токеном из темы 04.
+> Код задач держи в git: `~/labs/virt/automation/{packer,terraform,ansible}`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Какие три слоя автоматизации VM и что в какой слой класть? Где место cloud-init?
 
@@ -903,276 +916,134 @@ Ansible (`community.vmware`). Провайдер Terraform переехал в `
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
 ```text:no-line-numbers
 B1.  #cloud-config
-```text
-<details><summary>Ответ</summary>
+     users:
+       - name: devops
+         sudo: "ALL=(ALL) NOPASSWD:ALL"
+     ssh_authorized_keys:
+       - ssh-ed25519 AAAA... me@laptop
+     # «зашёл бы как devops по ключу»
 
-⚠️ Список `users` без `default` отменяет создание стандартного пользователя, а
+B2.  terraform {
+       required_providers {
+         libvirt = { source = "dmacvicar/libvirt", version = ">= 0.7" }
+       }
+     }
+     resource "libvirt_domain" "vm" {
+       name      = "web1"
+       memory    = 1024
+       cloudinit = libvirt_cloudinit_disk.seed.id
+       network_interface { network_name = "default" }
+       disk { volume_id = libvirt_volume.disk.id }
+     }
+
+B3.  source "qemu" "noble" {
+       iso_url      = ".../noble-server-cloudimg-amd64.img"
+       disk_image   = true
+       ssh_username = "ubuntu"
+       ssh_password = "packer"
+       # cd_content и cd_label не указаны
+     }
+
+B4.  # bpg/proxmox, шаблон 9000 без qemu-guest-agent в образе
+     agent { enabled = true }
+     # terraform apply: «Still creating... [10m0s elapsed]»
+
+B5.  provisioner "shell" {
+       inline = ["sudo apt-get update", "sudo apt-get -y install nginx"]
+     }
+     # E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 912 (apt-get)
+
+B6.  $ ls inventory/
+     pve.yml          # plugin: community.proxmox.proxmox
+     $ ansible-inventory -i inventory/pve.yml --graph
+     @all:
+       |--@ungrouped:
+
+B7.  # inventory/kvm.yml
+     plugin: community.libvirt.libvirt
+     uri: qemu:///system
+     # ansible web1 -m ping → медленно / «guest agent is not connected»
+
+B8.  runcmd:
+       - [sh, -c, "echo 'DB_PASSWORD=S3cr3t!' >> /etc/app.env"]
+
+B9.  resource "libvirt_volume" "base" {
+       ...
+       create = { content = { url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img" } }
+     }
+     # stage собрали в марте, prod — в сентябре: «почему пакеты разные?»
+
+B10. # golden image: user-data сборки с password: packer + ssh_pwauth: true,
+     # в конце только «sudo cloud-init clean --logs»
+
+B11. #!/bin/bash
+     export GOVC_URL=vcenter.corp.local GOVC_USERNAME=admin GOVC_PASSWORD='P@ssw0rd' GOVC_INSECURE=1
+     govc vm.power -off -force app01
+     # скрипт лежит в репозитории, запускается из cron
+
+B12. «Включим vMotion — и отказ хоста нам не страшен»
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Список `users` без `default` отменяет создание стандартного пользователя, а
 `ssh_authorized_keys` верхнего уровня предназначен именно ему — ключ уйдёт в никуда. Ключ
 надо положить внутрь записи `devops` (или добавить `default` в список). У `devops` ещё и
 нет `shell` и `groups`.
 
-</details>
-
-```text:no-line-numbers
-     users:
-```text
-```text:no-line-numbers
-       - name: devops
-```text
-```text:no-line-numbers
-         sudo: "ALL=(ALL) NOPASSWD:ALL"
-```text
-```text:no-line-numbers
-     ssh_authorized_keys:
-```text
-```text:no-line-numbers
-       - ssh-ed25519 AAAA... me@laptop
-```text
-```text:no-line-numbers
-     # «зашёл бы как devops по ключу»
-```text
-```text:no-line-numbers
-B2.  terraform {
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Синтаксис 0.8 (`cloudinit`, `network_interface`, `disk.volume_id`), а `>= 0.7`
+**B2.** ⚠️ Синтаксис 0.8 (`cloudinit`, `network_interface`, `disk.volume_id`), а `>= 0.7`
 притянет 0.9 с новой схемой — `validate` упадёт. Переписать под 0.9 (`devices = { disks,
 interfaces }`) и закрепить `~> 0.9.9` — или осознанно `~> 0.8.0` для старого кода.
 
-</details>
-
-```text:no-line-numbers
-       required_providers {
-```text
-```text:no-line-numbers
-         libvirt = { source = "dmacvicar/libvirt", version = ">= 0.7" }
-```text
-```text:no-line-numbers
-       }
-```text
-```text:no-line-numbers
-     }
-```text
-```text:no-line-numbers
-     resource "libvirt_domain" "vm" {
-```text
-```text:no-line-numbers
-       name      = "web1"
-```text
-```text:no-line-numbers
-       memory    = 1024
-```text
-```text:no-line-numbers
-       cloudinit = libvirt_cloudinit_disk.seed.id
-```text
-```text:no-line-numbers
-       network_interface { network_name = "default" }
-```text
-```text:no-line-numbers
-       disk { volume_id = libvirt_volume.disk.id }
-```text
-```text:no-line-numbers
-     }
-```text
-```text:no-line-numbers
-B3.  source "qemu" "noble" {
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без NoCloud-источника cloud-init не задаст пароль `ubuntu` — у облачного образа
+**B3.** ⚠️ Без NoCloud-источника cloud-init не задаст пароль `ubuntu` — у облачного образа
 входа нет, Packer вечно ждёт SSH. Нужны `cd_label = "cidata"` и `cd_content` с user-data
 (или `http_directory` + параметры ядра — для ISO-сборок).
 
-</details>
-
-```text:no-line-numbers
-       iso_url      = ".../noble-server-cloudimg-amd64.img"
-```text
-```text:no-line-numbers
-       disk_image   = true
-```text
-```text:no-line-numbers
-       ssh_username = "ubuntu"
-```text
-```text:no-line-numbers
-       ssh_password = "packer"
-```text
-```text:no-line-numbers
-       # cd_content и cd_label не указаны
-```text
-```text:no-line-numbers
-     }
-```text
-```text:no-line-numbers
-B4.  # bpg/proxmox, шаблон 9000 без qemu-guest-agent в образе
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Провайдер ждёт ответа агента (таймаут по умолчанию — минуты), чтобы получить IP.
+**B4.** ⚠️ Провайдер ждёт ответа агента (таймаут по умолчанию — минуты), чтобы получить IP.
 Вшить `qemu-guest-agent` в шаблон или `agent { enabled = false }` и статические адреса.
 
-</details>
-
-```text:no-line-numbers
-     agent { enabled = true }
-```text
-```text:no-line-numbers
-     # terraform apply: «Still creating... [10m0s elapsed]»
-```text
-```text:no-line-numbers
-B5.  provisioner "shell" {
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Провижинер стартовал, пока cloud-init/unattended-upgrades ещё держат apt. Первой
+**B5.** ⚠️ Провижинер стартовал, пока cloud-init/unattended-upgrades ещё держат apt. Первой
 командой `cloud-init status --wait` (и дождаться блокировки/выключить apt-daily на время сборки).
 
-</details>
-
-```text:no-line-numbers
-       inline = ["sudo apt-get update", "sudo apt-get -y install nginx"]
-```text
-```text:no-line-numbers
-     }
-```text
-```text:no-line-numbers
-     # E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 912 (apt-get)
-```text
-```text:no-line-numbers
-B6.  $ ls inventory/
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Файл должен кончаться на `proxmox.yml`/`proxmox.yaml`, иначе плагин его пропускает
+**B6.** ⚠️ Файл должен кончаться на `proxmox.yml`/`proxmox.yaml`, иначе плагин его пропускает
 (видно в `-vvv`). Переименовать в `pve.proxmox.yml`.
 
-</details>
-
-```text:no-line-numbers
-     pve.yml          # plugin: community.proxmox.proxmox
-```text
-```text:no-line-numbers
-     $ ansible-inventory -i inventory/pve.yml --graph
-```text
-```text:no-line-numbers
-     @all:
-```text
-```text:no-line-numbers
-       |--@ungrouped:
-```text
-```text:no-line-numbers
-B7.  # inventory/kvm.yml
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Плагин по умолчанию ставит `ansible_connection` через guest agent — медленно и не
+**B7.** ⚠️ Плагин по умолчанию ставит `ansible_connection` через guest agent — медленно и не
 работает без агента. Переопределить `ansible_connection: "'ssh'"`, `ansible_host`,
 `ansible_user` в `compose`.
 
-</details>
-
-```text:no-line-numbers
-     plugin: community.libvirt.libvirt
-```text
-```text:no-line-numbers
-     uri: qemu:///system
-```text
-```text:no-line-numbers
-     # ansible web1 -m ping → медленно / «guest agent is not connected»
-```text
-```text:no-line-numbers
-B8.  runcmd:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Пароль в user-data виден в datasource, в `/var/lib/cloud/instance/` и в стейте
+**B8.** ⚠️ Пароль в user-data виден в datasource, в `/var/lib/cloud/instance/` и в стейте
 Terraform. Секрет — из Vault/ansible-vault на этапе конфигурации.
 
-</details>
+**B9.** ⚠️ `current` — плавающая ссылка: каждое создание берёт свежий образ, окружения
+расходятся. Закрепить датированный релиз (`/noble/<дата>/`) или свой версионный golden image.
 
-```text:no-line-numbers
-       - [sh, -c, "echo 'DB_PASSWORD=S3cr3t!' >> /etc/app.env"]
-```text
-```text:no-line-numbers
-B9.  resource "libvirt_volume" "base" {
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `current` — плавающая ссылка: каждое создание берёт свежий образ, окружения
-расходятся. Закрепить датированный релиз (`/noble/&lt;дата&gt;/`) или свой версионный golden image.
-
-</details>
-
-```text:no-line-numbers
-       ...
-```text
-```text:no-line-numbers
-       create = { content = { url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img" } }
-```text
-```text:no-line-numbers
-     }
-```text
-```text:no-line-numbers
-     # stage собрали в марте, prod — в сентябре: «почему пакеты разные?»
-```text
-```text:no-line-numbers
-B10.  # golden image: user-data сборки с password: packer + ssh_pwauth: true,
-```text
-<details><summary>Ответ</summary>
-
-⚠️ У `ubuntu` остался пароль `packer`, а в sshd — `PasswordAuthentication yes` от
+**B10.** ⚠️ У `ubuntu` остался пароль `packer`, а в sshd — `PasswordAuthentication yes` от
 cloud-init: любой клон пускает по паролю. Нужно `passwd -l ubuntu`, `cloud-init clean
 ... --configs all` (или удалить `/etc/ssh/sshd_config.d/50-cloud-init.conf`) и проверка
 в тесте образа.
 
-</details>
-
-```text:no-line-numbers
-     # в конце только «sudo cloud-init clean --logs»
-```text
-```text:no-line-numbers
-B11.  #!/bin/bash
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Пароль администратора в репозитории и cron, проверка сертификата выключена,
+**B11.** ⚠️ Пароль администратора в репозитории и cron, проверка сертификата выключена,
 учётка admin для одной операции. Сервисная учётка с минимальными правами, секрет из
 хранилища, `GOVC_INSECURE` не использовать (доверить CA vCenter), `-force` — только осознанно.
 
-</details>
-
-```text:no-line-numbers
-     export GOVC_URL=vcenter.corp.local GOVC_USERNAME=admin GOVC_PASSWORD='P@ssw0rd' GOVC_INSECURE=1
-```text
-```text:no-line-numbers
-     govc vm.power -off -force app01
-```text
-```text:no-line-numbers
-     # скрипт лежит в репозитории, запускается из cron
-```text
-```text:no-line-numbers
-B12.  «Включим vMotion — и отказ хоста нам не страшен»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ vMotion — плановая миграция исправной VM; от отказа хоста защищает vSphere HA
+**B12.** ⚠️ vMotion — плановая миграция исправной VM; от отказа хоста защищает vSphere HA
 (перезапуск VM), от простоя при отказе — FT.
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 cloud-init до мелочей
-**1.** Подними VM `ci1` через `virt-install` с user-data из конспекта (раздел 3) и network-config со
+#### C1. 🔑 cloud-init до мелочей
+1. Подними VM `ci1` через `virt-install` с user-data из конспекта (раздел 3) и network-config со
    статикой `10.10.10.60` по MAC (MAC задай в `--network ...,mac=52:54:00:10:00:01`).
+2. Проверь: имя, пользователь, `timezone`, `/etc/motd`, статический IP, `cloud-init status --long`.
+3. Проверь user-data командой `cloud-init schema -c ... --annotate` внутри VM.
+4. Специально сломай отступ в user-data, пересоздай VM и найди ошибку в логах cloud-init.
 
 <details><summary>Ответ</summary>
 
@@ -1184,97 +1055,26 @@ B12.  «Включим vMotion — и отказ хоста нам не стра
 
 </details>
 
-**2.** Проверь: имя, пользователь, `timezone`, `/etc/motd`, статический IP, `cloud-init status --long`.
-
-<details><summary>Ответ</summary>
-
-`cat /etc/machine-id` и `ssh-keyscan &lt;IP&gt;` различаются у двух VM; `ssh -o
-PubkeyAuthentication=no ubuntu@IP` → `Permission denied (publickey)`; `systemctl status
-qemu-guest-agent` — активен; `apt list --upgradable` — пусто или почти пусто на дату сборки.
-
-</details>
-
-**3.** Проверь user-data командой `cloud-init schema -c ... --annotate` внутри VM.
-
-<details><summary>Ответ</summary>
-
-Изменение `vcpu` — update in-place (провайдер переопределит домен, применится после
-перезапуска VM, в зависимости от версии — с автоматическим рестартом); удаление элемента из
-`for_each` — destroy только этой VM и её томов. После `destroy` в пуле нет томов `web*`
-и базового (если он тоже в коде).
-
-</details>
-
-**4.** Специально сломай отступ в user-data, пересоздай VM и найди ошибку в логах cloud-init.
-
-<details><summary>Ответ</summary>
-
-Плейбук: `ansible.builtin.apt: name=nginx`, `ansible.builtin.copy` с `content: "hello from &#123;&#123; inventory_hostname &#125;&#125;"`
-в `/var/www/html/index.html`. Для плагина libvirt в госте должен работать `qemu-guest-agent`
-(адреса из `interface_addresses`), на контроллере — Python-модуль `libvirt`.
-
-</details>
-
-### C2. 🔑 Golden image Packer'ом
-**1.** Собери образ по разделу 4.1 конспекта.
-
-<details><summary>Ответ</summary>
-
-`virt-install ... --network network=virt-lab,model=virtio,mac=52:54:00:10:00:01
---cloud-init user-data=user-data.yaml,meta-data=meta-data.yaml,network-config=network-config.yaml`.
-В госте интерфейс называется `mgmt0`, адрес статический. Ошибка отступа видна в
-`cloud-init status --long` (`status: error` или `degraded` с `recoverable_errors`) и в
-`/var/log/cloud-init.log` (сообщение о невалидном YAML / schema).
-
-</details>
-
-**2.** Подними из него две VM (`virt-install --import` с `--cloud-init`, overlay поверх образа).
-
-<details><summary>Ответ</summary>
-
-`cat /etc/machine-id` и `ssh-keyscan &lt;IP&gt;` различаются у двух VM; `ssh -o
-PubkeyAuthentication=no ubuntu@IP` → `Permission denied (publickey)`; `systemctl status
-qemu-guest-agent` — активен; `apt list --upgradable` — пусто или почти пусто на дату сборки.
-
-</details>
-
-**3.** Докажи «обезличенность»: разные `/etc/machine-id` и SSH host keys, по паролю `packer` не
+#### C2. 🔑 Golden image Packer'ом
+1. Собери образ по разделу 4.1 конспекта.
+2. Подними из него две VM (`virt-install --import` с `--cloud-init`, overlay поверх образа).
+3. Докажи «обезличенность»: разные `/etc/machine-id` и SSH host keys, по паролю `packer` не
    пускает (`ssh -o PubkeyAuthentication=no ubuntu@IP`), агент стоит, обновления на месте.
 
 <details><summary>Ответ</summary>
 
-Изменение `vcpu` — update in-place (провайдер переопределит домен, применится после
-перезапуска VM, в зависимости от версии — с автоматическим рестартом); удаление элемента из
-`for_each` — destroy только этой VM и её томов. После `destroy` в пуле нет томов `web*`
-и базового (если он тоже в коде).
-
-</details>
-
-### C3. 🔑 Terraform + libvirt
-**1.** Опиши две VM `web1`, `web2` по разделу 5 конспекта, но с базой из своего golden image
-   (`url = "/путь/к/noble-golden-....qcow2"`).
-
-<details><summary>Ответ</summary>
-
-`virt-install ... --network network=virt-lab,model=virtio,mac=52:54:00:10:00:01
---cloud-init user-data=user-data.yaml,meta-data=meta-data.yaml,network-config=network-config.yaml`.
-В госте интерфейс называется `mgmt0`, адрес статический. Ошибка отступа видна в
-`cloud-init status --long` (`status: error` или `degraded` с `recoverable_errors`) и в
-`/var/log/cloud-init.log` (сообщение о невалидном YAML / schema).
-
-</details>
-
-**2.** `terraform apply`, `terraform output -json ips`, SSH на обе.
-
-<details><summary>Ответ</summary>
-
-`cat /etc/machine-id` и `ssh-keyscan &lt;IP&gt;` различаются у двух VM; `ssh -o
+`cat /etc/machine-id` и `ssh-keyscan <IP>` различаются у двух VM; `ssh -o
 PubkeyAuthentication=no ubuntu@IP` → `Permission denied (publickey)`; `systemctl status
 qemu-guest-agent` — активен; `apt list --upgradable` — пусто или почти пусто на дату сборки.
 
 </details>
 
-**3.** Поменяй `vcpu` у одной — что покажет `plan`? Удали одну из `locals.vms` — что будет?
+#### C3. 🔑 Terraform + libvirt
+1. Опиши две VM `web1`, `web2` по разделу 5 конспекта, но с базой из своего golden image
+   (`url = "/путь/к/noble-golden-....qcow2"`).
+2. `terraform apply`, `terraform output -json ips`, SSH на обе.
+3. Поменяй `vcpu` у одной — что покажет `plan`? Удали одну из `locals.vms` — что будет?
+4. `terraform destroy` — проверь, что в пуле не осталось мусора (`virsh vol-list default`).
 
 <details><summary>Ответ</summary>
 
@@ -1285,92 +1085,81 @@ qemu-guest-agent` — активен; `apt list --upgradable` — пусто и�
 
 </details>
 
-**4.** `terraform destroy` — проверь, что в пуле не осталось мусора (`virsh vol-list default`).
+#### C4. 🔑 Ansible поверх Terraform
+1. Сгенерируй `inventory.ini` из outputs и прогони плейбук: nginx + страница «hello from <span v-pre>{{</span> inventory_hostname <span v-pre>}}</span>».
+2. Настрой `community.libvirt.libvirt` с `compose` из конспекта, проверь `ansible-inventory --graph`
+   и тот же плейбук. Что нужно в госте, чтобы плагин узнал IP?
 
 <details><summary>Ответ</summary>
 
-Плейбук: `ansible.builtin.apt: name=nginx`, `ansible.builtin.copy` с `content: "hello from &#123;&#123; inventory_hostname &#125;&#125;"`
+Плейбук: `ansible.builtin.apt: name=nginx`, `ansible.builtin.copy` с <code v-pre>content: "hello from {{ inventory\_hostname }}"</code>
 в `/var/www/html/index.html`. Для плагина libvirt в госте должен работать `qemu-guest-agent`
 (адреса из `interface_addresses`), на контроллере — Python-модуль `libvirt`.
 
 </details>
 
-### C4. 🔑 Ansible поверх Terraform
-**1.** Сгенерируй `inventory.ini` из outputs и прогони плейбук: nginx + страница «hello from &#123;&#123; inventory_hostname &#125;&#125;».
+#### C5. Terraform bpg + inventory по тегам
+1. На `pve1` через bpg создай `app11`, `app12` из шаблона 9000 с тегом `web`.
+2. Настрой `lab.proxmox.yml`, проверь группу `tag_web`, пингани её.
+3. Поменяй `memory.dedicated` — применится ли на ходу или VM перезагрузится? Посмотри `plan`.
 
 <details><summary>Ответ</summary>
 
-`virt-install ... --network network=virt-lab,model=virtio,mac=52:54:00:10:00:01
---cloud-init user-data=user-data.yaml,meta-data=meta-data.yaml,network-config=network-config.yaml`.
-В госте интерфейс называется `mgmt0`, адрес статический. Ошибка отступа видна в
-`cloud-init status --long` (`status: error` или `degraded` с `recoverable_errors`) и в
-`/var/log/cloud-init.log` (сообщение о невалидном YAML / schema).
+В bpg — `tags = ["web"]`; группа `tag_web` появляется через `keyed_groups` по
+`proxmox_tags_parsed`. Изменение памяти: `plan` покажет update in-place. Если в настройке
+`hotplug` самой VM в Proxmox нет `memory` (плюс нужен NUMA), изменение требует перезагрузки —
+bpg перезагрузит VM сам (`reboot_after_update` по умолчанию `true`); с hotplug памяти
+увеличение применится на ходу. Смена `cpu.cores` всегда требует перезагрузки.
 
 </details>
 
-**2.** Настрой `community.libvirt.libvirt` с `compose` из конспекта, проверь `ansible-inventory --graph`
-   и тот же плейбук. Что нужно в госте, чтобы плагин узнал IP?
-
-<details><summary>Ответ</summary>
-
-`cat /etc/machine-id` и `ssh-keyscan &lt;IP&gt;` различаются у двух VM; `ssh -o
-PubkeyAuthentication=no ubuntu@IP` → `Permission denied (publickey)`; `systemctl status
-qemu-guest-agent` — активен; `apt list --upgradable` — пусто или почти пусто на дату сборки.
-
-</details>
-
-### C5. Terraform bpg + inventory по тегам
-**1.** На `pve1` через bpg создай `app11`, `app12` из шаблона 9000 с тегом `web`.
-
-<details><summary>Ответ</summary>
-
-`virt-install ... --network network=virt-lab,model=virtio,mac=52:54:00:10:00:01
---cloud-init user-data=user-data.yaml,meta-data=meta-data.yaml,network-config=network-config.yaml`.
-В госте интерфейс называется `mgmt0`, адрес статический. Ошибка отступа видна в
-`cloud-init status --long` (`status: error` или `degraded` с `recoverable_errors`) и в
-`/var/log/cloud-init.log` (сообщение о невалидном YAML / schema).
-
-</details>
-
-**2.** Настрой `lab.proxmox.yml`, проверь группу `tag_web`, пингани её.
-
-<details><summary>Ответ</summary>
-
-`cat /etc/machine-id` и `ssh-keyscan &lt;IP&gt;` различаются у двух VM; `ssh -o
-PubkeyAuthentication=no ubuntu@IP` → `Permission denied (publickey)`; `systemctl status
-qemu-guest-agent` — активен; `apt list --upgradable` — пусто или почти пусто на дату сборки.
-
-</details>
-
-**3.** Поменяй `memory.dedicated` — применится ли на ходу или VM перезагрузится? Посмотри `plan`.
-
-<details><summary>Ответ</summary>
-
-Изменение `vcpu` — update in-place (провайдер переопределит домен, применится после
-перезапуска VM, в зависимости от версии — с автоматическим рестартом); удаление элемента из
-`for_each` — destroy только этой VM и её томов. После `destroy` в пуле нет томов `web*`
-и базового (если он тоже в коде).
-
-</details>
-
-### C6. Packer proxmox-clone
+#### C6. Packer proxmox-clone
 Собери шаблон 9100 `noble-golden-2026-09` из 9000 с шагом `apt full-upgrade` и установкой
 `chrony`. Склонируй из него VM и сравни версии пакетов с клоном 9000.
 
-### C7. Конвейер на бумаге
+<details><summary>Ответ</summary>
+
+В клоне 9100 пакеты новее и `chrony` стоит сразу; в клоне 9000 — версии на дату
+облачного образа. `qm config 9100` показывает `template: 1`, имя с версией.
+
+</details>
+
+#### C7. Конвейер на бумаге
 Напиши `.gitlab-ci.yml` (или GitHub Actions) для golden image: стадии `lint` (packer fmt/validate,
 ansible-lint), `build`, `test` (поднять VM Terraform'ом, проверить SSH/агент/cloud-init,
 уничтожить), `publish` (версия и указатель latest). Где хранятся токены? Когда запускается?
 
-### C8. VMware по вакансии
+<details><summary>Ответ</summary>
+
+Каркас:
+```yaml
+stages: [lint, build, test, publish]
+lint:    { stage: lint,    script: ["packer fmt -check packer/", "packer validate packer/", "ansible-lint ansible/"] }
+build:   { stage: build,   script: ["packer build packer/"], rules: [{ if: '$CI_PIPELINE_SOURCE == "schedule"' }, { changes: [packer/**/*, ansible/**/*] }] }
+test:    { stage: test,    script: ["cd test && terraform apply -auto-approve", "./smoke.sh", "terraform destroy -auto-approve"] }
+publish: { stage: publish, script: ["./publish.sh $IMAGE_VERSION"], rules: [{ if: '$CI_COMMIT_BRANCH == "main"' }] }
+```
+Токены — в защищённых переменных CI или Vault, раннер — в сети стенда. Запуск — по расписанию
+(раз в месяц), при изменениях в `packer/`, `ansible/` и вручную при критичных CVE.
+
+</details>
+
+#### C8. VMware по вакансии
 Возьми вакансию с VMware и переведи каждое требование в термины темы: «администрирование
 vSphere 7/8», «шаблоны VM», «vMotion/DRS/HA», «автоматизация через PowerCLI/Terraform»,
 «распределённые коммутаторы и VLAN». Для каждого — аналог в Proxmox и чем ты его делал на стенде.
 
+<details><summary>Ответ</summary>
+
+Пример: «администрирование vSphere» ↔ кластер Proxmox и `pvecm`/`ha-manager`;
+«шаблоны VM» ↔ `qm template` + Packer; «vMotion/DRS/HA» ↔ `qm migrate --online`/CRS/`ha-manager`;
+«PowerCLI/Terraform» ↔ `pvesh`/bpg/proxmox; «vDS и VLAN» ↔ VLAN-aware `vmbr0` и `tag`.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Сделали `terraform destroy` учебного окружения — сломались ещё три VM, созданные руками
 «на той же базе». Почему?
@@ -1402,7 +1191,7 @@ Terraform, не держать в том же стейте (или `prevent_dest
 
 Агент не установлен/не запущен или выключен `agent` у VM → нет
 `proxmox_agent_interfaces`; `want_facts: false` → фактов нет; `compose` с ошибкой при
-`strict: false` молча не применился. Проверить `ansible-inventory --host &lt;vm&gt;` и `-vvv`.
+`strict: false` молча не применился. Проверить `ansible-inventory --host <vm>` и `-vvv`.
 
 </details>
 
@@ -1449,7 +1238,7 @@ Terraform, не держать в том же стейте (или `prevent_dest
 Стейт хранит все атрибуты ресурсов, включая `initialization.user_account.password`
 и user-data. Не передавать пароли VM через Terraform (только ключи), хранить стейт в
 зашифрованном backend'е с ограниченным доступом, сменить утёкшие пароли. Подробнее о стейте —
-[../Left/06_Terraform/00_INDEX.md](/terraform/) (тема 03).
+[Terraform](/terraform/) (тема 03).
 
 </details>
 
@@ -1457,14 +1246,13 @@ Terraform, не держать в том же стейте (или `prevent_dest
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как ты автоматически создаёшь VM on-prem?
 
 <details><summary>Ответ</summary>
 
 Golden image Packer'ом → Terraform (bpg/proxmox, libvirt или vSphere) создаёт VM из шаблона
-   и передаёт cloud-init (пользователь, ключ, IP, теги) → динамический inventory → Ansible
-   настраивает сервисы. Всё в git, через CI.
+и передаёт cloud-init (пользователь, ключ, IP, теги) → динамический inventory → Ansible
+настраивает сервисы. Всё в git, через CI.
 
 </details>
 
@@ -1473,8 +1261,8 @@ Golden image Packer'ом → Terraform (bpg/proxmox, libvirt или vSphere) с�
 <details><summary>Ответ</summary>
 
 Агент первичной настройки: при первом старте находит datasource (NoCloud-ISO, ConfigDrive,
-   сервис метаданных облака, guestinfo VMware), применяет network-config, meta-data и user-data:
-   пользователи, ключи, пакеты, файлы, команды.
+сервис метаданных облака, guestinfo VMware), применяет network-config, meta-data и user-data:
+пользователи, ключи, пакеты, файлы, команды.
 
 </details>
 
@@ -1483,7 +1271,7 @@ Golden image Packer'ом → Terraform (bpg/proxmox, libvirt или vSphere) с�
 <details><summary>Ответ</summary>
 
 Эталонный образ с ОС, обновлениями, агентами и hardening, собранный автоматически и
-   версионированный. Все VM одинаковые, быстро стартуют, их можно аудировать и откатить.
+версионированный. Все VM одинаковые, быстро стартуют, их можно аудировать и откатить.
 
 </details>
 
@@ -1492,8 +1280,8 @@ Golden image Packer'ом → Terraform (bpg/proxmox, libvirt или vSphere) с�
 <details><summary>Ответ</summary>
 
 Packer делает образ заранее — старт VM быстрый и предсказуемый, нет зависимостей от
-   репозиториев в момент создания; Ansible внутри Packer как раз и используется для
-   наполнения образа. Ansible на живых VM — для того, что отличается между сервисами.
+репозиториев в момент создания; Ansible внутри Packer как раз и используется для
+наполнения образа. Ansible на живых VM — для того, что отличается между сервисами.
 
 </details>
 
@@ -1502,7 +1290,7 @@ Packer делает образ заранее — старт VM быстрый �
 <details><summary>Ответ</summary>
 
 Proxmox — bpg/proxmox (или Telmate); libvirt — dmacvicar/libvirt (0.9 — новая схема);
-   vSphere — vmware/vsphere (бывший hashicorp/vsphere).
+vSphere — vmware/vsphere (бывший hashicorp/vsphere).
 
 </details>
 
@@ -1511,7 +1299,7 @@ Proxmox — bpg/proxmox (или Telmate); libvirt — dmacvicar/libvirt (0.9 —
 <details><summary>Ответ</summary>
 
 Динамический inventory: `community.proxmox.proxmox`, `community.libvirt.libvirt`,
-   `community.vmware.vmware_vm_inventory`, группы по тегам; либо inventory из outputs Terraform.
+`community.vmware.vmware_vm_inventory`, группы по тегам; либо inventory из outputs Terraform.
 
 </details>
 
@@ -1520,7 +1308,7 @@ Proxmox — bpg/proxmox (или Telmate); libvirt — dmacvicar/libvirt (0.9 —
 <details><summary>Ответ</summary>
 
 Предпочтительно пересоздаю (immutable): новый образ → новые VM → переключение → удаление
-   старых. Для «питомцев» (БД, легаси) — патчи на месте через Ansible по графику с окнами.
+старых. Для «питомцев» (БД, легаси) — патчи на месте через Ansible по графику с окнами.
 
 </details>
 
@@ -1529,7 +1317,7 @@ Proxmox — bpg/proxmox (или Telmate); libvirt — dmacvicar/libvirt (0.9 —
 <details><summary>Ответ</summary>
 
 `machine-id`, SSH host keys, состояние cloud-init (`cloud-init clean`), логи, историю,
-   временных пользователей и пароли, привязки к MAC (udev/netplan с конкретным MAC), DHCP-аренды.
+временных пользователей и пароли, привязки к MAC (udev/netplan с конкретным MAC), DHCP-аренды.
 
 </details>
 
@@ -1538,7 +1326,7 @@ Proxmox — bpg/proxmox (или Telmate); libvirt — dmacvicar/libvirt (0.9 —
 <details><summary>Ответ</summary>
 
 vMotion — плановая живая миграция; DRS — автобалансировка через vMotion; HA — перезапуск
-   VM после отказа хоста; FT — синхронная теневая копия без простоя.
+VM после отказа хоста; FT — синхронная теневая копия без простоя.
 
 </details>
 
@@ -1547,10 +1335,8 @@ vMotion — плановая живая миграция; DRS — автобал
 <details><summary>Ответ</summary>
 
 В Vault или защищённых переменных CI: токены гипервизоров (`PKR_VAR_*`,
-    `PROXMOX_VE_API_TOKEN`), секреты приложений — ansible-vault/Vault; в user-data и стейт
-    секреты не кладу; стейт — в зашифрованном backend'е.
-
----
+`PROXMOX_VE_API_TOKEN`), секреты приложений — ansible-vault/Vault; в user-data и стейт
+секреты не кладу; стейт — в зашифрованном backend'е.
 
 </details>
 

@@ -1,15 +1,15 @@
 ---
 title: "05. Речь: стендап, созвоны, переспрос, демо"
-description: "Блок → Английский для IT → тема 05. Опирается на произношение из"
+description: "Стендап, объяснить проблему, переспрос, несогласие, созвоны, демо, произношение, shadowing"
 ---
 
 # 05. Речь: стендап, созвоны, переспрос, демо
 
 > Блок → Английский для IT → тема 05. Опирается на произношение из
-> [03_vocabulary.md](/english/03-vocabulary) и шаблоны из [04_writing.md](/english/04-writing) — устно
+> [03. Лексика: глоссарий DevOps, фразовые глаголы, ложные друзья, произношение](/english/03-vocabulary) и шаблоны из [04. Письмо: коммиты, MR, issues, чат, апдейты инцидентов](/english/04-writing) — устно
 > они те же, только короче. Как задавать вопросы по существу — в
-> [../../DevOps/SoftSkills/03_asking_learning.md](/softskills/03-asking-learning),
-> как строить демо — в [../../DevOps/SoftSkills/07_review_mentoring.md](/softskills/07-review-mentoring).
+> [Soft Skills: 03. Как спрашивать и учиться в команде](/softskills/03-asking-learning),
+> как строить демо — в [Soft Skills: 07. Ревью, фидбек и менторство: путь к сеньору](/softskills/07-review-mentoring).
 >
 > **После темы ты умеешь:** провести стендап по формуле yesterday / today / blockers;
 > объяснить проблему и попросить помощи; переспросить и проверить, что понял; честно
@@ -21,7 +21,7 @@ description: "Блок → Английский для IT → тема 05. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  СИТУАЦИЯ                 ФОРМУЛА                                ГЛАВНАЯ ФРАЗА
  ─────────────────────────────────────────────────────────────────────────────────
  стендап                  yesterday → today → blockers           I'm blocked on…
@@ -33,7 +33,8 @@ description: "Блок → Английский для IT → тема 05. Оп�
  демо                     problem → demo → results → next steps  Let me share my screen.
  ─────────────────────────────────────────────────────────────────────────────────
  тренировка: shadowing · запись себя · живой разговор раз в неделю · ИИ — с осторожностью
-```text
+```
+
 ---
 
 ## 1. Речь — не письмо вслух
@@ -63,18 +64,19 @@ description: "Блок → Английский для IT → тема 05. Оп�
 | Блокеры | — | *I'm blocked on…*, *I'm waiting for…*, *I need help with…*, *No blockers.* |
 
 🇬🇧 Пример (~40 секунд):
-```text
+```
 Yesterday I finished the Trivy stage in the CI pipeline and fixed two high
 vulnerabilities in the base image.
 Today I'm going to add dependency caching and test it on staging.
 I'm blocked on access to the new registry. Yerzhan, could you help me with that
 after the call?
-```text
+```
+
 Если на стендапе задали вопрос, на который нужен долгий ответ:
 🇬🇧 *Good question — it's a bit long for stand-up. Let's discuss it right after.*
 
 Асинхронный стендап (текстом в канал) — та же формула, те же времена: удобно готовить
-его письменно в понедельник-среду-пятницу по системе из [01_level_and_system.md](/english/01-level-and-system).
+его письменно в понедельник-среду-пятницу по системе из [01. Уровень и система: как учить английский для IT](/english/01-level-and-system).
 
 ---
 
@@ -83,14 +85,15 @@ after the call?
 Формула: **контекст → симптом → что пробовал → гипотеза → просьба**.
 
 🇬🇧 Пример (~45 секунд):
-```text
+```
 I'm deploying the notifications service to staging.
 The helm upgrade fails with "field is immutable" on the Deployment selector.
 I've checked the chart diff: the labels in the selector changed in MR 240.
 My guess is that we have to delete the Deployment and install it again.
 Before I do that on staging, could you confirm that it's safe?
 Or is there a better way?
-```text
+```
+
 | Часть | 🇬🇧 Фразы |
 |-------|-----------|
 | Контекст | *I'm working on…*, *We're trying to…* |
@@ -103,7 +106,7 @@ Or is there a better way?
 
 ## 4. Попросить помощи
 
-Сначала таймбокс и попытка сам ([../../DevOps/SoftSkills/03_asking_learning.md](/softskills/03-asking-learning)),
+Сначала таймбокс и попытка сам ([Soft Skills: 03. Как спрашивать и учиться в команде](/softskills/03-asking-learning)),
 потом — конкретный вопрос.
 
 🇬🇧
@@ -173,11 +176,12 @@ me if I missed anything.* Это и страховка от непонимани
 Структура: **признать → сомнение с причиной → альтернатива → вопрос**.
 
 🇬🇧
-```text
+```
 I see your point about speed, but I'm worried about the rollback: with a big-bang
 migration, we can't go back quickly. What if we move one service first and see
 how it goes?
-```text
+```
+
 | ✗ Слишком резко | ✓ Нормально | ✗ Слишком мягко (не услышат) |
 |-----------------|-------------|------------------------------|
 | *That's wrong.* | *I see it differently.* / *I'm not sure that's right, because…* | *Maybe, I don't know, it's probably fine…* |
@@ -210,16 +214,17 @@ how it goes?
 
 ## 10. Демо и короткая презентация
 
-Структура (подробнее о демо — [../../DevOps/SoftSkills/07_review_mentoring.md](/softskills/07-review-mentoring)):
+Структура (подробнее о демо — [Soft Skills: 07. Ревью, фидбек и менторство: путь к сеньору](/softskills/07-review-mentoring)):
 
-```text
+```text:no-line-numbers
  1. Problem       что было плохо, одной фразой с цифрой        30 с
  2. What I built  что сделал, одной фразой                      30 с
  3. Demo          показать главное, а не всё                    3–5 мин
  4. Results       цифры: было → стало                          30 с
  5. Next steps    что дальше, что нужно от слушателей           30 с
  6. Questions     вопросы
-```text
+```
+
 | Этап | 🇬🇧 Фразы |
 |------|-----------|
 | Начало | *Today I'd like to show you our new deploy pipeline.* |
@@ -244,7 +249,7 @@ how it goes?
 | Оглушение конечных звонких | *log / lock*, *bad / bat*, *need / neat* | Звонкий в конце звонкий; гласный перед ним длиннее |
 | *h* как «х» | *host*, *hotfix*, *HTTP* | Лёгкий выдох, без хрипа |
 | Окончание *-ed* | *fixed* [t], *deployed* [d], *started* [ɪd] | [ɪd] только после t и d |
-| Ударение | *deVELop*, *comPOnent*, *enVIronment* | Проверять со словом ([03_vocabulary.md](/english/03-vocabulary)) |
+| Ударение | *deVELop*, *comPOnent*, *enVIronment* | Проверять со словом ([03. Лексика: глоссарий DevOps, фразовые глаголы, ложные друзья, произношение](/english/03-vocabulary)) |
 | Интонация | *Is it down?* ↗ · *Why is it down?* ↘ | Да/нет — вверх, вопрос со словом — вниз |
 
 *Log* и *lock* — хороший тест: скажи *check the log* так, чтобы не услышали *check
@@ -267,13 +272,14 @@ the lock*.
 
 ### Shadowing по шагам
 
-```text
+```
  1. Клип 1–2 минуты с транскриптом (доклад, подкаст, туториал)
  2. Послушать целиком, понять смысл, разобрать незнакомые слова
  3. Повторять вслух по фразе — с паузой, глядя в транскрипт
  4. Повторять одновременно со спикером, с задержкой ~0,5 с, без транскрипта
  5. Записать себя, сравнить с оригиналом, повторить трудные места
-```text
+```
+
 ### Как работать с преподавателем
 
 - Приноси **свой материал**: стендап, объяснение Kubernetes, «Tell me about yourself».
@@ -315,7 +321,7 @@ the lock*.
 - DevOps-инженер часто объясняет разработчикам и менеджерам, как устроена платформа:
   демо со структурой — навык, который замечают.
 - На собесе оценивают не акцент, а умение объяснить и переспросить — об этом
-  [07_interview.md](/english/07-interview).
+  [07. Собеседование на английском для DevOps-позиции](/english/07-interview).
 
 ---
 
@@ -351,13 +357,18 @@ the lock*.
 9. ⭐ Беглость — это запас готовых фраз; shadowing и запись себя их набирают.
 10. Живой разговор раз в неделю обязателен: ИИ не заменяет людей и их акценты.
 
-➡️ Дальше: [06_practice_labs.md](/english/06-practice-labs) · задачи: 05_speaking_tasks.md
+---
 
+## Задачи
+
+> Нужен телефон с диктофоном. Все задания блока C выполняются **вслух** и записываются:
+> речь без записи не видна, а значит, и не исправляется. Английские тексты помечены 🇬🇧;
+> в блоке B это расшифровки устной речи. Записи храни вне волта (телефон, облако),
+> в волт — только выводы.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Чем устная речь отличается от письма? Назови четыре приёма, которые делают
 речь понятнее.
@@ -486,7 +497,6 @@ Shadowing: клип 1–2 минуты с транскриптом → поня�
 ---
 
 ### Блок B. «Что тут не так»
-
 
 Расшифровки устной речи. Найди ошибки и скажи правильно.
 
@@ -618,135 +628,129 @@ a second… I haven't worked with it directly, but I'd start by checking…*
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Пять стендапов
+#### C1. 🔑 Пять стендапов
 Пять рабочих дней подряд записывай стендап на 30–60 секунд. Не текст, а **три опорных
 слова** на бумажке. В пятницу переслушай все пять: времена глаголов, паузы, слова-паразиты,
 длина.
 
-### C2. 🔑 Объяснить реальную проблему
+<details><summary>Ответ</summary>
+
+Типичная картина: в первый день — 90 секунд с паузами и *today I will continue…*,
+к пятому — 40 секунд с конкретным результатом вчера и одним блокером.
+
+</details>
+
+#### C2. 🔑 Объяснить реальную проблему
 Возьми проблему, с которой застревал на этой неделе, и объясни её вслух за 45–60 секунд
 по формуле: context → symptom → what I tried → my guess → ask. Запиши, переслушай,
 запиши второй раз.
 
-### C3. Shadowing на 5 дней
+<details><summary>Ответ</summary>
+
+Проверка: слушатель без контекста понял бы, что сломано, что ты уже проверил
+и что от него нужно. Если просьба прозвучала только в конце через минуту — начни с неё.
+
+</details>
+
+#### C3. Shadowing на 5 дней
 Выбери 1–2 минуты доклада KubeCon с английскими субтитрами. 10 минут в день по шагам
 из раздела 12. Запиши себя в первый и в пятый день, сравни.
 
-### C4. Смягчить
+<details><summary>Ответ</summary>
+
+Разница между первым и пятым днём обычно слышна в ритме и связности: меньше пауз
+между словами, ударения на месте.
+
+</details>
+
+#### C4. Смягчить
 Скажи вежливо, но прямо:
-**1.** 🇬🇧 *Explain this again.*
+1. 🇬🇧 *Explain this again.*
+2. 🇬🇧 *Your plan is bad.*
+3. 🇬🇧 *I can't do it by Friday.*
+4. 🇬🇧 *You're speaking too fast.*
+5. 🇬🇧 *Give me the link.*
+6. 🇬🇧 *We don't need to discuss it now.*
 
 <details><summary>Ответ</summary>
 
-*Just to make sure I understand: no deploys from Thursday evening until the migration
-   is done?*
+🇬🇧
+1. *Sorry, could you explain that once more?*
+2. *I'm not sure the plan works for rollback. Could we look at it together?*
+3. *I don't think I can finish it by Friday. I can do A by Friday and B by Tuesday — would
+   that work?*
+4. *Could you speak a bit more slowly, please?*
+5. *Could you drop the link in the chat?*
+6. *Maybe we could take this offline and discuss it after the call?*
 
 </details>
 
-**2.** 🇬🇧 *Your plan is bad.*
-
-<details><summary>Ответ</summary>
-
-*So I own alerting, and I keep Aliya updated — right?*
-
-</details>
-
-**3.** 🇬🇧 *I can't do it by Friday.*
-
-<details><summary>Ответ</summary>
-
-*So we start the canary in the EU region only, and the rest later?*
-
-</details>
-
-**4.** 🇬🇧 *You're speaking too fast.*
-
-<details><summary>Ответ</summary>
-
-*Just to make sure: the idea is fine, but the ticket should be smaller — should I
-   split it?*
-
-</details>
-
-**5.** 🇬🇧 *Give me the link.*
-
-<details><summary>Ответ</summary>
-
-*So the hard deadline is the audit, and the target is early next week?*
-
-</details>
-
-**6.** 🇬🇧 *We don't need to discuss it now.*
-
-<details><summary>Ответ</summary>
-
-*Maybe we could take this offline and discuss it after the call?*
-
-</details>
-
-### C5. Перефразировать
+#### C5. Перефразировать
 Для каждой реплики скажи проверочную фразу *Just to make sure I understand…*:
-**1.** 🇬🇧 *We'll freeze deploys from Thursday evening until the migration is done.*
+1. 🇬🇧 *We'll freeze deploys from Thursday evening until the migration is done.*
+2. 🇬🇧 *Can you own the alerting part, but keep Aliya in the loop?*
+3. 🇬🇧 *Let's go with the canary, but only for the EU region at first.*
+4. 🇬🇧 *The ticket is fine, just scope it down a bit.*
+5. 🇬🇧 *We need it before the audit, ideally early next week.*
 
 <details><summary>Ответ</summary>
 
-*Just to make sure I understand: no deploys from Thursday evening until the migration
+🇬🇧
+1. *Just to make sure I understand: no deploys from Thursday evening until the migration
    is done?*
-
-</details>
-
-**2.** 🇬🇧 *Can you own the alerting part, but keep Aliya in the loop?*
-
-<details><summary>Ответ</summary>
-
-*So I own alerting, and I keep Aliya updated — right?*
-
-</details>
-
-**3.** 🇬🇧 *Let's go with the canary, but only for the EU region at first.*
-
-<details><summary>Ответ</summary>
-
-*So we start the canary in the EU region only, and the rest later?*
-
-</details>
-
-**4.** 🇬🇧 *The ticket is fine, just scope it down a bit.*
-
-<details><summary>Ответ</summary>
-
-*Just to make sure: the idea is fine, but the ticket should be smaller — should I
+2. *So I own alerting, and I keep Aliya updated — right?*
+3. *So we start the canary in the EU region only, and the rest later?*
+4. *Just to make sure: the idea is fine, but the ticket should be smaller — should I
    split it?*
+5. *So the hard deadline is the audit, and the target is early next week?*
 
 </details>
 
-**5.** 🇬🇧 *We need it before the audit, ideally early next week.*
-
-<details><summary>Ответ</summary>
-
-*So the hard deadline is the audit, and the target is early next week?*
-
-</details>
-
-### C6. Произношение
+#### C6. Произношение
 Запиши пары: *log / lock*, *ship / sheep*, *think / sink*, *west / vest*, *need / neat*.
 Распредели окончания *-ed* по звукам [t], [d], [ɪd] и произнеси вслух: *fixed, deployed,
 started, pushed, merged, restarted, rolled, updated, stopped, scaled*.
 
-### C7. 🔑 План демо
+<details><summary>Ответ</summary>
+
+[t]: *fixed, pushed, stopped*. [d]: *deployed, merged, rolled, scaled*.
+[ɪd]: *started, restarted, updated* — только после t и d.
+
+</details>
+
+#### C7. 🔑 План демо
 Подготовь по-английски план 5-минутного демо пайплайна linkd (коммит → CI → Argo CD →
 кластер): фраза на каждый этап структуры из раздела 10, переходы, что скажешь, если
 что-то сломается. Проведи демо на запись.
 
-### C8. Живой разговор
+<details><summary>Ответ</summary>
+
+🇬🇧 Каркас:
+```
+Problem:  "Before, a deploy of linkd took 20 minutes of manual steps."
+Built:    "Now every merge to main goes through CI and Argo CD automatically."
+Demo:     "Let me push a small change… here's the pipeline… and here Argo CD syncs it."
+Results:  "Deploy time is about 4 minutes, and rollback is a single git revert."
+Next:     "Next, I'm adding canary releases. Any questions?"
+Plan B:   "Looks like the runner is slow today — let me show you a recording."
+```
+
+</details>
+
+#### C8. Живой разговор
 Одна встреча в разговорном клубе или с преподавателем. Принеси свой стендап и объяснение
 «What is Kubernetes?». Попроси список своих ошибок — и сделай из него карточки Anki.
+
+<details><summary>Ответ</summary>
+
+Лучший результат встречи — не «поговорили», а список из 5–10 твоих ошибок,
+который превратился в карточки.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Бридж инцидента на английском. IC: 🇬🇧 *Daniyar, can you roll back payments to the
 previous version and confirm?* Ты — Данияр, и не уверен, какая версия «предыдущая»:
@@ -775,11 +779,12 @@ firewall-правила от сетевой команды. Ответь за 30
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 We're still waiting for the firewall rules from the network team. Everything else
 is ready: three of five services are already moved. I've escalated it to their lead
 today. If we get the rules by Tuesday, we'll finish on Thursday.
-```text
+```
+
 </details>
 
 **D4.** Сеньор предлагает на созвоне перевезти все сервисы за одни выходные. Ты считаешь
@@ -788,11 +793,12 @@ today. If we get the rules by Tuesday, we'll finish on Thursday.
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 I see the benefit of doing it in one go, but I'm worried about rollback: if something
 goes wrong on Sunday night, moving everything back would take hours. What if we move
 one low-risk service this weekend and the rest next week?
-```text
+```
+
 </details>
 
 **D5.** Во время демо пайплайн падает в прямом эфире.
@@ -831,14 +837,13 @@ I've heard so far, … but I may be missing context.*
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** 🇬🇧 *How do you give a status update to your team?*
 
 <details><summary>Ответ</summary>
 
 🇬🇧 *I keep it short: what I did yesterday, what I'm doing today, and what's blocking
-   me. For longer tasks, I also post a short written update at the end of the day,
-   so nobody has to ask.*
+me. For longer tasks, I also post a short written update at the end of the day,
+so nobody has to ask.*
 
 </details>
 
@@ -847,8 +852,8 @@ I've heard so far, … but I may be missing context.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *I start with the impact, not the technology: what users see, how much it costs,
-   and what we can do. I use a simple analogy, check if it makes sense, and leave
-   the details for questions.*
+and what we can do. I use a simple analogy, check if it makes sense, and leave
+the details for questions.*
 
 </details>
 
@@ -857,8 +862,8 @@ I've heard so far, … but I may be missing context.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *I explain my concern with facts, not opinions, and suggest an alternative.
-   I also ask questions — often they know something I don't. If the decision goes
-   the other way, I support it and we check the results later.*
+I also ask questions — often they know something I don't. If the decision goes
+the other way, I support it and we check the results later.*
 
 </details>
 
@@ -867,8 +872,8 @@ I've heard so far, … but I may be missing context.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *First, I timebox my own attempt. Then I ask a specific question: what I'm trying
-   to do, what I've tried, what I see, and my guess. I ask in the team channel, so
-   the answer helps others too.*
+to do, what I've tried, what I see, and my guess. I ask in the team channel, so
+the answer helps others too.*
 
 </details>
 
@@ -877,9 +882,9 @@ I've heard so far, … but I may be missing context.*
 <details><summary>Ответ</summary>
 
 🇬🇧 STAR коротко: *I demoed our new CI pipeline to the backend team. I started with
-   the problem — 40-minute deploys — showed one change going to staging, and finished
-   with the numbers. The pipeline failed during the demo, so I switched to a recording.
-   Two teams asked to move to it the next week.*
+the problem — 40-minute deploys — showed one change going to staging, and finished
+with the numbers. The pipeline failed during the demo, so I switched to a recording.
+Two teams asked to move to it the next week.*
 
 </details>
 
@@ -888,8 +893,8 @@ I've heard so far, … but I may be missing context.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *At the end, I recap the decisions and action items with owners and dates, and
-   then post the same summary in the channel. If I'm not sure I understood something,
-   I rephrase it during the meeting.*
+then post the same summary in the channel. If I'm not sure I understood something,
+I rephrase it during the meeting.*
 
 </details>
 
@@ -898,8 +903,8 @@ I've heard so far, … but I may be missing context.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *I'd ask right away rather than guess: I'd rephrase the task to check my
-   understanding and ask what "done" looks like and when it's needed. Then I'd write
-   it down in the ticket.*
+understanding and ask what "done" looks like and when it's needed. Then I'd write
+it down in the ticket.*
 
 </details>
 
@@ -908,9 +913,7 @@ I've heard so far, … but I may be missing context.*
 <details><summary>Ответ</summary>
 
 🇬🇧 *I say honestly that I don't know, share what I do know or how I'd find out,
-   and promise to follow up by a specific time. Then I actually follow up.*
-
----
+and promise to follow up by a specific time. Then I actually follow up.*
 
 </details>
 

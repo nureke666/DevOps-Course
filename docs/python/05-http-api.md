@@ -1,12 +1,12 @@
 ---
 title: "05. HTTP и API: requests, httpx, ретраи, пагинация"
-description: "Блок → Python для DevOps → тема 5 из 8."
+description: "Таймауты, ретраи с backoff, пагинация, GitLab, Telegram"
 ---
 
 # 05. HTTP и API: requests, httpx, ретраи, пагинация
 
 > Блок → **Python для DevOps** → тема 5 из 8.
-> Аналог в bash: `curl -sSf --max-time --retry` + `jq` из [26_bash_devops_practice.md](/linux/26-bash-devops-practice).
+> Аналог в bash: `curl -sSf --max-time --retry` + `jq` из [Linux: 26. Bash в DevOps: боевые паттерны](/linux/26-bash-devops-practice).
 >
 > **После темы ты умеешь:** ходить в HTTP API через `requests`/`httpx` с таймаутами, ретраями
 > и экспоненциальной задержкой, брать токены из окружения, разбирать JSON, проходить пагинацию
@@ -17,7 +17,7 @@ description: "Блок → Python для DevOps → тема 5 из 8."
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  скрипт ──► Session: пул соединений + общие заголовки + токен из env
                │
                ├── timeout=(connect, read)          ← ВСЕГДА, иначе висит вечно
@@ -30,7 +30,8 @@ description: "Блок → Python для DevOps → тема 5 из 8."
             ┌────────────────────┼─────────────────────┐
        GitLab API          Telegram Bot API       health-check 50 URL
        (пайплайны)         (уведомления)          (ThreadPoolExecutor)
-```text
+```
+
 ---
 
 ## 1. requests: основы
@@ -48,7 +49,8 @@ r.raise_for_status()                 # 4xx/5xx → requests.HTTPError
 projects = r.json()                  # list[dict]
 
 r = requests.post(url, json={"name": "backup", "enabled": True}, timeout=10)   # json= сам сериализует и ставит Content-Type
-```text
+```
+
 | Атрибут ответа | Что внутри |
 |----------------|-----------|
 | `r.status_code`, `r.ok` | Код, `True` для < 400 |
@@ -58,14 +60,15 @@ r = requests.post(url, json={"name": "backup", "enabled": True}, timeout=10)   #
 | `r.elapsed.total_seconds()` | Время ответа |
 | `r.url` | Итоговый URL после редиректов |
 
-```text
+```text:no-line-numbers
 requests.RequestException
  ├── ConnectionError          ← DNS, отказ соединения, TLS
  ├── Timeout ── ConnectTimeout, ReadTimeout
  ├── HTTPError                ← из raise_for_status()
  ├── RetryError               ← ретраи по статусу исчерпаны
  └── JSONDecodeError          ← r.json() на HTML/пустом теле (ещё и подкласс ValueError)
-```text
+```
+
 ---
 
 ## 2. ⭐ Таймауты — всегда
@@ -75,7 +78,7 @@ requests.RequestException
 ```python
 requests.get(url, timeout=10)          # 10 с на соединение и 10 с на ожидание данных
 requests.get(url, timeout=(3.05, 30))  # connect=3.05 с, read=30 с — отдельно
-```text
+```
 - **connect** — сколько ждать установления TCP/TLS; маленький (2-5 с).
 - **read** — сколько ждать **между байтами** ответа, а не общее время. Сервер, отдающий
   по байту раз в 20 секунд, не упадёт по `read=30` никогда. Нужен общий дедлайн —
@@ -98,7 +101,8 @@ token = os.environ.get("GITLAB_TOKEN") or sys.exit("GITLAB_TOKEN не задан
 gl = make_session({"PRIVATE-TOKEN": token})       # GitLab
 api = make_session({"Authorization": f"Bearer {os.environ['API_TOKEN']}"})   # типичный Bearer
 requests.get(url, auth=("user", os.environ["PASS"]), timeout=10)             # Basic
-```text
+```
+
 | TLS | Как |
 |-----|-----|
 | Обычный сертификат | Ничего не делать: `verify=True` по умолчанию |
@@ -137,7 +141,7 @@ def make_session(headers: dict[str, str] | None = None) -> requests.Session:
     s.mount("http://", adapter)
     s.headers.update({"User-Agent": "ops-scripts/1.0", **(headers or {})})
     return s
-```text
+```
 Когда попытки по статусу кончились, летит `requests.exceptions.RetryError`.
 
 **Вариант 2 — tenacity** (декоратор, гибкая логика, логирование попыток):
@@ -167,7 +171,7 @@ def get_json(session: requests.Session, url: str, **params) -> dict | list:
     r = session.get(url, params=params, timeout=(3.05, 30))
     r.raise_for_status()
     return r.json()
-```text
+```
 Зачем **jitter** (случайная добавка): 100 экземпляров скрипта, упавших одновременно, иначе
 повторят запрос тоже одновременно и снова положат API.
 
@@ -185,7 +189,7 @@ name = data.get("owner", {}).get("name", "—")          # необязател�
 
 session.post(url, json={"ref": "main", "variables": [{"key": "ENV", "value": "prod"}]}, timeout=10)
 # ⚠️ data={"a": 1} — это form-urlencoded, а не JSON
-```text
+```
 `r.json()` на `204 No Content` или HTML-странице ошибки прокси (502 от nginx) → `JSONDecodeError`.
 
 ---
@@ -211,7 +215,7 @@ def paginate(session: requests.Session, url: str, params: dict | None = None,
         yield from r.json()
         url = r.links.get("next", {}).get("url")    # None на последней странице
         params = None                               # в next-URL параметры уже есть
-```text
+```
 ⚠️ По умолчанию GitLab отдаёт **20** элементов. Скрипт без пагинации «работает» на тестовом
 проекте и молча теряет данные на реальной группе.
 
@@ -219,16 +223,16 @@ def paginate(session: requests.Session, url: str, params: dict | None = None,
 
 ## 7. Rate limit
 
-```text
+```text:no-line-numbers
    запрос ─► 429 Too Many Requests
              Retry-After: 30                 ← подождать 30 с
              RateLimit-Remaining: 0          ← (GitLab) сколько запросов осталось в окне
              RateLimit-Reset: 1790000000     ← когда окно обнулится (epoch)
-```text
+```
 - `urllib3.Retry` с `respect_retry_after_header=True` сам ждёт `Retry-After` для 429/503.
 - Не долби API параллельно в 50 потоков: ограничивай `max_workers`, делай паузы.
 - Смотри `RateLimit-Remaining` и притормаживай заранее, а не после 429.
-- Telegram на 429 кладёт паузу в тело ответа: `{"parameters": {"retry_after": 5&#125;&#125;`.
+- Telegram на 429 кладёт паузу в тело ответа: <code v-pre>{"parameters": {"retry\_after": 5}}</code>.
 
 ---
 
@@ -246,7 +250,6 @@ from urllib.parse import quote
 
 log = logging.getLogger("failed_pipelines")
 # make_session() и paginate() — из разделов 4 и 6
-
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
@@ -268,14 +271,13 @@ def main(argv: list[str] | None = None) -> int:
                              {"status": "failed", "updated_after": since})
         for pl in pipelines:
             failed += 1
-            print(f"{project['path_with_namespace']:&lt;40} #{pl['id']:<10} {pl['ref']:<25} {pl['web_url']}")
+            print(f"{project['path_with_namespace']:<40} #{pl['id']:<10} {pl['ref']:<25} {pl['web_url']}")
     log.info("упавших пайплайнов за %d ч: %d", args.hours, failed)
     return 1 if failed else 0
 
-
 if __name__ == "__main__":
     sys.exit(main())
-```text
+```
 Путь группы кодируется (`devops/infra` → `devops%2Finfra`) — так требует GitLab API.
 Токену хватает scope `read_api`.
 
@@ -286,7 +288,7 @@ if __name__ == "__main__":
 ```python
 import html, os, requests
 
-def send_telegram(text: str, *, silent: bool = False) -&gt; None:
+def send_telegram(text: str, *, silent: bool = False) -> None:
     token = os.environ["TG_BOT_TOKEN"]            # от @BotFather
     chat_id = os.environ["TG_CHAT_ID"]            # узнать: написать боту → GET .../getUpdates
     r = requests.post(
@@ -304,9 +306,9 @@ def send_telegram(text: str, *, silent: bool = False) -&gt; None:
         # ⚠️ не логируем r.url и исключения requests целиком — в URL токен бота
         raise RuntimeError(f"Telegram: {r.status_code} {r.json().get('description', '')}")
 
-host, err = "web1", "disk / 93% &lt;warning&gt;"
+host, err = "web1", "disk / 93% <warning>"
 send_telegram(f"🔥 <b>{html.escape(host)}</b>\n<code>{html.escape(err)}</code>")
-```text
+```
 ⚠️ С `parse_mode=HTML` любые `<`, `>`, `&` из логов ломают разметку → `400 Bad Request: can't parse entities`.
 Всё, что пришло извне, — через `html.escape()`.
 
@@ -323,7 +325,6 @@ from dataclasses import dataclass
 
 import requests
 
-
 @dataclass
 class Result:
     url: str
@@ -332,7 +333,6 @@ class Result:
     ms: float
     error: str = ""
 
-
 def check(url: str, timeout: float = 5.0) -> Result:
     start = time.monotonic()
     try:
@@ -340,7 +340,6 @@ def check(url: str, timeout: float = 5.0) -> Result:
         return Result(url, r.status_code < 400, r.status_code, (time.monotonic() - start) * 1000)
     except requests.RequestException as e:
         return Result(url, False, None, (time.monotonic() - start) * 1000, type(e).__name__)
-
 
 def main() -> int:
     urls = [line.strip() for line in sys.stdin if line.strip() and not line.startswith("#")]
@@ -351,13 +350,12 @@ def main() -> int:
         print(f"{mark} {r.status or '---':>3} {r.ms:7.0f} ms  {r.url}  {r.error}")
     return 0 if all(r.ok for r in results) else 1
 
-
 if __name__ == "__main__":
     sys.exit(main())
-```text
+```
 ```bash
 printf '%s\n' https://example.com http://localhost:9 https://httpbin.org/status/503 | ./healthcheck.py
-```text
+```
 Потоки + GIL: пока поток ждёт сеть, GIL отпущен — 20 потоков проверяют 20 URL одновременно.
 Для тысяч URL — `httpx.AsyncClient` + `asyncio`.
 
@@ -377,7 +375,7 @@ with httpx.Client(
 ) as client:
     r = client.get("/projects", params={"per_page": 100})
     r.raise_for_status()
-```text
+```
 ```python
 import asyncio, httpx
 
@@ -387,7 +385,8 @@ async def fetch_all(urls: list[str]) -> list[httpx.Response | BaseException]:
         return await asyncio.gather(*(client.get(u) for u in urls), return_exceptions=True)
 
 results = asyncio.run(fetch_all(urls))
-```text
+```
+
 | | requests | httpx |
 |---|----------|-------|
 | Таймаут по умолчанию | Нет ⚠️ | 5 с |
@@ -425,7 +424,7 @@ results = asyncio.run(fetch_all(urls))
 - Таймауты и ретраи отличают скрипт, который «иногда падает, перезапусти», от надёжного инструмента.
   В CI это разница между стабильным пайплайном и вечными ручными ретраями.
 - Health-check-скрипты с уведомлением — первая автоматизация на многих проектах до полноценного
-  мониторинга; позже их заменяет blackbox_exporter ([04_exporters.md](/monitoring/04-exporters)).
+  мониторинга; позже их заменяет blackbox_exporter ([Мониторинг: 04. Exporter'ы](/monitoring/04-exporters)).
 - Токены — только из env/CI-переменных (masked) и с минимальными правами (`read_api`, а не `api`).
 - На собесе любят спросить: «как сделать надёжный HTTP-вызов?» — ответ: таймаут, ретраи с backoff
   и jitter, идемпотентность, `raise_for_status`, rate limit.
@@ -467,13 +466,21 @@ results = asyncio.run(fetch_all(urls))
 9. Для I/O потоки работают отлично (GIL отпускается на ожидании сети); для тысяч запросов — asyncio/httpx.
 10. `verify=False` — не решение, решение — правильный CA-бандл.
 
-➡️ Дальше: [06_parsing_logs.md](/python/06-parsing-logs) · Задачи: 05_http_api_tasks.md
+---
 
+## Задачи
+
+> Стенд: venv с `requests`, `httpx`, `tenacity`, `pyyaml`; тестовый HTTP-сервис:
+> ```bash
+> docker run -d --name httpbin -p 8080:8080 mccutchen/go-httpbin
+> curl -s localhost:8080/get | head        # /status/503, /delay/5, /drip, /bearer, /headers
+> ```
+> Для задач C5-C7 — аккаунт на gitlab.com (или свой GitLab) с токеном `read_api`
+> и Telegram-бот от @BotFather.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Что будет, если вызвать `requests.get(url)` без `timeout` и сервер не отвечает?
 
@@ -516,6 +523,7 @@ Connect — ожидание установки соединения, read — �
 <details><summary>Ответ</summary>
 
 Ретраить: сетевые ошибки, таймауты, 429, 502, 503, 504 — временные проблемы. Не ретраить:
+400/401/403/404/422 — ошибка в самом запросе или правах, повтор даст тот же результат.
 
 </details>
 
@@ -605,7 +613,7 @@ Connect — ожидание установки соединения, read — �
 
 <details><summary>Ответ</summary>
 
-Прямо в URL: `https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage`. Сообщения исключений
+Прямо в URL: `https://api.telegram.org/bot<TOKEN>/sendMessage`. Сообщения исключений
 requests содержат URL — `log.error("%s", e)` отправит токен в логи.
 
 </details>
@@ -614,237 +622,123 @@ requests содержат URL — `log.error("%s", e)` отправит токе
 
 ### Блок B. «Что выведет / что тут не так»
 
-
-```text:no-line-numbers
+```python
 # B1.
-```text
-```text:no-line-numbers
 r = requests.get("https://api.internal/v1/deploys")
-```text
-```text:no-line-numbers
 for d in r.json():
-```text
-```text:no-line-numbers
     print(d["id"])
-```text
-```text:no-line-numbers
+```
+```python
 # B2.
-```text
-```text:no-line-numbers
 r = requests.get(url, timeout=10)
-```text
-```text:no-line-numbers
 if r.status_code == 200:
-```text
-```text:no-line-numbers
     data = r.json()
-```text
-```text:no-line-numbers
 print(data["items"])
-```text
-```text:no-line-numbers
+```
+```python
 # B3.
-```text
-```text:no-line-numbers
 retry = Retry(total=5, backoff_factor=1, status_forcelist=(500, 502, 503),
-```text
-```text:no-line-numbers
               allowed_methods=None)
-```text
-```text:no-line-numbers
 session.mount("https://", HTTPAdapter(max_retries=retry))
-```text
-```text:no-line-numbers
 session.post(f"{api}/projects/42/pipeline", json={"ref": "main"}, timeout=10)
-```text
-```text:no-line-numbers
+```
+```python
 # B4.
-```text
-```text:no-line-numbers
 def fetch(url):
-```text
-```text:no-line-numbers
     for attempt in range(100):
-```text
-```text:no-line-numbers
         try:
-```text
-```text:no-line-numbers
             return requests.get(url, timeout=5).json()
-```text
-```text:no-line-numbers
         except Exception:
-```text
-```text:no-line-numbers
             continue
-```text
-```text:no-line-numbers
+```
+```python
 # B5.
-```text
-```text:no-line-numbers
 r = requests.get(f"{api}/groups/42/projects", headers=h, timeout=10)
-```text
-```text:no-line-numbers
 print(len(r.json()))                     # в группе 340 проектов
-```text
-```text:no-line-numbers
+```
+```python
 # B6.
-```text
-```text:no-line-numbers
 requests.post(webhook, data={"text": "deploy ok"}, timeout=5)     # API ждёт JSON
-```text
-```text:no-line-numbers
+```
+```python
 # B7.
-```text
-```text:no-line-numbers
 try:
-```text
-```text:no-line-numbers
     requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json=msg, timeout=5).raise_for_status()
-```text
-```text:no-line-numbers
 except requests.RequestException as e:
-```text
-```text:no-line-numbers
     log.error("не отправилось: %s", e)
-```text
-```text:no-line-numbers
+```
+```python
 # B8.
-```text
-```text:no-line-numbers
 r = requests.get("https://vault.corp.local/v1/sys/health", verify=False, timeout=5)
-```text
-```text:no-line-numbers
+```
+```python
 # B9.
-```text
-```text:no-line-numbers
 send_telegram(f"<b>Ошибка:</b> {stderr}")     # stderr = "value must be < 10 & > 0"
-```text
-```text:no-line-numbers
+```
+```python
 # B10.
-```text
-```text:no-line-numbers
 for url in urls:                          # 1000 запросов к одному API
-```text
-```text:no-line-numbers
     requests.get(url, headers=h, timeout=10)
-```text
-```text:no-line-numbers
+```
+```python
 # B11.
-```text
-```text:no-line-numbers
 client = httpx.Client()
-```text
-```text:no-line-numbers
 r = client.get("http://example.com/old-path")    # сервер отвечает 301
-```text
-```text:no-line-numbers
 print(r.status_code)
-```text
-```text:no-line-numbers
+```
+```python
 # B12.
-```text
-```text:no-line-numbers
 r = requests.delete(f"{api}/items/7", timeout=10)
-```text
-```text:no-line-numbers
 r.raise_for_status()
-```text
-```text:no-line-numbers
 print(r.json())                          # API отвечает 204 No Content
-```text
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Нет таймаута и `raise_for_status()`: зависание, либо на ошибке — `JSONDecodeError`/`TypeError`.
+
+**B2.** ⚠️ При статусе ≠ 200 `data` не определена → `NameError`. И нет проверки ошибок явно.
+
+**B3.** ⚠️ `allowed_methods=None` — ретраить любые методы, включая `POST`: при 502 от балансировщика
+(запрос мог выполниться) создадутся дубли пайплайнов.
+
+**B4.** ⚠️ 100 попыток без паузы (скрипт сам добивает API), ловится всё подряд — `JSONDecodeError`,
+ответ 404, даже опечатка в коде (`NameError`), — а после 100 неудач функция молча вернёт `None`.
+
+**B5.** 20 — GitLab по умолчанию отдаёт 20 элементов. Нужна пагинация и `per_page=100`.
+
+**B6.** ⚠️ Уходит форма, а не JSON — API ответит 400/415. `json={"text": ...}`.
+
+**B7.** ⚠️ Текст исключения содержит URL с токеном — токен в логах.
+
+**B8.** ⚠️ Проверка сертификата отключена; плюс `InsecureRequestWarning` в логах. Нужен CA-бандл.
+
+**B9.** ⚠️ `<` и `&` ломают HTML-разметку → 400 `can't parse entities`. `html.escape(stderr)`.
+
+**B10.** Работает, но медленно: новое TCP/TLS-соединение на каждый запрос. `Session`.
+
+**B11.** `301` — httpx по умолчанию не идёт за редиректом.
+
+**B12.** `JSONDecodeError` — у 204 нет тела. Проверять `r.status_code == 204` или `r.content`.
+
+</details>
+
 ---
 
 ### Блок C. Практика
 
+#### C1. Разминка с httpbin
+1. `GET /get` с параметрами `env=prod&page=2` — убедись, что они пришли (`args` в ответе).
+2. Пошли свой заголовок `X-Request-Id` и найди его в ответе `/headers`.
+3. `POST /post` с `json=` и с `data=` — сравни поля `json`, `form` и `Content-Type` в ответе.
+4. Проверь `/bearer` с токеном из переменной окружения и без него (коды 200/401).
 
-### C1. Разминка с httpbin
-**1.** `GET /get` с параметрами `env=prod&page=2` — убедись, что они пришли (`args` в ответе).
-**2.** Пошли свой заголовок `X-Request-Id` и найди его в ответе `/headers`.
-
-<details><summary>Ответ</summary>
-
-1 — `ReadTimeout`; 2 — `ConnectTimeout` примерно через 2 с; 3 — не упадёт: байты приходят
-каждые ~2 с, read-таймаут между ними не превышается.
-```python
-deadline = time.monotonic() + 8
-with requests.get(url, stream=True, timeout=(3, 5)) as r:
-    r.raise_for_status()
-    chunks = []
-    for chunk in r.iter_content(1024):
-        chunks.append(chunk)
-        if time.monotonic() > deadline:
-            raise TimeoutError("общий дедлайн 8 с превышен")
-```text
-</details>
-
-**3.** `POST /post` с `json=` и с `data=` — сравни поля `json`, `form` и `Content-Type` в ответе.
-
-<details><summary>Ответ</summary>
-
-«Капризный» сервис:
-```python
-from http.server import BaseHTTPRequestHandler, HTTPServer
-n = 0
-class H(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global n; n += 1
-        self.send_response(503 if n <= 3 else 200); self.end_headers()
-HTTPServer(("127.0.0.1", 8765), H).serve_forever()
-```text
-С `backoff_factor=1` паузы 0, 2, 4 с — проходит на 4-й попытке примерно через 6 с.
-После исчерпания попыток на `/status/503` — `requests.exceptions.RetryError`. `POST` не ретраится
-(нет в `allowed_methods`). 404 — одна попытка: его нет в `status_forcelist`.
-
-</details>
-
-**4.** Проверь `/bearer` с токеном из переменной окружения и без него (коды 200/401).
-### C2. 🔑 Таймауты
-**1.** `GET /delay/10` с `timeout=3` — какое исключение?
-**2.** `GET http://10.255.255.1` с `timeout=(2, 10)` — какое исключение и через сколько секунд?
-
-<details><summary>Ответ</summary>
-
-1 — `ReadTimeout`; 2 — `ConnectTimeout` примерно через 2 с; 3 — не упадёт: байты приходят
-каждые ~2 с, read-таймаут между ними не превышается.
-```python
-deadline = time.monotonic() + 8
-with requests.get(url, stream=True, timeout=(3, 5)) as r:
-    r.raise_for_status()
-    chunks = []
-    for chunk in r.iter_content(1024):
-        chunks.append(chunk)
-        if time.monotonic() > deadline:
-            raise TimeoutError("общий дедлайн 8 с превышен")
-```text
-</details>
-
-**3.** `GET /drip?duration=20&numbytes=10` с `timeout=5` — упадёт ли запрос? Почему?
-
-<details><summary>Ответ</summary>
-
-«Капризный» сервис:
-```python
-from http.server import BaseHTTPRequestHandler, HTTPServer
-n = 0
-class H(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global n; n += 1
-        self.send_response(503 if n <= 3 else 200); self.end_headers()
-HTTPServer(("127.0.0.1", 8765), H).serve_forever()
-```text
-С `backoff_factor=1` паузы 0, 2, 4 с — проходит на 4-й попытке примерно через 6 с.
-После исчерпания попыток на `/status/503` — `requests.exceptions.RetryError`. `POST` не ретраится
-(нет в `allowed_methods`). 404 — одна попытка: его нет в `status_forcelist`.
-
-</details>
-
-**4.** Реализуй общий дедлайн: запрос с `stream=True`, чтение `iter_content` и проверка
+#### C2. 🔑 Таймауты
+1. `GET /delay/10` с `timeout=3` — какое исключение?
+2. `GET http://10.255.255.1` с `timeout=(2, 10)` — какое исключение и через сколько секунд?
+3. `GET /drip?duration=20&numbytes=10` с `timeout=5` — упадёт ли запрос? Почему?
+4. Реализуй общий дедлайн: запрос с `stream=True`, чтение `iter_content` и проверка
    `time.monotonic()` — прерывать, если суммарно дольше 8 секунд.
-### C3. 🔑 Ретраи на urllib3.Retry
-**1.** Собери `make_session()` из конспекта.
-**2.** Подними «капризный» сервис (3 первых запроса — 503, дальше 200) — например, маленький
-   `http.server` на Python — и убедись, что запрос проходит с 4-й попытки. Замерь паузы.
 
 <details><summary>Ответ</summary>
 
@@ -859,10 +753,17 @@ with requests.get(url, stream=True, timeout=(3, 5)) as r:
         chunks.append(chunk)
         if time.monotonic() > deadline:
             raise TimeoutError("общий дедлайн 8 с превышен")
-```text
+```
+
 </details>
 
-**3.** `GET /status/503` на httpbin — какое исключение после исчерпания попыток?
+#### C3. 🔑 Ретраи на urllib3.Retry
+1. Собери `make_session()` из конспекта.
+2. Подними «капризный» сервис (3 первых запроса — 503, дальше 200) — например, маленький
+   `http.server` на Python — и убедись, что запрос проходит с 4-й попытки. Замерь паузы.
+3. `GET /status/503` на httpbin — какое исключение после исчерпания попыток?
+4. Убедись, что `POST /status/503` не ретраится.
+5. `GET /status/404` — сколько попыток? Почему?
 
 <details><summary>Ответ</summary>
 
@@ -875,15 +776,22 @@ class H(BaseHTTPRequestHandler):
         global n; n += 1
         self.send_response(503 if n <= 3 else 200); self.end_headers()
 HTTPServer(("127.0.0.1", 8765), H).serve_forever()
-```text
+```
 С `backoff_factor=1` паузы 0, 2, 4 с — проходит на 4-й попытке примерно через 6 с.
 После исчерпания попыток на `/status/503` — `requests.exceptions.RetryError`. `POST` не ретраится
 (нет в `allowed_methods`). 404 — одна попытка: его нет в `status_forcelist`.
 
 </details>
 
-**4.** Убедись, что `POST /status/503` не ретраится.
-**5.** `GET /status/404` — сколько попыток? Почему?
+#### C4. tenacity
+Перепиши C3 на tenacity: ретраить сеть и 429/5xx, 5 попыток, `wait_exponential_jitter`,
+логировать каждую повторную попытку через `before_sleep_log`. Сравни объём и гибкость.
+
+#### C5. 🔑 Пагинация GitLab
+1. Получи список своих проектов: `GET /api/v4/projects?membership=true` — без пагинации и с генератором `paginate()`.
+2. Возьми публичную группу с большим числом проектов (например, `gitlab-org`), посчитай проекты
+   с `per_page=100`. Сколько запросов ушло?
+3. Выведи заголовки `X-Next-Page`, `X-Total-Pages`, `Link`, `RateLimit-Remaining` первого ответа.
 
 <details><summary>Ответ</summary>
 
@@ -891,141 +799,75 @@ HTTPServer(("127.0.0.1", 8765), H).serve_forever()
 
 </details>
 
-### C4. tenacity
-Перепиши C3 на tenacity: ретраить сеть и 429/5xx, 5 попыток, `wait_exponential_jitter`,
-логировать каждую повторную попытку через `before_sleep_log`. Сравни объём и гибкость.
-
-### C5. 🔑 Пагинация GitLab
-**1.** Получи список своих проектов: `GET /api/v4/projects?membership=true` — без пагинации и с генератором `paginate()`.
-**2.** Возьми публичную группу с большим числом проектов (например, `gitlab-org`), посчитай проекты
-   с `per_page=100`. Сколько запросов ушло?
-
-<details><summary>Ответ</summary>
-
-1 — `ReadTimeout`; 2 — `ConnectTimeout` примерно через 2 с; 3 — не упадёт: байты приходят
-каждые ~2 с, read-таймаут между ними не превышается.
-```python
-deadline = time.monotonic() + 8
-with requests.get(url, stream=True, timeout=(3, 5)) as r:
-    r.raise_for_status()
-    chunks = []
-    for chunk in r.iter_content(1024):
-        chunks.append(chunk)
-        if time.monotonic() > deadline:
-            raise TimeoutError("общий дедлайн 8 с превышен")
-```text
-</details>
-
-**3.** Выведи заголовки `X-Next-Page`, `X-Total-Pages`, `Link`, `RateLimit-Remaining` первого ответа.
-
-<details><summary>Ответ</summary>
-
-«Капризный» сервис:
-```python
-from http.server import BaseHTTPRequestHandler, HTTPServer
-n = 0
-class H(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global n; n += 1
-        self.send_response(503 if n <= 3 else 200); self.end_headers()
-HTTPServer(("127.0.0.1", 8765), H).serve_forever()
-```text
-С `backoff_factor=1` паузы 0, 2, 4 с — проходит на 4-й попытке примерно через 6 с.
-После исчерпания попыток на `/status/503` — `requests.exceptions.RetryError`. `POST` не ретраится
-(нет в `allowed_methods`). 404 — одна попытка: его нет в `status_forcelist`.
-
-</details>
-
-### C6. Упавшие пайплайны
+#### C6. Упавшие пайплайны
 Доведи скрипт `failed_pipelines.py` из конспекта до рабочего состояния для своей группы или проекта:
 вывод таблицей, `--hours`, `--json` (данные в stdout, логи в stderr), код выхода 1, если есть упавшие.
 
-### C7. 🔑 Telegram-уведомление
-**1.** Создай бота у @BotFather, напиши ему, получи `chat_id` через `getUpdates`.
-**2.** Реализуй `send_telegram(text, silent=False)` с HTML-разметкой и `html.escape` для внешних данных.
+#### C7. 🔑 Telegram-уведомление
+1. Создай бота у @BotFather, напиши ему, получи `chat_id` через `getUpdates`.
+2. Реализуй `send_telegram(text, silent=False)` с HTML-разметкой и `html.escape` для внешних данных.
+3. Отправь сообщение с `<`, `>` и `&` в тексте — без экранирования и с ним.
+4. Сделай так, чтобы при ошибке в логах не было токена (проверь, подменив токен на неверный).
 
-<details><summary>Ответ</summary>
-
-1 — `ReadTimeout`; 2 — `ConnectTimeout` примерно через 2 с; 3 — не упадёт: байты приходят
-каждые ~2 с, read-таймаут между ними не превышается.
-```python
-deadline = time.monotonic() + 8
-with requests.get(url, stream=True, timeout=(3, 5)) as r:
-    r.raise_for_status()
-    chunks = []
-    for chunk in r.iter_content(1024):
-        chunks.append(chunk)
-        if time.monotonic() > deadline:
-            raise TimeoutError("общий дедлайн 8 с превышен")
-```text
-</details>
-
-**3.** Отправь сообщение с `<`, `>` и `&` в тексте — без экранирования и с ним.
-
-<details><summary>Ответ</summary>
-
-«Капризный» сервис:
-```python
-from http.server import BaseHTTPRequestHandler, HTTPServer
-n = 0
-class H(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global n; n += 1
-        self.send_response(503 if n <= 3 else 200); self.end_headers()
-HTTPServer(("127.0.0.1", 8765), H).serve_forever()
-```text
-С `backoff_factor=1` паузы 0, 2, 4 с — проходит на 4-й попытке примерно через 6 с.
-После исчерпания попыток на `/status/503` — `requests.exceptions.RetryError`. `POST` не ретраится
-(нет в `allowed_methods`). 404 — одна попытка: его нет в `status_forcelist`.
-
-</details>
-
-**4.** Сделай так, чтобы при ошибке в логах не было токена (проверь, подменив токен на неверный).
-### C8. 🔑 Health-checker
+#### C8. 🔑 Health-checker
 `healthcheck.py --config urls.yaml`:
-```text:no-line-numbers
+```yaml
 targets:
-```text
-```text:no-line-numbers
   - name: httpbin-ok
-```text
-```text:no-line-numbers
     url: http://localhost:8080/status/200
-```text
-```text:no-line-numbers
   - name: httpbin-slow
-```text
-```text:no-line-numbers
     url: http://localhost:8080/delay/3
-```text
-```text:no-line-numbers
     timeout: 2
-```text
-```text:no-line-numbers
   - name: httpbin-500
-```text
-```text:no-line-numbers
     url: http://localhost:8080/status/500
-```text
-```text:no-line-numbers
     expect_status: 200
-```text
+```
 - параллельная проверка (`ThreadPoolExecutor`), таймаут на цель (дефолт 5 с);
 - таблица: имя, статус, время, ошибка; код выхода 1 при любой неудаче;
 - с `--notify` — одно сводное сообщение в Telegram только о проблемных целях.
 
-### C9. Потоки против asyncio
+<details><summary>Ответ</summary>
+
+Ядро проверки — функция `check()` из конспекта, расширенная полями `expect_status`
+и `timeout` из YAML; сводка для Telegram — только цели с `ok=False`.
+
+</details>
+
+#### C9. Потоки против asyncio
 Проверь 50 раз `http://localhost:8080/delay/1` тремя способами: последовательно, `ThreadPoolExecutor(20)`,
 `httpx.AsyncClient` + `asyncio.gather`. Замерь время каждого варианта.
 
-### C10. Ограничитель скорости
+<details><summary>Ответ</summary>
+
+Последовательно ≈ 50 с, потоки ≈ 3 с (50 / 20 волн по ~1 с), asyncio ≈ 1-2 с.
+
+</details>
+
+#### C10. Ограничитель скорости
 Напиши класс `RateLimiter(rate_per_sec)` с методом `wait()`, который гарантирует не больше N
 вызовов в секунду, и прогони через него 30 запросов к httpbin при `rate=5`. Сколько заняло?
+
+<details><summary>Ответ</summary>
+
+```python
+class RateLimiter:
+    def __init__(self, rate_per_sec: float):
+        self.interval = 1.0 / rate_per_sec
+        self.next_at = time.monotonic()
+
+    def wait(self) -> None:
+        now = time.monotonic()
+        if now < self.next_at:
+            time.sleep(self.next_at - now)
+        self.next_at = max(now, self.next_at) + self.interval
+```
+30 запросов при `rate=5` — около 6 секунд.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Nightly CI-job раз в неделю висит до таймаута в 1 час на шаге «получить список релизов». Что в коде почти наверняка не так?
 
@@ -1113,13 +955,12 @@ HTML-страница ошибки от балансировщика/прокс�
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как сделать надёжный HTTP-запрос из скрипта?
 
 <details><summary>Ответ</summary>
 
 Таймаут, `raise_for_status`, ретраи с backoff и jitter только для идемпотентных запросов и временных
-   ошибок, лимит попыток, Session, токен из env.
+ошибок, лимит попыток, Session, токен из env.
 
 </details>
 
@@ -1184,7 +1025,7 @@ HTML-страница ошибки от балансировщика/прокс�
 <details><summary>Ответ</summary>
 
 httpx: таймаут по умолчанию, async, HTTP/2, редиректы только явно; requests: проще, больше примеров,
-   ретраи через `urllib3.Retry`.
+ретраи через `urllib3.Retry`.
 
 </details>
 
@@ -1192,10 +1033,8 @@ httpx: таймаут по умолчанию, async, HTTP/2, редиректы
 
 <details><summary>Ответ</summary>
 
-`POST https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage` с `chat_id` и `text`, таймаутом,
-    экранированием HTML и без логирования URL.
-
----
+`POST https://api.telegram.org/bot<TOKEN>/sendMessage` с `chat_id` и `text`, таймаутом,
+экранированием HTML и без логирования URL.
 
 </details>
 

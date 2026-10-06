@@ -1,6 +1,6 @@
 ---
 title: "08. Секреты и безопасность"
-description: "Цель этапа: убрать из портфолио последние ручные kubectl create secret, свести"
+description: "Vault + ESO, инвентаризация секретов"
 ---
 
 # 08. Секреты и безопасность
@@ -50,9 +50,9 @@ description: "Цель этапа: убрать из портфолио посл
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
                         ┌──────────────── Vault ────────────────┐
-                        │ KV: secret/&lt;env&gt;/linkd/…              │
+                        │ KV: secret/<env>/linkd/…              │
                         │ database engine: креды PostgreSQL (13)│
                         │ auth: AppRole · kubernetes            │
                         └───────┬─────────────────────┬─────────┘
@@ -67,7 +67,8 @@ description: "Цель этапа: убрать из портфолио посл
     ingress-controller ──► linkd :порт ◄── monitoring (скрейп)
                              └──► postgres :5432 ◄── backup-джобы
     всё остальное — deny;  PSA: enforce=restricted
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -76,7 +77,8 @@ description: "Цель этапа: убрать из портфолио посл
 
 ```bash
 cd ~/Projects/devops/13-strongbox && ./check.sh
-```text
+```
+
 ### 2. Инвентаризация секретов — `docs/secrets.md`
 
 Главный артефакт этапа. Заполняется по всему портфолио, а не по одному проекту:
@@ -145,7 +147,8 @@ git -C ~/Projects/linkd-platform add infra/vault docs README.md .gitlab-ci.yml
 git -C ~/Projects/linkd-platform commit -m "security: vault config, secrets inventory, CI checks"
 git -C ~/Projects/linkd-gitops add apps data platform
 git -C ~/Projects/linkd-gitops commit -m "security: external secrets, network policies, PSA restricted"
-```text
+```
+
 ---
 
 ## ✅ Критерии приёмки
@@ -201,18 +204,18 @@ git -C ~/Projects/linkd-gitops commit -m "security: external secrets, network po
 
 ## 📚 Теория в волте
 
-- Проблема секретов: [../Left/08_Vault/01_secrets_problem.md](/vault/01-secrets-problem)
-- Vault, KV, auth methods: [../Left/08_Vault/02_vault_intro.md](/vault/02-vault-intro),
-  [../Left/08_Vault/03_kv_engine.md](/vault/03-kv-engine),
-  [../Left/08_Vault/04_auth_methods.md](/vault/04-auth-methods)
-- Vault + Kubernetes/ESO: [../Left/08_Vault/05_vault_integrations.md](/vault/05-vault-integrations)
-- Секреты в GitOps (SOPS/Sealed/ESO): [../Left/07_ArgoCD/05_helm_kustomize.md](/argocd/05-helm-kustomize)
-- Secret в Kubernetes: [../Kubernetes/08_configmap_secret.md](/kubernetes/08-configmap-secret)
-- NetworkPolicy: [../Kubernetes/13_networkpolicy.md](/kubernetes/13-networkpolicy)
-- RBAC: [../Kubernetes/17_rbac.md](/kubernetes/17-rbac)
-- Безопасность контейнеров: [../Docker/10_security_best_practices.md](/docker/10-security-best-practices)
-- Сканеры и секреты в CI: [../CICD/13_quality_security.md](/cicd/13-quality-security)
-- Секреты в истории git: [../../IT/Git/12_git_in_devops.md](/git/12-git-in-devops)
-- Ansible Vault: [../Ansible/12_vault.md](/ansible/12-vault)
+- Проблема секретов: [Vault: 01. Проблема секретов](/vault/01-secrets-problem)
+- Vault, KV, auth methods: [Vault: 02. Что такое Vault и как он устроен](/vault/02-vault-intro),
+  [Vault: 03. KV secret engine](/vault/03-kv-engine),
+  [Vault: 04. Auth methods и политики](/vault/04-auth-methods)
+- Vault + Kubernetes/ESO: [Vault: 05. Интеграции и динамические секреты](/vault/05-vault-integrations)
+- Секреты в GitOps (SOPS/Sealed/ESO): [ArgoCD: 05. Helm, Kustomize и секреты в GitOps](/argocd/05-helm-kustomize)
+- Secret в Kubernetes: [Kubernetes: 08. ConfigMap и Secret](/kubernetes/08-configmap-secret)
+- NetworkPolicy: [Kubernetes: 13. NetworkPolicy](/kubernetes/13-networkpolicy)
+- RBAC: [Kubernetes: 17. RBAC](/kubernetes/17-rbac)
+- Безопасность контейнеров: [Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices)
+- Сканеры и секреты в CI: [CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security)
+- Секреты в истории git: [Git: 12. Git в работе DevOps](/git/12-git-in-devops)
+- Ansible Vault: [Ansible: 12. Ansible Vault](/ansible/12-vault)
 
-➡️ Следующий этап: [09_backup_dr.md](/project/09-backup-dr)
+➡️ Следующий этап: [09. Бэкапы и восстановление (DR)](/project/09-backup-dr)

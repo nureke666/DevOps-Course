@@ -1,6 +1,6 @@
 ---
 title: "06. Вопросы с собеседований: system design, live troubleshooting, мета-вопросы"
-description: "Блок → Карьера → собеседование."
+description: "12 system design с планом ответа, 12 сценариев live troubleshooting, мета-вопросы, ~30 коротких"
 ---
 
 # 06. Вопросы с собеседований: system design, live troubleshooting, мета-вопросы
@@ -11,9 +11,9 @@ description: "Блок → Карьера → собеседование."
 > **мета-вопросы** (почему DevOps, почему к нам, деньги, вопросы работодателю) и ~30 коротких.
 >
 > Технические вопросы по инструментам — в `*_interview.md` блоков (карта —
-> [02_tech_interview_formats.md](/career/02-tech-interview-formats), раздел 11), behavioral и STAR —
-> в [../SoftSkills/09_interview.md](/softskills/09-interview), пять подробно разобранных
-> задач system design — в [03_system_design_devops.md](/career/03-system-design-devops).
+> [02. Форматы технического собеседования и подготовка к ним](/career/02-tech-interview-formats), раздел 11), behavioral и STAR —
+> в [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview), пять подробно разобранных
+> задач system design — в [03. System design для DevOps](/career/03-system-design-devops).
 
 ---
 
@@ -39,7 +39,7 @@ description: "Блок → Карьера → собеседование."
   с маршрутами по командам → дашборды как код → алерт «мониторинг ослеп» (Watchdog).
 - **Trade-off:** централизованный Prometheus против per-cluster + федерация/remote write.
 - **Ловушка:** алерты на CPU вместо симптомов; кардинальность лейблов
-  ([../SRE/02_sli_slo_error_budget.md](/sre/02-sli-slo-error-budget)).
+  ([SRE: 02. SLI, SLO и error budget](/sre/02-sli-slo-error-budget)).
 
 ### 3. Управление секретами для 30 сервисов
 
@@ -54,7 +54,7 @@ description: "Блок → Карьера → собеседование."
 
 - **Уточнить:** сколько MR одновременно, нужна ли БД с данными, бюджет кластера.
 - **Каркас:** CI собирает образ MR → ApplicationSet (генератор pull request) или Helm в namespace
-  `mr-&lt;id&gt;` → ingress `mr-&lt;id&gt;.preview.example.com` + wildcard-сертификат → БД: общий
+  `mr-<id>` → ingress `mr-<id>.preview.example.com` + wildcard-сертификат → БД: общий
   тестовый сервер с отдельной схемой или лёгкая БД в namespace с сидом → удаление при закрытии
   MR + TTL-уборка → квоты на namespace.
 - **Trade-off:** полная копия окружения против «только этот сервис + общие стенды» — цена и скорость.
@@ -69,7 +69,7 @@ description: "Блок → Карьера → собеседование."
   большие индексы — `CREATE INDEX CONCURRENTLY`.
 - **Trade-off:** больше релизов и временной сложности ради нулевого простоя.
 - **Ловушка:** переименование колонки одной миграцией при двух версиях кода в проде
-  ([../CICD/03_pipeline_design.md](/cicd/03-pipeline-design), раздел 6).
+  ([CI/CD: 03. Проектирование пайплайна](/cicd/03-pipeline-design), раздел 6).
 
 ### 6. Инфраструктура CI-раннеров на сотни сборок в день
 
@@ -82,7 +82,7 @@ description: "Блок → Карьера → собеседование."
 - **Оценка:** сборок в пике × среднее время / 60 = одновременных джоб.
 - **Trade-off:** SaaS-раннеры (просто, платно) против своих (дешевле на объёме, эксплуатация).
 - **Ловушка:** `privileged` DinD на общих раннерах — побег из контейнера = доступ к хосту
-  ([../CICD/09_gitlab_runner.md](/cicd/09-gitlab-runner), раздел 10).
+  ([CI/CD: 09. GitLab Runner](/cicd/09-gitlab-runner), раздел 10).
 
 ### 7. Terraform для dev/stage/prod: структура, state, доступы
 
@@ -90,7 +90,7 @@ description: "Блок → Карьера → собеседование."
 - **Каркас:** модули в отдельном каталоге/репозитории с версиями → окружения — отдельные
   root-модули и отдельные state в удалённом backend с блокировкой → `plan` в MR, `apply` по
   кнопке из CI с отдельной учётной записью на окружение → drift detection по расписанию
-  ([../Left/06_Terraform/00_INDEX.md](/terraform/)).
+  ([Terraform](/terraform/)).
 - **Trade-off:** каталоги на окружение против workspaces — явность против меньшего дублирования.
 - **Ловушка:** один state на всё; `apply` с ноутбука; секреты в state без шифрования backend.
 
@@ -110,7 +110,7 @@ description: "Блок → Карьера → собеседование."
   (autoscaling не успевает за резким пиком) → кэш и CDN для каталога → очередь для заказов →
   rate limiting и load shedding → деградация некритичного (рекомендации, отзывы) →
   заморозка релизов, усиленное дежурство, план отката
-  ([../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns)).
+  ([SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns)).
 - **Trade-off:** переплата за запас мощности на день против риска потерять продажи.
 - **Ловушка:** масштабировать только приложение, забыв про соединения к БД и лимиты внешних API.
 
@@ -131,7 +131,7 @@ description: "Блок → Карьера → собеседование."
 - **Каркас:** продюсер пишет в очередь (RabbitMQ/Kafka) → воркеры с горизонтальным
   масштабированием по лагу → ретраи с backoff → dead letter queue для «ядовитых» сообщений →
   идемпотентность на стороне получателя (дубли неизбежны при at-least-once) → метрики лага
-  и алерт на рост DLQ ([../Left/05_Queues/00_INDEX.md](/queues/)).
+  и алерт на рост DLQ ([Очереди](/queues/)).
 - **Trade-off:** RabbitMQ (маршрутизация, проще) против Kafka (поток, история, масштаб).
 - **Ловушка:** «exactly once» без идемпотентности; бесконечные ретраи без DLQ.
 
@@ -148,52 +148,52 @@ description: "Блок → Карьера → собеседование."
 
 > Ещё пять задач с полным разбором и ASCII-схемами — CI/CD для 30 микросервисов, HA-приложение
 > с БД, миграция монолита в k8s, логи на 1 ТБ/день, DR с RPO 15 мин / RTO 1 ч — в
-> [03_system_design_devops.md](/career/03-system-design-devops).
+> [03. System design для DevOps](/career/03-system-design-devops).
 
 ---
 
 ## 🔧 Часть 2. Live troubleshooting: 12 сценариев
 
 > Каждый сценарий — как на собесе: симптом, шаги с командами и тем, что ожидаешь увидеть,
-> типовые причины и чем закончить. Вслух! Методика — [02_tech_interview_formats.md](/career/02-tech-interview-formats), раздел 6.
+> типовые причины и чем закончить. Вслух! Методика — [02. Форматы технического собеседования и подготовка к ним](/career/02-tech-interview-formats), раздел 6.
 
 ### 1. «Сайт отдаёт 502 Bad Gateway»
-```text
+```text:no-line-numbers
 1. Уточнить: всегда или иногда? с какого момента? что деплоили?
 2. curl -v https://site/  → 502 от nginx (Server: nginx) — значит, nginx жив, не достучался до upstream
 3. tail /var/log/nginx/error.log → «connect() failed (111: Connection refused) while connecting to upstream»
-4. ss -tlnp | grep &lt;порт бэкенда&gt;  → слушает ли бэкенд и на каком адресе
+4. ss -tlnp | grep <порт бэкенда>  → слушает ли бэкенд и на каком адресе
 5. systemctl status app / docker ps / kubectl get pods → жив ли бэкенд, рестарты
 6. curl напрямую на бэкенд → работает? значит, проблема в адресе/порту upstream в конфиге
-```text
+```
 Причины: бэкенд упал или не стартовал, слушает другой порт/адрес, таймаут бэкенда (504), SELinux
 запрещает nginx сетевые соединения. Финал: поднять/исправить → `curl` снова → алерт на 5xx.
 
 ### 2. «Диск заполнен, а du ничего большого не находит»
-```text
+```text:no-line-numbers
 1. df -h → / на 100%;  df -i → inodes в норме?
 2. du -xh --max-depth=1 / | sort -h → сумма заметно меньше, чем показывает df
 3. гипотеза: удалённый файл держит открытый процесс
 4. lsof +L1 (или lsof | grep deleted) → процесс держит удалённый лог
-5. фикс: перезапустить/сигналом переоткрыть лог (logrotate postrotate) или : > /proc/&lt;pid&gt;/fd/&lt;fd&gt;
+5. фикс: перезапустить/сигналом переоткрыть лог (logrotate postrotate) или : > /proc/<pid>/fd/<fd>
 6. df -h снова → место вернулось
-```text
+```
 Предотвращение: logrotate с `postrotate`/`copytruncate`, алерт на заполнение диска.
-Опора: [../Linux/10_the_filesystem.md](/linux/10-the-filesystem), инцидент 05 в 99-incidents.
+Опора: [Linux: 10. Файловая система](/linux/10-the-filesystem), инцидент 05 в 99-incidents.
 
 ### 3. «После перезагрузки сервис не поднялся»
-```text
+```text:no-line-numbers
 1. systemctl status app → inactive (dead)? failed?
 2. systemctl is-enabled app → disabled → не включён в автозагрузку
 3. если failed: journalctl -u app -b --no-pager | tail -50 → ошибка старта
 4. частые причины: зависимость от сети/БД (нет After=/Wants=), путь или права к файлу, том не смонтирован
 5. фикс: systemctl enable --now app / поправить unit, systemctl daemon-reload
 6. проверить: sudo reboot (на стенде) → поднялся сам
-```text
-Опора: [../Linux/13_init.md](/linux/13-init).
+```
+Опора: [Linux: 13. Init: systemd](/linux/13-init).
 
 ### 4. «С соседней машины не подключиться к порту, локально работает»
-```text
+```text:no-line-numbers
 1. локально: curl localhost:8080 → OK
 2. ss -tlnp | grep 8080 → 127.0.0.1:8080 или 0.0.0.0:8080?
    127.0.0.1 → приложение слушает только loopback → поправить bind
@@ -201,79 +201,79 @@ description: "Блок → Карьера → собеседование."
    таймаут → пакеты режутся (DROP); connection refused → REJECT или порт не тот
 4. iptables -S / nft list ruleset / ufw status; в облаке — security group
 5. tcpdump -ni any port 8080 на сервере → доходят ли SYN
-```text
-Опора: [../Linux/21_troubleshooting.md](/linux/21-troubleshooting) (DROP vs REJECT).
+```
+Опора: [Linux: 21. Troubleshooting](/linux/21-troubleshooting) (DROP vs REJECT).
 
 ### 5. «Сервер тормозит, load average 30 на 4 ядрах»
-```text
+```text:no-line-numbers
 1. uptime → load высокий;  top / htop → %us/%sy высокие или %wa?
 2. CPU: процесс ест CPU → кто это, это ожидаемо? (ps -eo pid,pcpu,cmd --sort=-pcpu | head)
 3. %wa высокий → I/O: iostat -x 1 / iotop → какой диск и процесс
 4. процессы в состоянии D (ps -eo stat,pid,cmd | grep '^D') → ждут I/O, считаются в load
 5. память: free -h, swap активно используется? dmesg | grep -i oom
-```text
+```
 Важно: load average — не «процент CPU», в нём и ожидающие I/O. Опора:
-[../Linux/14_process_utilization.md](/linux/14-process-utilization).
+[Linux: 14. Мониторинг процессов и cron](/linux/14-process-utilization).
 
 ### 6. «Контейнер сразу выходит (Exited)»
-```text
+```text:no-line-numbers
 1. docker ps -a → Exited (код)
-2. docker logs &lt;c&gt; → последняя ошибка приложения
+2. docker logs <c> → последняя ошибка приложения
 3. код: 1 — ошибка приложения; 126 — нет прав/не исполняемый; 127 — команда не найдена;
-   137 — SIGKILL (часто OOM: docker inspect -f '&#123;&#123;.State.OOMKilled&#125;&#125;')
+   137 — SIGKILL (часто OOM: docker inspect -f '{{.State.OOMKilled}}')
 4. docker inspect → Cmd/Entrypoint, Env, Mounts — то ли запускается
-5. запустить с шеллом: docker run --rm -it --entrypoint sh &lt;image&gt; → команду руками
-```text
-Опора: [../Docker/11_troubleshooting.md](/docker/11-troubleshooting) (§2–3).
+5. запустить с шеллом: docker run --rm -it --entrypoint sh <image> → команду руками
+```
+Опора: [Docker: 11. Troubleshooting и обслуживание](/docker/11-troubleshooting) (§2–3).
 
 ### 7. «После релиза поды в CrashLoopBackOff»
-```text
+```text:no-line-numbers
 1. Сначала восстановить: kubectl rollout undo deploy/app (или revert в gitops) — если прод горит
 2. kubectl describe pod → Last State: Terminated, Exit Code, Reason (OOMKilled?), Events
-3. kubectl logs &lt;pod&gt; --previous → ошибка старта
+3. kubectl logs <pod> --previous → ошибка старта
 4. частые причины: нет ConfigMap/Secret/переменной, не та версия схемы БД, liveness убивает
    медленный старт (нужна startupProbe), лимит памяти мал
 5. сравнить манифесты релизов: kubectl diff / git diff в gitops
-```text
-Опора: [../Kubernetes/20_troubleshooting.md](/kubernetes/20-troubleshooting) (§2), три правила разбора.
+```
+Опора: [Kubernetes: 20. Траблшутинг кластера](/kubernetes/20-troubleshooting) (§2), три правила разбора.
 
 ### 8. «Service в Kubernetes не отвечает»
-```text
+```text:no-line-numbers
 1. kubectl get endpoints svc/app (или endpointslices) → пусто?
    пусто → селектор не совпадает с лейблами подов или поды не Ready
-2. kubectl get pods -l &lt;селектор&gt; --show-labels, readiness
+2. kubectl get pods -l <селектор> --show-labels, readiness
 3. под отвечает напрямую? kubectl port-forward pod/<p> 8080 / curl из debug-пода на IP пода
-4. ClusterIP из debug-пода; DNS: nslookup app.&lt;ns&gt;.svc.cluster.local
+4. ClusterIP из debug-пода; DNS: nslookup app.<ns>.svc.cluster.local
 5. NetworkPolicy в namespace? kubectl get netpol
 6. targetPort совпадает с портом контейнера?
-```text
-Опора: [../Kubernetes/20_troubleshooting.md](/kubernetes/20-troubleshooting) (§3).
+```
+Опора: [Kubernetes: 20. Траблшутинг кластера](/kubernetes/20-troubleshooting) (§3).
 
 ### 9. «Браузер ругается на сертификат»
-```text
+```text:no-line-numbers
 1. какой именно: истёк? не то имя? недоверенная цепочка?
 2. openssl s_client -connect site:443 -servername site </dev/null 2>/dev/null \
      | openssl x509 -noout -dates -subject -issuer
 3. истёк → почему не продлился: cert-manager (kubectl describe certificate, события), certbot (таймер, логи)
 4. не то имя → SAN не содержит домен; SNI не передаётся
 5. цепочка → сервер не отдаёт промежуточный сертификат (fullchain)
-```text
+```
 Предотвращение: алерт на срок действия сертификата (blackbox exporter), проверка автопродления.
-Опора: [../Network/07_tls.md](/network/07-tls).
+Опора: [Сети: 07. TLS/SSL](/network/07-tls).
 
 ### 10. «База отвечает: too many connections»
-```text
+```text:no-line-numbers
 1. SELECT count(*), state, usename, application_name FROM pg_stat_activity GROUP BY 2,3,4;
 2. много idle / idle in transaction → утечка соединений или долгие транзакции в приложении
 3. посчитать: реплик приложения × размер пула против max_connections
    (после масштабирования HPA число выросло?)
 4. смягчить: уменьшить пул/реплики, завершить зависшие сессии (pg_terminate_backend) осторожно
 5. решить: PgBouncer, таймауты idle_in_transaction_session_timeout, лимит maxReplicas
-```text
-Опора: [../Left/01_Databases/07_db_monitoring.md](/databases/07-db-monitoring).
+```
+Опора: [Базы данных: 07. Мониторинг баз данных](/databases/07-db-monitoring).
 
 ### 11. «CI-джобы висят в pending / пайплайн стал в три раза медленнее»
-```text
+```text:no-line-numbers
 pending:
 1. есть ли онлайн-раннеры с нужными тегами? (настройки проекта → Runners)
 2. защищённая ветка + раннер только для защищённых? лимит concurrent исчерпан?
@@ -281,27 +281,27 @@ pending:
 медленно:
 1. сравнить длительность стадий до и после → какая выросла
 2. кэш перестал попадать (изменился ключ)? образы без кэша слоёв? тесты последовательно?
-```text
-Опора: [../CICD/09_gitlab_runner.md](/cicd/09-gitlab-runner) (раздел 9).
+```
+Опора: [CI/CD: 09. GitLab Runner](/cicd/09-gitlab-runner) (раздел 9).
 
 ### 12. «Внутри контейнера/пода имя не резолвится, по IP работает»
-```text
+```text:no-line-numbers
 1. cat /etc/resolv.conf внутри → какой nameserver и search
-2. nslookup / getent hosts &lt;имя&gt; изнутри → ошибка или таймаут?
+2. nslookup / getent hosts <имя> изнутри → ошибка или таймаут?
 3. Docker: контейнер в default bridge → имена других контейнеров не резолвятся,
    нужна пользовательская сеть
 4. k8s: поды CoreDNS живы? kubectl -n kube-system logs deploy/coredns
    NetworkPolicy режет UDP/TCP 53 до kube-dns? короткое имя из другого namespace?
 5. внешние имена: upstream DNS ноды работает?
-```text
-Опора: [../Docker/08_network.md](/docker/08-network), [../Linux/22_dns.md](/linux/22-dns).
+```
+Опора: [Docker: 08. Сеть в Docker](/docker/08-network), [Linux: 22. DNS](/linux/22-dns).
 
 ---
 
 ## 🗣️ Часть 3. Мета-вопросы
 
 ### «Почему DevOps?»
-Формула из [../SoftSkills/09_interview.md](/softskills/09-interview): мотивация + доказательства +
+Формула из [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview): мотивация + доказательства +
 польза бэкенд-опыта. Одна фраза про интерес к проду, одна-две — что уже сделал (задачи на
 работе, проект), одна — чем поможет бэкенд.
 
@@ -316,7 +316,7 @@ pending:
 
 ### «Какие у вас ожидания по зарплате?»
 Сначала вилка позиции, потом своя вилка с обоснованием и указанием gross/net —
-[04_offer_negotiation.md](/career/04-offer-negotiation), раздел 3.
+[04. Оффер и переговоры: рынок, деньги, выбор, первые 90 дней](/career/04-offer-negotiation), раздел 3.
 
 ### «Когда сможете выйти?»
 С учётом уведомления на текущей работе (по ТК РК — письменно не менее чем за месяц, если
@@ -332,7 +332,7 @@ pending:
 > через полгода».
 
 ### Вопросы работодателю для DevOps-позиции
-Базовый набор — в [../SoftSkills/09_interview.md](/softskills/09-interview) (часть 3). Добавь
+Базовый набор — в [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview) (часть 3). Добавь
 DevOps-специфичные:
 
 | Вопрос | Что узнаешь |
@@ -403,14 +403,14 @@ DevOps-специфичные:
 ## ✅ Финальный самоконтроль
 
 - [ ] Каждую из 12 задач части 1 могу начать с 5 уточняющих вопросов и закончить trade-off
-- [ ] Пять задач из [03_system_design_devops.md](/career/03-system-design-devops) решаю вслух за 35 минут
+- [ ] Пять задач из [03. System design для DevOps](/career/03-system-design-devops) решаю вслух за 35 минут
 - [ ] Каждый сценарий части 2 прохожу по шагам с командами и ожиданием результата
-- [ ] Прошёл минимум три mock live troubleshooting ([05_practice_labs.md](/career/05-practice-labs), лаба 3)
+- [ ] Прошёл минимум три mock live troubleshooting ([05. Практика: 5 лаб по поиску работы и собесам](/career/05-practice-labs), лаба 3)
 - [ ] «Почему DevOps», «почему к нам» и «почему вас, а не опытного» отвечаю конкретикой
 - [ ] Ожидания по зарплате называю вилкой с обоснованием и форматом суммы
 - [ ] Есть 3–4 DevOps-специфичных вопроса работодателю
 - [ ] 30 коротких вопросов отвечаю без подготовки
 
-➡️ Назад к карте блока: [00_INDEX.md](/career/) · Behavioral: [../SoftSkills/09_interview.md](/softskills/09-interview) ·
+➡️ Назад к карте блока: [Карьера](/career/) · Behavioral: [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview) ·
 Технические собесы по блокам: [Kubernetes](/kubernetes/23-interview) · [CI/CD](/cicd/15-interview) ·
-[SRE](/mlops/08-interview) · [Сети](/network/16-interview) · [Docker](/docker/13-interview)
+[SRE](/sre/08-interview) · [Сети](/network/16-interview) · [Docker](/docker/13-interview)

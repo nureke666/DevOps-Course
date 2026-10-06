@@ -1,14 +1,14 @@
 ---
 title: "06. Практика: 30 дней английского для IT"
-description: "Блок → Английский для IT → практика."
+description: "План по дням на 4 недели, 5 лаб: чтение и слова, письмо, речь, инцидент на английском, тренировочное интервью"
 ---
 
 # 06. Практика: 30 дней английского для IT
 
 > Блок → Английский для IT → практика.
 > Стенда нет: практика идёт на твоей работе, в pet-проекте linkd
-> ([../../DevOps/Project/00_INDEX.md](/project/)) и с живыми людьми.
-> 20–30 минут в день по системе из [01_level_and_system.md](/english/01-level-and-system):
+> ([Пет-проект](/project/)) и с живыми людьми.
+> 20–30 минут в день по системе из [01. Уровень и система: как учить английский для IT](/english/01-level-and-system):
 > 10 минут input, 5 минут Anki, 10–15 минут output. Каждая неделя оставляет **артефакт**,
 > а в конце — тренировочное интервью на английском и сравнение с днём 1.
 >
@@ -80,11 +80,11 @@ description: "Блок → Английский для IT → практика."
 
 | День | Input (10 мин) | Output (10–15 мин) |
 |------|----------------|--------------------|
-| 22 | Раздел 6 из [../../DevOps/SRE/04_incident_management.md](/sre/04-incident-management) | Таймлайн и три внутренних апдейта по-английски |
+| 22 | Раздел 6 из [SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management) | Таймлайн и три внутренних апдейта по-английски |
 | 23 | Любая публичная статус-страница с историей инцидентов | Внешние апдейты по статусам + резюме постмортема |
-| 24 | [07_interview.md](/english/07-interview): «Tell me about yourself» | Написать, сказать, записать — до 90 секунд |
-| 25 | Банк историй из [../../DevOps/SoftSkills/09_interview.md](/softskills/09-interview) | Три истории STAR по-английски, вслух |
-| 26 | [../../DevOps/Network/14_url_journey.md](/network/14-url-journey) | Три технических объяснения: URL, Kubernetes для нетехнического человека, Docker vs VM |
+| 24 | [07. Собеседование на английском для DevOps-позиции](/english/07-interview): «Tell me about yourself» | Написать, сказать, записать — до 90 секунд |
+| 25 | Банк историй из [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview) | Три истории STAR по-английски, вслух |
+| 26 | [Сети: 14. Путь запроса в браузере](/network/14-url-journey) | Три технических объяснения: URL, Kubernetes для нетехнического человека, Docker vs VM |
 | 27 | 07: короткие вопросы | 15 коротких вопросов вслух, по 20–40 секунд |
 | 28 | — | Тренировочное интервью #1 (ИИ или запись себя), оценка по рубрике |
 | 29 | Разбор записи #1 | Переделать 3 слабых ответа; интервью #2 с живым человеком |
@@ -96,7 +96,7 @@ description: "Блок → Английский для IT → практика."
 
 ### Что делаем
 Неделю читаешь по одному разделу документации в день по алгоритму из
-[02_reading_docs.md](/english/02-reading-docs), раздел 10: skim → нужный раздел → словарь
+[02. Чтение документации, ошибок и issues](/english/02-reading-docs), раздел 10: skim → нужный раздел → словарь
 только по ключевым словам → 3 карточки. Каждый раздел — в 2–3 предложения резюме
 по-английски.
 
@@ -107,7 +107,8 @@ description: "Блок → Английский для IT → практика."
 |------------|-----|---------------------------|--------------------------|------------------------------|
 | 2026-10-01 | 30  | baseline: EF SET, reading | recording 2 min, text    | —                            |
 | 2026-10-02 | 25  | k8s: Concepts → Overview  | 5 sentences about work   | declarative, desired state   |
-```text
+```
+
 🇬🇧 Резюме раздела:
 ```markdown
 ## Kubernetes → Concepts → Service (2026-10-05)
@@ -117,7 +118,8 @@ Key points:
 - ClusterIP is the default type; it's reachable only inside the cluster.
 New phrases: expose a set of pods, stable endpoint, defaults to ClusterIP
 Question I still have: how does kube-proxy route traffic to the pods?
-```text
+```
+
 ### Требования
 - [ ] 7 дней подряд, строка в журнале каждый день
 - [ ] 20+ cloze-карточек — только из того, что прочитал сам
@@ -131,7 +133,7 @@ Question I still have: how does kube-proxy route traffic to the pods?
 ```bash
 grep -c '^| 2026-' english_log.md          # ≥ 7 строк за неделю
 grep -c '^## ' reading/summaries.md        # ≥ 6 резюме
-```text
+```
 В Anki (Browse → колода `DevOps English`) — 20+ карточек, у каждой есть предложение
 из источника.
 
@@ -163,10 +165,11 @@ Before: Hello. I have question about registry.
 After:  Hi team! Quick question: who can grant push access to the new registry?
         I need it for OPS-123 by Friday.
 Lesson: no lone "Hello"; article "a question"; request + deadline in one message
-```text
+```
+
 ### Требования
 - [ ] 5 коммитов, 2 описания MR, 1 issue, 3 сообщения в чат, 2 ответа на ревью,
-      1 письмо, 1 недельный статус — по шаблонам из [04_writing.md](/english/04-writing)
+      1 письмо, 1 недельный статус — по шаблонам из [04. Письмо: коммиты, MR, issues, чат, апдейты инцидентов](/english/04-writing)
 - [ ] Каждый текст сначала написан сам, без ИИ и переводчика
 - [ ] Каждый проверен с объяснением ошибок, ошибки выписаны
 - [ ] 10+ карточек из собственных ошибок (артикли, времена, порядок слов)
@@ -177,9 +180,10 @@ Lesson: no lone "Hello"; article "a question"; request + deadline in one message
 ```bash
 grep -c '^### ' writing/before_after.md    # ≥ 12 пар
 # в репозитории linkd-platform: последние 20 коммитов по Conventional Commits (0 = все по формату)
-git -C &lt;путь к linkd-platform&gt; log --format=%s -20 \
+git -C <путь к linkd-platform> log --format=%s -20 \
   | grep -Evc '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: '
-```text
+```
+
 ### Вопросы себе
 - Какая ошибка повторилась больше трёх раз? Есть ли на неё карточка?
 - Где я писал длинно, потому что переводил с русского в голове?
@@ -192,22 +196,24 @@ git -C &lt;путь к linkd-platform&gt; log --format=%s -20 \
 ### Что делаем
 Неделю каждый день говоришь на запись: стендап, объяснение проблемы, объяснение
 технической темы; параллельно — shadowing одного клипа. В день 20 — живой разговор
-с человеком. Всё по [05_speaking.md](/english/05-speaking).
+с человеком. Всё по [05. Речь: стендап, созвоны, переспрос, демо](/english/05-speaking).
 
 ### Каркас
 🇬🇧 Стендап — три опорных слова на бумажке, а не текст:
-```text
+```text:no-line-numbers
 yesterday: Trivy stage ✔, 2 CVEs fixed
 today:     cache → staging
 blocker:   registry access (Yerzhan)
-```text
+```
+
 ```markdown
 <!-- speaking/review.md -->
 | #  | Дата  | Длина | Паузы и «эээ» | Ошибки времён | Что исправить дальше          |
 |----|-------|-------|---------------|---------------|-------------------------------|
 | 1  | 10-15 | 1:35  | много         | today I will continue | конкретный результат вчера |
 | 5  | 10-21 | 0:48  | 2             | —             | интонация в вопросе к Ержану   |
-```text
+```
+
 ### Требования
 - [ ] 5 стендапов на запись, последний — до 60 секунд и без чтения
 - [ ] Объяснение реальной проблемы по формуле, 45–60 секунд, две попытки
@@ -233,21 +239,22 @@ blocker:   registry access (Yerzhan)
 
 ### Что делаем
 Проводишь инцидент целиком на английском. Если делал game day из
-[../../DevOps/SRE/07_practice_labs.md](/mlops/07-practice-labs) (лаба 4) —
+[SRE: 07. Практика: 4 лабы по SRE и observability](/sre/07-practice-labs) (лаба 4) —
 переписываешь его артефакты по-английски. Если нет — tabletop по карточке ниже.
-Правила апдейтов — [../../DevOps/SRE/04_incident_management.md](/sre/04-incident-management),
-шаблоны — [04_writing.md](/english/04-writing), раздел 6.
+Правила апдейтов — [SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management),
+шаблоны — [04. Письмо: коммиты, MR, issues, чат, апдейты инцидентов](/english/04-writing), раздел 6.
 
 ### Каркас
 Карточка сценария (для tabletop):
-```text
+```
 14:05 UTC  alert: CheckoutErrorBudgetBurnFast
 14:08      ~15% of /checkout requests return 504; payments p99 = 2.5 s
 14:20      the payments release 2.14 was deployed at 13:58
 14:40      rollback to 2.13
 14:45      error rate back to normal
 next day   cause: a new query without an index (full table scan under load)
-```text
+```
+
 🇬🇧 Резюме постмортема:
 ```markdown
 **Summary:** On Oct 22, between 14:05 and 14:45 UTC, about 15% of checkout requests
@@ -258,7 +265,8 @@ it caused full table scans and timeouts.
 **Mitigation:** We rolled back to 2.13 at 14:40.
 **Action items:** add index checks to the migration review (owner: Daniyar, Oct 29);
 run load tests before payments releases (owner: Aliya, Nov 5).
-```text
+```
+
 ### Требования
 - [ ] Таймлайн по-английски в UTC, 8+ записей
 - [ ] Три внутренних апдейта: Status · Impact · Actions · Next update
@@ -269,12 +277,12 @@ run load tests before payments releases (owner: Aliya, Nov 5).
 - [ ] Устно: брифинг для того, кто подключился позже, — 60 секунд на запись
 
 ### Критерии приёмки
-```text
+```text:no-line-numbers
 incident/
 ├── timeline.md     # UTC, 8+ записей, по-английски
 ├── updates.md      # 3 внутренних + 4 внешних
 └── summary.md      # summary, root cause, detection, mitigation, action items
-```text
+```
 Человек, не участвовавший в «инциденте», понял апдейты и резюме без вопросов.
 
 ### Вопросы себе
@@ -287,21 +295,22 @@ incident/
 ## 🧪 Лаба 5. ⭐ Тренировочное интервью на английском
 
 ### Что делаем
-Готовишь ответы по [07_interview.md](/english/07-interview) и проводишь два тренировочных
+Готовишь ответы по [07. Собеседование на английском для DevOps-позиции](/english/07-interview) и проводишь два тренировочных
 интервью: первое — с ИИ или на запись себе, второе — с живым человеком (друг,
 преподаватель, коллега). Behavioral-часть на русском тренируется в
-[../../DevOps/SoftSkills/08_practice_labs.md](/softskills/08-practice-labs)
+[Soft Skills: 08. Практика: 7 лаб на реальной работе](/softskills/08-practice-labs)
 (лаба 7) — здесь те же истории по-английски.
 
 ### Каркас
 План интервью (30–40 минут):
-```text
+```
  5 мин   Tell me about yourself (≤ 90 с) + уточняющий вопрос
 10 мин   2 истории STAR: сложная задача, ошибка
 10 мин   2 технических объяснения: URL в браузере, Docker vs VM
  5 мин   5 коротких вопросов из 07
  5 мин   твои вопросы работодателю
-```text
+```
+
 Рубрика (1 — слабо, 3 — хорошо):
 
 | Критерий | #1 | #2 | Заметки |
@@ -337,7 +346,7 @@ incident/
 
 ## 🏁 Что должно остаться после 30 дней
 
-```text
+```text:no-line-numbers
 english/                          # личная папка: волт или приватный репозиторий
 ├── english_log.md                # 30 строк: минуты, input, output, слова
 ├── baseline/                     # день 1 и день 30: EF SET, текст, замер чтения
@@ -348,7 +357,8 @@ english/                          # личная папка: волт или п�
 └── interview/                    # answers.md, rubric.md
 + Anki: колода DevOps English, ~100 карточек из своих источников и своих ошибок
 + linkd-platform: коммиты, MR и README — по-английски
-```text
+```
+
 **Сравнение «день 1 → день 30»:**
 
 | Метрика | День 1 | День 30 |
@@ -367,5 +377,3 @@ english/                          # личная папка: волт или п�
 - раз в неделю: живой разговор и 30–40 минут доклада или подкаста;
 - раз в месяц: те же замеры, что в день 1;
 - раз в 3 месяца: EF SET и тренировочное интервью.
-
-➡️ Дальше: [07_interview.md](/english/07-interview) · Назад к карте: [00_INDEX.md](/english/)

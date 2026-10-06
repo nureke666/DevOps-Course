@@ -1,6 +1,6 @@
 ---
 title: "09. Собеседование на senior / lead DevOps"
-description: "Блок → Leadership → собеседование."
+description: "Чем senior-собес отличается, главные вопросы с развёрнутыми ответами, ~40 коротких, ситуационные задачи, вопросы работодателю"
 ---
 
 # 09. Собеседование на senior / lead DevOps
@@ -11,10 +11,10 @@ description: "Блок → Leadership → собеседование."
 > глубже («почему», «какой ценой»), масштаб историй больше, а behavioral-часть — про
 > влияние на организацию и людей.
 >
-> Здесь не повторяем: STAR и банк историй — [../SoftSkills/09_interview.md](/softskills/09-interview);
-> фреймворк system design и 5 разобранных задач — [../Career/03_system_design_devops.md](/career/03-system-design-devops),
-> ещё 12 задач — [../Career/06_interview.md](/career/06-interview); оффер и торг —
-> [../Career/04_offer_negotiation.md](/career/04-offer-negotiation); технические
+> Здесь не повторяем: STAR и банк историй — [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview);
+> фреймворк system design и 5 разобранных задач — [Карьера: 03. System design для DevOps](/career/03-system-design-devops),
+> ещё 12 задач — [Карьера: 06. Вопросы с собеседований: system design, live troubleshooting, мета-вопросы](/career/06-interview); оффер и торг —
+> [Карьера: 04. Оффер и переговоры: рынок, деньги, выбор, первые 90 дней](/career/04-offer-negotiation); технические
 > вопросы — в `*_interview.md` блоков.
 
 ---
@@ -26,7 +26,7 @@ description: "Блок → Leadership → собеседование."
 | **Технические вопросы** | «Как настроить X?» | «Почему X, а не Y? Что выберешь при других условиях? Где X сломается?» |
 | **Масштаб историй** | Своя задача, свой сервис | Система, несколько команд, решения на годы |
 | **Trade-offs** | Знает варианты | Называет цену каждого и условия, при которых передумает |
-| **System design** | Часто, облегчённый | **Обязателен**, глубже: эксплуатация, деньги, миграция, люди ([../Career/03_system_design_devops.md](/career/03-system-design-devops)) |
+| **System design** | Часто, облегчённый | **Обязателен**, глубже: эксплуатация, деньги, миграция, люди ([Карьера: 03. System design для DevOps](/career/03-system-design-devops)) |
 | **Behavioral** | Работа в команде, своя ошибка | Влияние без полномочий, конфликты команд, рост людей, провал проекта |
 | **Ошибки** | «Я сломал и починил» | «Решение оказалось неверным, вот цена и что изменили в процессе» |
 | **Вопросы кандидата** | Про задачи и ментора | Про полномочия, бюджет, стратегию и что уже пробовали |
@@ -65,7 +65,7 @@ description: "Блок → Leadership → собеседование."
 > Что бы сделал иначе — лимиты кардинальности и владельцев метрик с первого дня.»
 
 Что важно: варианты, критерии, **цена в людях, деньгах и времени**, что сделал бы иначе,
-обратимость решения ([02_architecture_decisions.md](/leadership/02-architecture-decisions)).
+обратимость решения ([02. Архитектурные решения: ADR, RFC, design review](/leadership/02-architecture-decisions)).
 
 ---
 
@@ -80,7 +80,7 @@ description: "Блок → Leadership → собеседование."
 > квартал. За два квартала перешли все четыре.»
 
 Что важно: данные вместо мнений, союзники до встречи, пилот, **новый путь проще старого**,
-дата deprecation. Базовые инструменты влияния — в [../SoftSkills/07_review_mentoring.md](/softskills/07-review-mentoring),
+дата deprecation. Базовые инструменты влияния — в [Soft Skills: 07. Ревью, фидбек и менторство: путь к сеньору](/softskills/07-review-mentoring),
 раздел 7; на уровне организации добавляются спонсор и связь с целями компании.
 
 ---
@@ -98,7 +98,7 @@ description: "Блок → Leadership → собеседование."
 > становится тикетом с владельцем.»
 
 Что важно: алерты раньше расписания, нагрузка измеряется, есть онбординг и компенсация
-([04_oncall_as_system.md](/leadership/04-oncall-as-system), [../SRE/04_incident_management.md](/sre/04-incident-management)).
+([04. Дежурства как система](/leadership/04-oncall-as-system), [SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management)).
 
 ---
 
@@ -112,7 +112,7 @@ description: "Блок → Leadership → собеседование."
 > фич». Action items постмортемов попадают в тот же реестр, чтобы не жить отдельно.»
 
 Что важно: реестр, выделенная ёмкость, язык бизнеса, связь с инцидентами
-([03_tech_strategy.md](/leadership/03-tech-strategy)).
+([03. Техническая стратегия платформы](/leadership/03-tech-strategy)).
 
 ---
 
@@ -128,7 +128,7 @@ description: "Блок → Leadership → собеседование."
 
 Критерии, которые стоит назвать: **ядро или commodity**, TCO вместе с людьми, экспертиза
 команды, lock-in и путь выхода, требования к данным (в РК — хранение персональных данных
-на территории страны), время до пользы, обратимость ([03_tech_strategy.md](/leadership/03-tech-strategy)).
+на территории страны), время до пользы, обратимость ([03. Техническая стратегия платформы](/leadership/03-tech-strategy)).
 
 ---
 
@@ -141,7 +141,7 @@ description: "Блок → Leadership → собеседование."
 > в отчёте руководству. Через год он вёл изменения на три команды и получил сеньора.»
 
 Что важно: делегирование результата, а не шагов, 1:1, спонсорство, **измеримый итог —
-кто вырос** ([07_lead_staff_em.md](/leadership/07-lead-staff-em)).
+кто вырос** ([07. Tech lead, staff, engineering manager: что после сеньора](/leadership/07-lead-staff-em)).
 
 ---
 
@@ -156,7 +156,7 @@ description: "Блок → Leadership → собеседование."
 > эксплуатации, а не только выгода.»
 
 Что важно: реальный провал, **своя доля ответственности**, blameless к людям, системный
-вывод, который уже применил ([../SRE/05_postmortems.md](/sre/05-postmortems)).
+вывод, который уже применил ([SRE: 05. Постмортемы](/sre/05-postmortems)).
 
 ---
 
@@ -170,7 +170,7 @@ description: "Блок → Leadership → собеседование."
 > «могу, но что из плана выкидываем?».»
 
 Что важно: прозрачность, доли ёмкости, решение у владельца приоритетов, честное «нет»
-([06_team_and_budget.md](/leadership/06-team-and-budget), [../SoftSkills/04_estimation_priorities.md](/softskills/04-estimation-priorities)).
+([06. Команда, план и бюджет](/leadership/06-team-and-budget), [Soft Skills: 04. Сроки, приоритеты и ожидания](/softskills/04-estimation-priorities)).
 
 ---
 
@@ -186,8 +186,8 @@ description: "Блок → Leadership → собеседование."
 > 10% — самые трудные, на них отдельный план и владелец. У каждой волны — откат.»
 
 Что важно: пилот на трудном, автоматизация, волны, метрика прогресса, **финиш и
-выключение старого** ([03_tech_strategy.md](/leadership/03-tech-strategy); техническая сторона —
-задача 3 в [../Career/03_system_design_devops.md](/career/03-system-design-devops)).
+выключение старого** ([03. Техническая стратегия платформы](/leadership/03-tech-strategy); техническая сторона —
+задача 3 в [Карьера: 03. System design для DevOps](/career/03-system-design-devops)).
 
 ---
 
@@ -203,7 +203,7 @@ description: "Блок → Leadership → собеседование."
 
 Что важно: сначала понять, потом менять; **диагноз письменно**; договорённость
 с руководителем. Структура похожа на книгу Майкла Уоткинса «The First 90 Days» (2003).
-Версия для инженера, а не лида, — в [../Career/04_offer_negotiation.md](/career/04-offer-negotiation), раздел 11.
+Версия для инженера, а не лида, — в [Карьера: 04. Оффер и переговоры: рынок, деньги, выбор, первые 90 дней](/career/04-offer-negotiation), раздел 11.
 
 ---
 
@@ -325,7 +325,7 @@ description: "Блок → Leadership → собеседование."
 упасть на 30%.
 
 - **Уточнить:** срок, что входит в расходы (облако, лицензии, люди), есть ли неприкасаемое.
-- **Диагноз:** куда уходят деньги — топ-10 статей ([../FinOps/00_INDEX.md](/finops/)).
+- **Диагноз:** куда уходят деньги — топ-10 статей ([FinOps](/finops/)).
 - **Варианты по нарастанию боли:** уборка (забытые окружения, диски, снапшоты) →
   rightsizing и автомасштабирование → резервирование мощности → пересмотр лицензий
   и вендоров → сокращение сервиса (меньше окружений, retention).
@@ -348,8 +348,8 @@ description: "Блок → Leadership → собеседование."
 
 ## ❓ Вопросы работодателю от сеньора / лида
 
-Базовые вопросы — в [../SoftSkills/09_interview.md](/softskills/09-interview) и
-[../Career/06_interview.md](/career/06-interview). На позицию сеньора и лида добавь:
+Базовые вопросы — в [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview) и
+[Карьера: 06. Вопросы с собеседований: system design, live troubleshooting, мета-вопросы](/career/06-interview). На позицию сеньора и лида добавь:
 
 | Вопрос | Что узнаешь |
 |--------|-------------|
@@ -389,7 +389,7 @@ description: "Блок → Leadership → собеседование."
 ## ✅ Финальный самоконтроль
 
 - [ ] Объясняю, чем senior-собес отличается от middle, и готовлюсь к system design по
-      [../Career/03_system_design_devops.md](/career/03-system-design-devops)
+      [Карьера: 03. System design для DevOps](/career/03-system-design-devops)
 - [ ] На каждый из 10 главных вопросов есть своя история или честный ответ на своём масштабе
 - [ ] В каждой истории есть цена решения и «что сделал бы иначе»
 - [ ] 40 коротких вопросов отвечаю без подготовки
@@ -397,10 +397,10 @@ description: "Блок → Leadership → собеседование."
       варианты → решение → проверка
 - [ ] Могу рассказать план первых 90 дней на позиции лида за 2 минуты
 - [ ] Есть 4–5 вопросов работодателю про полномочия, бюджет и критерии успеха
-- [ ] Прошёл лабы из [08_practice_labs.md](/softskills/08-practice-labs): есть ADR, аудит алертов
+- [ ] Прошёл лабы из [08. Практика: 7 лаб на работе и в linkd-platform](/leadership/08-practice-labs): есть ADR, аудит алертов
       и promo-пакет, на которые можно сослаться
 
-➡️ Назад к карте блока: [00_INDEX.md](/leadership/) · System design:
-[../Career/03_system_design_devops.md](/career/03-system-design-devops) · Behavioral:
-[../SoftSkills/09_interview.md](/softskills/09-interview) · Оффер:
-[../Career/04_offer_negotiation.md](/career/04-offer-negotiation)
+➡️ Назад к карте блока: [Leadership](/leadership/) · System design:
+[Карьера: 03. System design для DevOps](/career/03-system-design-devops) · Behavioral:
+[Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview) · Оффер:
+[Карьера: 04. Оффер и переговоры: рынок, деньги, выбор, первые 90 дней](/career/04-offer-negotiation)

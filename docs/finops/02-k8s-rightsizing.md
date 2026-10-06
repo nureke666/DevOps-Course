@@ -1,14 +1,14 @@
 ---
 title: "02. Rightsizing в Kubernetes: requests, limits и реальное потребление"
-description: "Блок → FinOps → тема 02. Опирается на"
+description: "Requests = деньги, PromQL p95/пик за 14 дней, CPU limits, VPA и in-place resize, guardrails, bin packing"
 ---
 
 # 02. Rightsizing в Kubernetes: requests, limits и реальное потребление
 
 > Блок → FinOps → тема 02. Опирается на
-> [../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources) (requests/limits,
+> [Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources) (requests/limits,
 > QoS, LimitRange, ResourceQuota — базу не повторяем) и
-> [../Left/02_Monitoring/03_promql.md](/monitoring/03-promql) (`rate`,
+> [Мониторинг: 03. Типы метрик и PromQL](/monitoring/03-promql) (`rate`,
 > `*_over_time`, subquery, recording rules).
 >
 > **После темы ты умеешь:** объяснить, почему requests — это деньги, измерить реальное
@@ -21,7 +21,7 @@ description: "Блок → FinOps → тема 02. Опирается на"
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  requests ──► scheduler раскладывает поды ──► ноды «заполнены» по requests
     │                                                │
     │ завышены в 3–5 раз (типично)                   ▼
@@ -35,19 +35,21 @@ description: "Блок → FinOps → тема 02. Опирается на"
     ├── VPA (updateMode: Off) / Goldilocks — вторая точка зрения
     ├── guardrails: LimitRange, ResourceQuota
     └── bin packing / consolidation ──► лишние ноды уходят ──► экономия становится реальной
-```text
+```
+
 ---
 
 ## 1. Почему requests — это деньги
 
-```text
+```text:no-line-numbers
  нода 4 vCPU / 16 GiB (allocatable ≈ 3,8 vCPU / 14,5 GiB)
  ┌───────────────────────────────────────────────┐
  │ requested: 3,6 vCPU  ███████████████████████░ │ ← так ноду видит scheduler: «почти полна»
  │ used:      0,7 vCPU  ████░░░░░░░░░░░░░░░░░░░░ │ ← так её видит Linux
  └───────────────────────────────────────────────┘
  новый под с request 500m → не влезает → Pending → Cluster Autoscaler покупает ещё ноду
-```text
+```
+
 Три числа, которые путают:
 
 | Термин | Формула | Кто «виноват» | Чем лечится |
@@ -61,9 +63,10 @@ description: "Блок → FinOps → тема 02. Опирается на"
 «с запасом» скопированы из чужого чарта и не пересматривались.
 
 Грубая оценка цены (иллюстративно): 1 vCPU request ≈ $30/мес, 1 GiB ≈ $4/мес.
-```text
+```
 30 деплойментов × 3 реплики × лишние 500m CPU = 45 vCPU ≈ $1 350/мес — просто «на всякий случай»
-```text
+```
+
 > ⚠️ Уменьшение requests само по себе денег не экономит. Экономия появляется, когда
 > освободившееся место превращается в **меньшее число нод** — через Cluster Autoscaler
 > или Karpenter consolidation (раздел 12 и тема 03).
@@ -72,15 +75,15 @@ description: "Блок → FinOps → тема 02. Опирается на"
 
 ## 2. Limits: throttling и OOM глубже
 
-База — в [../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources). Добавим механику.
+База — в [Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources). Добавим механику.
 
 **CPU limit = квота CFS.** В cgroup v2 это `cpu.max`: квота на период 100 мс.
-```text
+```text:no-line-numbers
 limits.cpu: 500m  → 50 мс CPU на каждые 100 мс
 приложение с 4 активными потоками сжигает 50 мс за 12,5 мс реального времени
 → оставшиеся 87,5 мс периода потоки стоят («throttled»)
 → p99 латентности растёт, хотя средняя загрузка CPU «всего 30%»
-```text
+```
 Поэтому throttling видно не по `rate(cpu_usage)`, а по отдельным метрикам (раздел 4).
 
 **Memory limit = жёсткая граница.** Превысил — ядро убивает процесс (OOMKilled, код 137).
@@ -95,15 +98,16 @@ limits.cpu: 500m  → 50 мс CPU на каждые 100 мс
 | **Kubelet eviction** (нехватка памяти/диска на ноде) | 1) превышает ли под свои requests; 2) priority; 3) насколько превышает requests | Под, чьё потребление выше request, вылетает первым: requests ниже реального — риск |
 | **OOM killer ядра** | `oom_score_adj`: Guaranteed −997, BestEffort 1000, Burstable — между, тем выше, чем меньше memory request | Маленький memory request при большом потреблении = первый кандидат на OOM |
 
-```text
+```
  правило rightsizing: CPU можно ставить «впритык» (сжимаемый ресурс — просто медленнее),
                       память — только с запасом над реальным пиком (несжимаемая — смерть пода)
-```text
+```
+
 ---
 
 ## 4. Измеряем реальное потребление PromQL-ом
 
-Стенд: kube-prometheus-stack из [00_INDEX.md](/finops/) — он собирает cAdvisor (через kubelet)
+Стенд: kube-prometheus-stack из [FinOps](/finops/) — он собирает cAdvisor (через kubelet)
 и kube-state-metrics и уже содержит нужные recording rules.
 
 ### Метрики
@@ -152,7 +156,7 @@ max_over_time(
 
 # Текущие requests для сравнения
 max by (namespace, pod, container) (kube_pod_container_resource_requests{namespace="shop", resource="cpu"})
-```text
+```
 Regex `(.+)-[a-z0-9]+-[a-z0-9]{5}` подходит для подов Deployment (`shop-api-7d9f8b6c5d-x2k4p` →
 `shop-api`); для StatefulSet — `(.+)-[0-9]+`. Точнее — джойн с `kube_pod_owner`, но для
 rightsizing regex хватает.
@@ -184,7 +188,8 @@ topk(10,
 sum by (namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{container!=""}[5m]))
 /
 sum by (namespace, pod, container) (rate(container_cpu_cfs_periods_total{container!=""}[5m]))
-```text
+```
+
 ### Длинные окна: recording rules и retention
 
 Subquery `[14d:5m]` по сотням контейнеров тяжёлый. Вынеси «внутренность» в recording rule
@@ -212,11 +217,12 @@ spec:
               label_replace(
                 container_memory_working_set_bytes{container!="", container!="POD"},
                 "workload", "$1", "pod", "(.+)-[a-z0-9]+-[a-z0-9]{5}"))
-```text
+```
 ```promql
 quantile_over_time(0.95, workload_container:cpu_usage_cores:max_rate5m[14d])
 max_over_time(workload_container:memory_working_set_bytes:max[14d])
-```text
+```
+
 > ⚠️ У kube-prometheus-stack retention по умолчанию — **10 дней**. Окно 14 дней на таком
 > Prometheus молча посчитается по 10. Ставь `prometheus.prometheusSpec.retention: 15d`
 > (или больше) либо используй долговременное хранилище.
@@ -229,20 +235,21 @@ max_over_time(workload_container:memory_working_set_bytes:max[14d])
 
 ## 5. Как выбрать новые числа
 
-```text
+```
 CPU request     = p95 CPU за 14 дней × 1,1–1,2          (веб, API)
                   p90 и меньше запаса                     (батчи, воркеры очередей)
 CPU limit       = нет, или 2–4× request                  (раздел 7)
 memory request  = memory limit = max working set × 1,2   (или p99 × 1,25)
 минимум         = 50m / 64Mi на контейнер                 (ниже — шум и риск)
 пересмотр       = через 2 недели после изменения и после крупных релизов
-```text
+```
+
 **Особый случай — сервисы под HPA.** HPA держит утилизацию `usage / request` около цели.
 Уменьшишь request — HPA добавит реплик, и суммарно ядер будет столько же:
-```text
+```text:no-line-numbers
 стоимость ≈ суммарное потребление / целевая утилизация HPA
 usage 6 ядер, target 50% → запрошено 12 ядер;  target 70% → ≈ 8,6 ядра (−28%)
-```text
+```
 Для сервисов под HPA главный рычаг — **целевая утилизация и minReplicas** (тема 03),
 а rightsizing важен для памяти (её HPA не скейлит) и для «пола» при minReplicas.
 
@@ -265,7 +272,7 @@ usage 6 ядер, target 50% → запрошено 12 ядер;  target 70% →
 
 В kube-prometheus-stack уже есть дашборды «Kubernetes / Compute Resources / Namespace (Pods)»
 с колонками *CPU Requests %* и *Memory Requests %* (usage / requests). Свой FinOps-дашборд
-([../Left/02_Monitoring/06_grafana.md](/monitoring/06-grafana) — переменные и provisioning):
+([Мониторинг: 06. Grafana](/monitoring/06-grafana) — переменные и provisioning):
 
 | Панель | Тип | Запрос |
 |--------|-----|--------|
@@ -301,7 +308,8 @@ env:
   - name: GOMAXPROCS
     valueFrom:
       resourceFieldRef: { resource: requests.cpu, divisor: "1" }   # округляется вверх до целого
-```text
+```
+
 ---
 
 ## 8. Память: limit = request
@@ -331,7 +339,8 @@ cd autoscaler/vertical-pod-autoscaler && ./hack/vpa-up.sh
 helm repo add fairwinds-stable https://charts.fairwinds.com/stable
 helm install vpa fairwinds-stable/vpa -n vpa --create-namespace \
   --set updater.enabled=false --set admissionController.enabled=false
-```text
+```
+
 ```yaml
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
@@ -346,12 +355,13 @@ spec:
         controlledResources: ["cpu", "memory"]
         minAllowed: { cpu: 50m, memory: 64Mi }
         maxAllowed: { cpu: "2", memory: 2Gi }
-```text
+```
 ```bash
 kubectl get vpa -n shop
 kubectl describe vpa shop-api -n shop | grep -A12 "Container Recommendations"
 #   Lower Bound / Target / Uncapped Target / Upper Bound  — по каждому контейнеру
-```text
+```
+
 | Поле | Смысл |
 |------|-------|
 | `target` | Рекомендуемый request: p90 истории CPU (для памяти — p90 суточных пиков) + 15% запаса |
@@ -377,8 +387,8 @@ Recommender использует затухающую гистограмму (с
 контейнера меняются без пересоздания пода через подресурс `resize`:
 ```bash
 kubectl patch pod shop-api-7d9f8b6c5d-x2k4p -n shop --subresource resize --patch \
-  '{"spec":{"containers":[{"name":"app","resources":{"requests":{"cpu":"300m"},"limits":{"cpu":"600m"&#125;&#125;}]&#125;&#125;'
-```text
+  '{"spec":{"containers":[{"name":"app","resources":{"requests":{"cpu":"300m"},"limits":{"cpu":"600m"}}}]}}'
+```
 Ограничения: только CPU и память; QoS-класс пода при resize не меняется; `resizePolicy`
 контейнера решает, нужен ли рестарт (`NotRequired` / `RestartContainer`); уменьшение memory
 limit с 1.35 разрешено, но kubelet лишь «по возможности» проверяет, что текущее потребление
@@ -398,14 +408,14 @@ helm install goldilocks fairwinds-stable/goldilocks -n goldilocks --create-names
 kubectl label namespace shop goldilocks.fairwinds.com/enabled=true
 kubectl -n goldilocks port-forward svc/goldilocks-dashboard 8080:80
 # http://localhost:8080 — рекомендации и готовые YAML-сниппеты resources
-```text
+```
 Goldilocks не ставит сам VPA-компоненты: нужен установленный recommender (раздел 9).
 
 ---
 
 ## 11. Guardrails: LimitRange и ResourceQuota как инструмент FinOps
 
-Объекты — в [../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources). FinOps-применение:
+Объекты — в [Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources). FinOps-применение:
 
 ```yaml
 apiVersion: v1
@@ -432,7 +442,7 @@ spec:
     persistentvolumeclaims: "20"
     services.loadbalancers: "1"           # ⭐ каждый Service type=LoadBalancer — отдельный платный LB
     count/deployments.apps: "40"
-```text
+```
 Квота на requests — это **бюджет команды в ядрах**: её легко перевести в деньги и обсуждать
 на cost review.
 
@@ -440,10 +450,11 @@ spec:
 
 ## 12. Overcommit и bin packing: как rightsizing превращается в деньги
 
-```text
+```text:no-line-numbers
 allocatable = capacity − kube-reserved − system-reserved − порог eviction
 overcommit  = sum(limits) / allocatable > 1   → нормально для CPU, опасно для памяти
-```text
+```
+
 По умолчанию scheduler **размазывает** поды (стратегия `LeastAllocated`): все ноды заполнены
 наполовину, и autoscaler не может удалить ни одну. Способы упаковать плотнее:
 
@@ -467,9 +478,9 @@ profiles:
             resources:
               - { name: cpu, weight: 1 }
               - { name: memory, weight: 1 }
-```text
+```
 > ⚠️ Плотная упаковка увеличивает blast radius: падение ноды уносит больше подов. Компенсируй
-> topology spread и PDB ([../Kubernetes/19_scheduling.md](/kubernetes/19-scheduling)).
+> topology spread и PDB ([Kubernetes: 19. Планирование подов](/kubernetes/19-scheduling)).
 
 ---
 
@@ -509,7 +520,7 @@ profiles:
 | Хочу | Как |
 |------|-----|
 | CPU сейчас | `rate(container_cpu_usage_seconds_total{container!=""}[5m])` |
-| p95 CPU за 14 дней | `quantile_over_time(0.95, (&lt;rate по workload&gt;)[14d:5m])` |
+| p95 CPU за 14 дней | `quantile_over_time(0.95, (<rate по workload>)[14d:5m])` |
 | Пик памяти | `max_over_time(container_memory_working_set_bytes[14d:5m])` (по workload) |
 | Requests | `kube_pod_container_resource_requests{resource="cpu"}` |
 | Эффективность namespace | usage / `namespace_cpu:kube_pod_container_resource_requests:sum` |
@@ -538,13 +549,18 @@ profiles:
 9. VPA в `Off` и Goldilocks — вторая точка зрения, а не истина; `Auto` устарел; in-place resize — GA в 1.35.
 10. Экономия реальна, только когда освободившееся место превращается в меньшее число нод.
 
-➡️ Дальше: [03_autoscaling_cost.md](/finops/03-autoscaling-cost) · Задачи: 02_k8s_rightsizing_tasks.md
+---
 
+## Задачи
+
+> Стенд: kind + kube-prometheus-stack из [FinOps](/finops/) и namespace `demo`
+> с «раздутыми» requests из лабы 1 ([06. Практика: 5 лаб по FinOps](/finops/06-practice-labs)).
+> Prometheus: `kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090`.
+> На стенде вместо окна `[14d]` бери `[2h]` — механика та же.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Почему уменьшение requests само по себе не уменьшает счёт? Что должно произойти ещё?
 
@@ -726,174 +742,97 @@ LimitRange задаёт скромные дефолты для тех, кто з
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```
 B1.  # новый CPU request выбираю по этому запросу
-```text
-<details><summary>Ответ</summary>
+     avg_over_time(rate(container_cpu_usage_seconds_total{namespace="shop", container="app"}[5m])[14d:5m])
 
-⚠️ Среднее прячет пики: request по среднему гарантирует конкуренцию за CPU половину
+B2.  quantile_over_time(0.95,
+       sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="shop", container!=""}[5m]))[14d:5m])
+
+B3.  # memory request = p95 working set за 14 дней, limit не ставим
+
+B4.  # эффективность CPU кластера
+     sum(rate(container_cpu_usage_seconds_total[5m]))
+       / sum(kube_pod_container_resource_requests{resource="cpu"})
+
+B5.  # Java-сервис (Spring Boot), стартует 60 секунд
+     resources: { requests: { cpu: 100m, memory: 1Gi }, limits: { cpu: 100m, memory: 1Gi } }
+     livenessProbe: { httpGet: { path: /actuator/health, port: 8080 }, failureThreshold: 3 }
+
+B6.  # один и тот же Deployment
+     VPA updateMode: Recreate, controlledResources: [cpu, memory]
+     HPA по CPU averageUtilization: 70
+
+B7.  # LimitRange в namespace: default.memory 128Mi, defaultRequest.memory 128Mi
+     # контейнер: requests.memory: 512Mi, limits не указаны
+
+B8.  # kube-prometheus-stack с values по умолчанию
+     max_over_time(container_memory_working_set_bytes{namespace="shop"}[14d])
+
+B9.  # requests в кластере снижены на 60%, прошла неделя — нод столько же, счёт тот же
+
+B10. # 40 подов на нодах по 16 GiB
+     resources: { requests: { memory: 256Mi }, limits: { memory: 2Gi } }
+
+B11. # Go 1.24-сервис на ноде с 64 ядрами, requests.cpu: 500m, CPU limit не задан, GOMAXPROCS не задан
+
+B12. # «чтобы сэкономить побольше, ставим CPU request = p50 за неделю»
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Среднее прячет пики: request по среднему гарантирует конкуренцию за CPU половину
 времени. Нужен `quantile_over_time(0.95, …)`.
 
-</details>
-
-```text:no-line-numbers
-     avg_over_time(rate(container_cpu_usage_seconds_total{namespace="shop", container="app"}[5m])[14d:5m])
-```text
-```text:no-line-numbers
-B2.  quantile_over_time(0.95,
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `sum by (pod)` — ряды рвутся при каждом деплое, а сумма по подам даёт потребление
+**B2.** ⚠️ `sum by (pod)` — ряды рвутся при каждом деплое, а сумма по подам даёт потребление
 всех реплик, а не одной. Нужно `max by (namespace, workload, container)`.
 
-</details>
-
-```text:no-line-numbers
-       sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="shop", container!=""}[5m]))[14d:5m])
-```text
-```text:no-line-numbers
-B3.  # memory request = p95 working set за 14 дней, limit не ставим
-```text
-<details><summary>Ответ</summary>
-
-⚠️ 5% времени память выше request → eviction при нехватке на ноде; без limit под может
+**B3.** ⚠️ 5% времени память выше request → eviction при нехватке на ноде; без limit под может
 съесть ноду. Память — по пику × 1,2 и limit = request.
 
-</details>
-
-```text:no-line-numbers
-B4.  # эффективность CPU кластера
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Нет `container!=""` — потребление посчитано дважды (агрегат пода + контейнеры).
+**B4.** ⚠️ Нет `container!=""` — потребление посчитано дважды (агрегат пода + контейнеры).
 Requests включают завершённые поды (Completed Jobs) — знаменатель завышен. Лучше recording
 rules `node_namespace_pod_container:…:sum_rate5m` и `namespace_cpu:…:sum`.
 
-</details>
-
-```text:no-line-numbers
-     sum(rate(container_cpu_usage_seconds_total[5m]))
-```text
-```text:no-line-numbers
-       / sum(kube_pod_container_resource_requests{resource="cpu"})
-```text
-```text:no-line-numbers
-B5.  # Java-сервис (Spring Boot), стартует 60 секунд
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Java на старте жжёт несколько ядер (JIT, загрузка классов), при limit 100m старт
+**B5.** ⚠️ Java на старте жжёт несколько ядер (JIT, загрузка классов), при limit 100m старт
 растянется на минуты, liveness убьёт под до готовности — CrashLoopBackOff. Нужны startupProbe,
 CPU request по реальному потреблению и без жёсткого CPU limit (или с большим).
 
-</details>
-
-```text:no-line-numbers
-     resources: { requests: { cpu: 100m, memory: 1Gi }, limits: { cpu: 100m, memory: 1Gi } }
-```text
-```text:no-line-numbers
-     livenessProbe: { httpGet: { path: /actuator/health, port: 8080 }, failureThreshold: 3 }
-```text
-```text:no-line-numbers
-B6.  # один и тот же Deployment
-```text
-<details><summary>Ответ</summary>
-
-⚠️ VPA меняет CPU request, HPA скейлит по `usage / request` — петля: VPA поднял request →
+**B6.** ⚠️ VPA меняет CPU request, HPA скейлит по `usage / request` — петля: VPA поднял request →
 утилизация упала → HPA убрал реплики → нагрузка на под выросла → VPA снова поднял.
 Рабочее сочетание: HPA по CPU + VPA только на память (`controlledResources: [memory]`).
 
-</details>
-
-```text:no-line-numbers
-     VPA updateMode: Recreate, controlledResources: [cpu, memory]
-```text
-```text:no-line-numbers
-     HPA по CPU averageUtilization: 70
-```text
-```text:no-line-numbers
-B7.  # LimitRange в namespace: default.memory 128Mi, defaultRequest.memory 128Mi
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Default limit 128Mi подставится, а request 512Mi больше limit — admission отклонит
+**B7.** ⚠️ Default limit 128Mi подставится, а request 512Mi больше limit — admission отклонит
 под. Указывать limit явно или поднять `default`.
 
-</details>
+**B8.** ⚠️ Retention по умолчанию 10 дней — «максимум за 14 дней» на деле за 10.
 
-```text:no-line-numbers
-     # контейнер: requests.memory: 512Mi, limits не указаны
-```text
-```text:no-line-numbers
-B8.  # kube-prometheus-stack с values по умолчанию
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Retention по умолчанию 10 дней — «максимум за 14 дней» на деле за 10.
-
-</details>
-
-```text:no-line-numbers
-     max_over_time(container_memory_working_set_bytes{namespace="shop"}[14d])
-```text
-```text:no-line-numbers
-B9.  # requests в кластере снижены на 60%, прошла неделя — нод столько же, счёт тот же
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Поды размазаны по нодам (`LeastAllocated`), autoscaler не может освободить ни одну,
+**B9.** ⚠️ Поды размазаны по нодам (`LeastAllocated`), autoscaler не может освободить ни одну,
 или scale-down блокируют PDB/`safe-to-evict`/локальные тома/минимум группы. Нужны
 consolidation/descheduler и разбор блокировок.
 
-</details>
-
-```text:no-line-numbers
-B10.  # 40 подов на нодах по 16 GiB
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Scheduler считает 40 × 256Mi = 10 GiB, а поды вправе взять до 80 GiB — переподписка
+**B10.** ⚠️ Scheduler считает 40 × 256Mi = 10 GiB, а поды вправе взять до 80 GiB — переподписка
 по памяти в 8 раз. При одновременном росте — OOM и массовые eviction. Limit = request.
 
-</details>
-
-```text:no-line-numbers
-     resources: { requests: { memory: 256Mi }, limits: { memory: 2Gi } }
-```text
-```text:no-line-numbers
-B11.  # Go 1.24-сервис на ноде с 64 ядрами, requests.cpu: 500m, CPU limit не задан, GOMAXPROCS не задан
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Go до 1.25 выставит `GOMAXPROCS=64`: 64 потока конкурируют за долю в 0,5 ядра
+**B11.** ⚠️ Go до 1.25 выставит `GOMAXPROCS=64`: 64 потока конкурируют за долю в 0,5 ядра
 при конкуренции — переключения контекста, лишняя латентность GC. Задать `GOMAXPROCS`
 (из requests через Downward API) или обновиться до Go ≥ 1.25 и поставить limit.
 
-</details>
-
-```text:no-line-numbers
-B12.  # «чтобы сэкономить побольше, ставим CPU request = p50 за неделю»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Половину времени под потребляет больше request — при конкуренции он получает меньше,
+**B12.** ⚠️ Половину времени под потребляет больше request — при конкуренции он получает меньше,
 чем нужно, латентность в пиках растёт; для HPA утилизация будет постоянно > 100%.
 Экономия мнимая, SLO пострадает.
 
 </details>
 
-
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Найти завышенные requests
+#### C1. 🔑 Найти завышенные requests
 На стенде в namespace `demo`:
-**1.** Выведи текущее потребление CPU и памяти по контейнерам и их requests.
+1. Выведи текущее потребление CPU и памяти по контейнерам и их requests.
+2. Посчитай эффективность CPU и памяти по namespace (через recording rules kube-prometheus-stack).
+3. Найди топ-5 контейнеров по «оплачено, но не используется» в ядрах и в GiB.
 
 <details><summary>Ответ</summary>
 
@@ -909,63 +848,15 @@ topk(5, sum by (pod, container) (kube_pod_container_resource_requests{namespace=
       - sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace="demo", container!=""}[5m])))
 topk(5, sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo", resource="memory"})
       - sum by (pod, container) (container_memory_working_set_bytes{namespace="demo", container!=""})) / 2^30
-```text
-</details>
-
-**2.** Посчитай эффективность CPU и памяти по namespace (через recording rules kube-prometheus-stack).
-
-<details><summary>Ответ</summary>
-
-Если правил нет на `/rules` — у Prometheus из kube-prometheus-stack селектор правил
-по лейблу `release`: либо добавить `metadata.labels.release: prometheus`, либо (как на стенде)
-`ruleSelectorNilUsesHelmValues: false`. Запросы:
-`quantile_over_time(0.95, workload_container:cpu_usage_cores:max_rate5m{namespace="demo"}[1h])`
-и `max_over_time(workload_container:memory_working_set_bytes:max{namespace="demo"}[1h])`.
+```
 
 </details>
 
-**3.** Найди топ-5 контейнеров по «оплачено, но не используется» в ядрах и в GiB.
-
-<details><summary>Ответ</summary>
-
-```text
-api:      CPU 220 × 1,15 = 253 → 250m;   память 420 × 1,2 = 504 → 512Mi
-consumer: CPU 350 × 1,15 = 402 → 400m;   память 1,1 × 1,2 = 1,32 GiB → 1,5Gi (1536Mi)
-report:   CPU 1400 × 1,15 = 1610 → 1600m; память 3,2 × 1,2 = 3,84 → 4Gi (без изменений)
-
-Освобождено (постоянно работающие):
-api:      CPU (800 − 250) × 4 = 2200m;  память (1024 − 512) × 4 = 2048Mi = 2 GiB
-consumer: CPU (1000 − 400) × 3 = 1800m; память (2048 − 1536) × 3 = 1536Mi = 1,5 GiB
-Итого: 4 vCPU и 3,5 GiB → 4 × $30 + 3,5 × $4 = $120 + $14 = $134/мес
-report:   0,4 vCPU, но только 2 ч в сутки: 0,4 × $30 × 2/24 ≈ $1/мес
-```text
-По `report` экономия пропорциональна времени работы: запросы CronJob занимают ноду только
-пока Job идёт (если под него не держат отдельную ноду 24/7).
-
-</details>
-
-### C2. 🔑 Recording rules для длинных окон
-**1.** Примени `PrometheusRule` из конспекта (раздел 4). Проверь, что правила появились на `/rules`.
-
-<details><summary>Ответ</summary>
-
-```promql
-sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace="demo", container!="", container!="POD"}[5m]))
-sum by (pod, container) (container_memory_working_set_bytes{namespace="demo", container!="", container!="POD"})
-sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo"}) # resource="cpu"/"memory"
-
-sum by (namespace) (node_namespace_pod_container:container_cpu_usage_seconds_total:sum_rate5m{namespace="demo"})
-  / sum by (namespace) (namespace_cpu:kube_pod_container_resource_requests:sum{namespace="demo"})
-
-topk(5, sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo", resource="cpu"})
-      - sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace="demo", container!=""}[5m])))
-topk(5, sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo", resource="memory"})
-      - sum by (pod, container) (container_memory_working_set_bytes{namespace="demo", container!=""})) / 2^30
-```text
-</details>
-
-**2.** Через 30–60 минут посчитай p95 CPU и максимум памяти по workload за `[1h]`
+#### C2. 🔑 Recording rules для длинных окон
+1. Примени `PrometheusRule` из конспекта (раздел 4). Проверь, что правила появились на `/rules`.
+2. Через 30–60 минут посчитай p95 CPU и максимум памяти по workload за `[1h]`
    (в проде — `[14d]`).
+3. Убедись, что Prometheus хранит данные дольше окна: `kubectl -n monitoring get prometheus -o yaml | grep retention`.
 
 <details><summary>Ответ</summary>
 
@@ -977,27 +868,7 @@ topk(5, sum by (pod, container) (kube_pod_container_resource_requests{namespace=
 
 </details>
 
-**3.** Убедись, что Prometheus хранит данные дольше окна: `kubectl -n monitoring get prometheus -o yaml | grep retention`.
-
-<details><summary>Ответ</summary>
-
-```text
-api:      CPU 220 × 1,15 = 253 → 250m;   память 420 × 1,2 = 504 → 512Mi
-consumer: CPU 350 × 1,15 = 402 → 400m;   память 1,1 × 1,2 = 1,32 GiB → 1,5Gi (1536Mi)
-report:   CPU 1400 × 1,15 = 1610 → 1600m; память 3,2 × 1,2 = 3,84 → 4Gi (без изменений)
-
-Освобождено (постоянно работающие):
-api:      CPU (800 − 250) × 4 = 2200m;  память (1024 − 512) × 4 = 2048Mi = 2 GiB
-consumer: CPU (1000 − 400) × 3 = 1800m; память (2048 − 1536) × 3 = 1536Mi = 1,5 GiB
-Итого: 4 vCPU и 3,5 GiB → 4 × $30 + 3,5 × $4 = $120 + $14 = $134/мес
-report:   0,4 vCPU, но только 2 ч в сутки: 0,4 × $30 × 2/24 ≈ $1/мес
-```text
-По `report` экономия пропорциональна времени работы: запросы CronJob занимают ноду только
-пока Job идёт (если под него не держат отдельную ноду 24/7).
-
-</details>
-
-### C3. 🔑 Таблица «до/после» (расчёт)
+#### C3. 🔑 Таблица «до/после» (расчёт)
 | Workload | Реплик | CPU req | p95 CPU | Mem req | Max WS |
 |----------|--------|---------|---------|---------|--------|
 | api | 4 | 800m | 220m | 1Gi | 420Mi |
@@ -1008,81 +879,9 @@ report:   0,4 vCPU, но только 2 ч в сутки: 0,4 × $30 × 2/24 ≈
 новые requests, сколько освободится и сколько это в $/мес (1 vCPU ≈ $30, 1 GiB ≈ $4).
 Почему экономия по `report` считается иначе?
 
-### C4. VPA против PromQL
-**1.** Поставь VPA recommender (конспект, раздел 9) и создай VPA `updateMode: "Off"` для двух
-   Deployment из `demo`.
-
 <details><summary>Ответ</summary>
 
-```promql
-sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace="demo", container!="", container!="POD"}[5m]))
-sum by (pod, container) (container_memory_working_set_bytes{namespace="demo", container!="", container!="POD"})
-sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo"}) # resource="cpu"/"memory"
-
-sum by (namespace) (node_namespace_pod_container:container_cpu_usage_seconds_total:sum_rate5m{namespace="demo"})
-  / sum by (namespace) (namespace_cpu:kube_pod_container_resource_requests:sum{namespace="demo"})
-
-topk(5, sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo", resource="cpu"})
-      - sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace="demo", container!=""}[5m])))
-topk(5, sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo", resource="memory"})
-      - sum by (pod, container) (container_memory_working_set_bytes{namespace="demo", container!=""})) / 2^30
-```text
-</details>
-
-**2.** Через час сравни `target` VPA с твоими p95/max из C2. Объясни расхождения.
-
-<details><summary>Ответ</summary>
-
-Если правил нет на `/rules` — у Prometheus из kube-prometheus-stack селектор правил
-по лейблу `release`: либо добавить `metadata.labels.release: prometheus`, либо (как на стенде)
-`ruleSelectorNilUsesHelmValues: false`. Запросы:
-`quantile_over_time(0.95, workload_container:cpu_usage_cores:max_rate5m{namespace="demo"}[1h])`
-и `max_over_time(workload_container:memory_working_set_bytes:max{namespace="demo"}[1h])`.
-
-</details>
-
-### C5. Goldilocks
-Поставь Goldilocks, пометь namespace `demo`, открой дашборд. Сравни рекомендации для
-Guaranteed и Burstable. Для какого контейнера рекомендация явно завышена и почему?
-
-### C6. 🔑 Throttling своими глазами
-**1.** Разверни `registry.k8s.io/hpa-example` (каждый запрос жжёт CPU) с `requests.cpu: 100m`,
-   `limits.cpu: 100m` и Service на 80 порту.
-
-<details><summary>Ответ</summary>
-
-```promql
-sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace="demo", container!="", container!="POD"}[5m]))
-sum by (pod, container) (container_memory_working_set_bytes{namespace="demo", container!="", container!="POD"})
-sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo"}) # resource="cpu"/"memory"
-
-sum by (namespace) (node_namespace_pod_container:container_cpu_usage_seconds_total:sum_rate5m{namespace="demo"})
-  / sum by (namespace) (namespace_cpu:kube_pod_container_resource_requests:sum{namespace="demo"})
-
-topk(5, sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo", resource="cpu"})
-      - sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace="demo", container!=""}[5m])))
-topk(5, sum by (pod, container) (kube_pod_container_resource_requests{namespace="demo", resource="memory"})
-      - sum by (pod, container) (container_memory_working_set_bytes{namespace="demo", container!=""})) / 2^30
-```text
-</details>
-
-**2.** Дай нагрузку: `kubectl run load --image=busybox:1.36 --restart=Never -- sh -c 'while true; do wget -q -O- http://php-apache; done'`.
-
-<details><summary>Ответ</summary>
-
-Если правил нет на `/rules` — у Prometheus из kube-prometheus-stack селектор правил
-по лейблу `release`: либо добавить `metadata.labels.release: prometheus`, либо (как на стенде)
-`ruleSelectorNilUsesHelmValues: false`. Запросы:
-`quantile_over_time(0.95, workload_container:cpu_usage_cores:max_rate5m{namespace="demo"}[1h])`
-и `max_over_time(workload_container:memory_working_set_bytes:max{namespace="demo"}[1h])`.
-
-</details>
-
-**3.** Построй долю throttled-периодов и время ответа (`time wget …` из другого пода).
-
-<details><summary>Ответ</summary>
-
-```text
+```text:no-line-numbers
 api:      CPU 220 × 1,15 = 253 → 250m;   память 420 × 1,2 = 504 → 512Mi
 consumer: CPU 350 × 1,15 = 402 → 400m;   память 1,1 × 1,2 = 1,32 GiB → 1,5Gi (1536Mi)
 report:   CPU 1400 × 1,15 = 1610 → 1600m; память 3,2 × 1,2 = 3,84 → 4Gi (без изменений)
@@ -1092,13 +891,16 @@ api:      CPU (800 − 250) × 4 = 2200m;  память (1024 − 512) × 4 = 20
 consumer: CPU (1000 − 400) × 3 = 1800m; память (2048 − 1536) × 3 = 1536Mi = 1,5 GiB
 Итого: 4 vCPU и 3,5 GiB → 4 × $30 + 3,5 × $4 = $120 + $14 = $134/мес
 report:   0,4 vCPU, но только 2 ч в сутки: 0,4 × $30 × 2/24 ≈ $1/мес
-```text
+```
 По `report` экономия пропорциональна времени работы: запросы CronJob занимают ноду только
 пока Job идёт (если под него не держат отдельную ноду 24/7).
 
 </details>
 
-**4.** Убери CPU limit, повтори. Сравни в таблице.
+#### C4. VPA против PromQL
+1. Поставь VPA recommender (конспект, раздел 9) и создай VPA `updateMode: "Off"` для двух
+   Deployment из `demo`.
+2. Через час сравни `target` VPA с твоими p95/max из C2. Объясни расхождения.
 
 <details><summary>Ответ</summary>
 
@@ -1108,21 +910,24 @@ report:   0,4 vCPU, но только 2 ч в сутки: 0,4 × $30 × 2/24 ≈
 
 </details>
 
-### C7. Guardrails
-В namespace `team-a` создай LimitRange и ResourceQuota из конспекта (раздел 11). Проверь:
-под без resources; контейнер с `requests.memory: 512Mi` без limit; второй Service
-`type: LoadBalancer`. Объясни каждую ошибку.
+#### C5. Goldilocks
+Поставь Goldilocks, пометь namespace `demo`, открой дашборд. Сравни рекомендации для
+Guaranteed и Burstable. Для какого контейнера рекомендация явно завышена и почему?
 
-### C8. In-place resize
-Создай kind-кластер с нодой Kubernetes ≥ 1.35 (`kind create cluster --image kindest/node:v1.35.x`
-— тег возьми из релизов kind). Измени CPU request работающего пода через
-`kubectl patch … --subresource resize`. Проверь, что `RESTARTS` не вырос, и найди новые
-значения в `.status.containerStatuses[0].resources`.
+<details><summary>Ответ</summary>
 
-### C9. Bin packing на бумаге
-**6.** нод по 4 vCPU (allocatable 3,8). После rightsizing: 20 подов по 250m и 6 подов по 1000m.
-Сколько нод нужно при идеальной упаковке? Что будет при стратегии `LeastAllocated` без
-consolidation? Сколько это в деньгах (нода ≈ $146/мес)?
+Для Guaranteed Goldilocks предлагает requests = limits = target, для Burstable —
+request = lowerBound/target и limit = upperBound. Завышена рекомендация для маленького
+контейнера (nginx, сайдкар): сработал минимум 250Mi на под.
+
+</details>
+
+#### C6. 🔑 Throttling своими глазами
+1. Разверни `registry.k8s.io/hpa-example` (каждый запрос жжёт CPU) с `requests.cpu: 100m`,
+   `limits.cpu: 100m` и Service на 80 порту.
+2. Дай нагрузку: `kubectl run load --image=busybox:1.36 --restart=Never -- sh -c 'while true; do wget -q -O- http://php-apache; done'`.
+3. Построй долю throttled-периодов и время ответа (`time wget …` из другого пода).
+4. Убери CPU limit, повтори. Сравни в таблице.
 
 <details><summary>Ответ</summary>
 
@@ -1132,10 +937,50 @@ consolidation? Сколько это в деньгах (нода ≈ $146/мес
 
 </details>
 
+#### C7. Guardrails
+В namespace `team-a` создай LimitRange и ResourceQuota из конспекта (раздел 11). Проверь:
+под без resources; контейнер с `requests.memory: 512Mi` без limit; второй Service
+`type: LoadBalancer`. Объясни каждую ошибку.
+
+<details><summary>Ответ</summary>
+
+Под без resources — получает дефолты LimitRange (100m/128Mi) и создаётся; запрет
+был бы без LimitRange при квоте на requests. `requests.memory: 512Mi` без limit — отказ:
+default limit 128Mi < request. Второй LoadBalancer — отказ квоты `services.loadbalancers: 1`
+(`exceeded quota`).
+
+</details>
+
+#### C8. In-place resize
+Создай kind-кластер с нодой Kubernetes ≥ 1.35 (`kind create cluster --image kindest/node:v1.35.x`
+— тег возьми из релизов kind). Измени CPU request работающего пода через
+`kubectl patch … --subresource resize`. Проверь, что `RESTARTS` не вырос, и найди новые
+значения в `.status.containerStatuses[0].resources`.
+
+<details><summary>Ответ</summary>
+
+`RESTARTS` = 0, в `.status.containerStatuses[0].resources` — новые requests;
+при нехватке места на ноде — условие `PodResizePending` в `.status.conditions`.
+CPU по умолчанию меняется без рестарта (`resizePolicy: NotRequired`).
+
+</details>
+
+#### C9. Bin packing на бумаге
+6 нод по 4 vCPU (allocatable 3,8). После rightsizing: 20 подов по 250m и 6 подов по 1000m.
+Сколько нод нужно при идеальной упаковке? Что будет при стратегии `LeastAllocated` без
+consolidation? Сколько это в деньгах (нода ≈ $146/мес)?
+
+<details><summary>Ответ</summary>
+
+Сумма: 20 × 0,25 + 6 × 1 = 11 vCPU. Идеально: ⌈11 / 3,8⌉ = 3 ноды (реалистично 4 —
+запас и отказоустойчивость). `LeastAllocated` разложит ~1,8 vCPU на каждую из 6 нод (48%);
+без consolidation/descheduler ноды могут так и остаться. Разница 2–3 ноды × $146 ≈ $290–440/мес.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После rightsizing (CPU limits не ставили) в час пик p99 вырос в 3 раза. Throttling
 по метрикам — ноль. Что происходит и что проверить?
@@ -1220,14 +1065,13 @@ logs deploy/cluster-autoscaler` и события ноды.
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как ты подбираешь requests и limits для сервиса?
 
 <details><summary>Ответ</summary>
 
 Меряю за 7–14 дней: CPU — p95, память — пик working set. CPU request ≈ p95 × 1,1–1,2,
-   memory request = limit ≈ max × 1,2. CPU limit — по ситуации. Применяю через GitOps,
-   слежу за throttling/OOM/SLO и пересматриваю через 2 недели.
+memory request = limit ≈ max × 1,2. CPU limit — по ситуации. Применяю через GitOps,
+слежу за throttling/OOM/SLO и пересматриваю через 2 недели.
 
 </details>
 
@@ -1236,7 +1080,7 @@ logs deploy/cluster-autoscaler` и события ноды.
 <details><summary>Ответ</summary>
 
 Requests определяют число нод, то есть счёт. Limits на деньги напрямую не влияют —
-   они про throttling и OOM, но их переподписка влияет на стабильность.
+они про throttling и OOM, но их переподписка влияет на стабильность.
 
 </details>
 
@@ -1245,7 +1089,7 @@ Requests определяют число нод, то есть счёт. Limits 
 <details><summary>Ответ</summary>
 
 Для latency-сервисов обычно нет (или с запасом): throttling хуже; requests честные
-   обязательно. В мультиарендных кластерах и для батчей — да, через LimitRange.
+обязательно. В мультиарендных кластерах и для батчей — да, через LimitRange.
 
 </details>
 
@@ -1254,8 +1098,8 @@ Requests определяют число нод, то есть счёт. Limits 
 <details><summary>Ответ</summary>
 
 Эффективность usage/requests по namespace и workload, топ по `requests − usage`,
-   p95 за 14 дней против requests; дашборды Compute Resources; Goldilocks/VPA; OpenCost
-   показывает эффективность и в деньгах.
+p95 за 14 дней против requests; дашборды Compute Resources; Goldilocks/VPA; OpenCost
+показывает эффективность и в деньгах.
 
 </details>
 
@@ -1264,8 +1108,8 @@ Requests определяют число нод, то есть счёт. Limits 
 <details><summary>Ответ</summary>
 
 Подбирает requests по истории. Auto (теперь Recreate/InPlaceOrRecreate) выселяет или
-   меняет поды без контроля, конфликтует с HPA, для маленьких контейнеров завышает;
-   на практике — Off для рекомендаций или Initial.
+меняет поды без контроля, конфликтует с HPA, для маленьких контейнеров завышает;
+на практике — Off для рекомендаций или Initial.
 
 </details>
 
@@ -1274,7 +1118,7 @@ Requests определяют число нод, то есть счёт. Limits 
 <details><summary>Ответ</summary>
 
 HPA скейлит по отношению usage/request, VPA меняет request — они сбивают друг друга.
-   Можно: HPA по CPU + VPA на память, или HPA по прикладной метрике.
+Можно: HPA по CPU + VPA на память, или HPA по прикладной метрике.
 
 </details>
 
@@ -1283,7 +1127,7 @@ HPA скейлит по отношению usage/request, VPA меняет reque
 <details><summary>Ответ</summary>
 
 Guaranteed, Burstable, BestEffort — порядок вытеснения и OOM. Урезая requests, двигаешь
-   поды к вытеснению; память режут осторожно, критичному даёшь Guaranteed.
+поды к вытеснению; память режут осторожно, критичному даёшь Guaranteed.
 
 </details>
 
@@ -1300,7 +1144,7 @@ Guaranteed, Burstable, BestEffort — порядок вытеснения и OOM
 <details><summary>Ответ</summary>
 
 Изменение CPU/памяти работающего контейнера без пересоздания пода; GA в Kubernetes 1.35;
-   VPA использует его в `InPlaceOrRecreate`.
+VPA использует его в `InPlaceOrRecreate`.
 
 </details>
 
@@ -1309,9 +1153,7 @@ Guaranteed, Burstable, BestEffort — порядок вытеснения и OOM
 <details><summary>Ответ</summary>
 
 LimitRange с дефолтами и потолками, ResourceQuota, admission-политика (Kyverno)
-    «resources обязательны», шаблоны чартов с разумными дефолтами.
-
----
+«resources обязательны», шаблоны чартов с разумными дефолтами.
 
 </details>
 

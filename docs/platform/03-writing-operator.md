@@ -1,6 +1,6 @@
 ---
 title: "03. Свой оператор на Python: kopf и LinkdApp"
-description: "Блок → Platform Engineering → тема 03. Вопросы собеса: «Писали ли вы оператор?»,"
+description: "kopf: CRD LinkdApp → Deployment + Service + HTTPRoute, reconcile, статус, идемпотентность, RBAC и деплой оператора, тесты; как устроен kubebuilder"
 ---
 
 # 03. Свой оператор на Python: kopf и LinkdApp
@@ -17,15 +17,15 @@ description: "Блок → Platform Engineering → тема 03. Вопросы 
 > Версии — «проверь, сентябрь 2026»: **kopf 1.44.6** (03.06.2026), Python-клиент
 > **kubernetes 36.0.3**, стенд `kindest/node:v1.36.4`, Envoy Gateway v1.9.1 (Gateway API v1.6.1).
 
-Опирается на: CRD и паттерн контроллера — [02_crd_operators.md](/platform/02-crd-operators);
-Gateway `web` в `infra` — [../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §7;
-RBAC — [../Kubernetes/17_rbac.md](/kubernetes/17-rbac); Python, venv, пакеты — [../Python/00_INDEX.md](/python/).
+Опирается на: CRD и паттерн контроллера — [02. CRD и операторы: API платформы и паттерн контроллера](/platform/02-crd-operators);
+Gateway `web` в `infra` — [Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §7;
+RBAC — [Kubernetes: 17. RBAC](/kubernetes/17-rbac); Python, venv, пакеты — [Python](/python/).
 
 ---
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  kubectl apply shortener.yaml (LinkdApp)
         │ watch
         ▼
@@ -43,7 +43,8 @@ RBAC — [../Kubernetes/17_rbac.md](/kubernetes/17-rbac); Python, venv, паке
  Deployment shortener ── Service shortener:80 ── HTTPRoute shortener ──► Gateway infra/web
    (probes /healthz /readyz, size → ресурсы, database → LINKD_DATABASE_URL из Secret)
  удаление LinkdApp → kopf останавливает таймер и снимает свой finalizer → GC удаляет детей
-```text
+```
+
 ---
 
 ## 1. Что строим и как разложен проект
@@ -53,7 +54,7 @@ RBAC — [../Kubernetes/17_rbac.md](/kubernetes/17-rbac); Python, venv, паке
 `/healthz` (процесс жив), `/readyz` (база доступна), PostgreSQL через `LINKD_DATABASE_URL`,
 без неё — SQLite (`LINKD_DB`).
 
-```text
+```text:no-line-numbers
 linkd-operator/
 ├── linkd_operator.py        # ⚠️ не operator.py — это имя модуля стандартной библиотеки
 ├── requirements.txt         # kopf==1.44.6, kubernetes==36.0.3, prometheus-client
@@ -66,7 +67,8 @@ linkd-operator/
 └── tests/
     ├── test_children.py     # unit: чистая функция spec → манифесты, без кластера
     └── test_e2e.py          # KopfRunner против kind
-```text
+```
+
 ---
 
 ## 2. kopf за 10 минут
@@ -92,7 +94,7 @@ kopf сам делает informer, очередь, повторы и хране�
 схема status (тема 02), поэтому всё, чего в ней нет, будет вырезано — настраиваем хранение
 **только в аннотациях** со своим префиксом, а статус пишем явно через `patch.status`.
 По той же причине **не возвращаем значения** из обработчиков: kopf положил бы их в
-`status.&lt;id обработчика&gt;`, и их вырезал бы pruning.
+`status.<id обработчика>`, и их вырезал бы pruning.
 
 **Ошибки:**
 
@@ -131,13 +133,12 @@ GATEWAY = {"name": os.getenv("GATEWAY_NAME", "web"),
            "namespace": os.getenv("GATEWAY_NAMESPACE", "infra"),
            "sectionName": os.getenv("GATEWAY_LISTENER", "http")}
 SIZES = {   # команда выбирает size, а не пишет requests/limits руками
-    "small":  {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "128Mi"&#125;&#125;,
-    "medium": {"requests": {"cpu": "200m", "memory": "128Mi"}, "limits": {"memory": "256Mi"&#125;&#125;,
-    "large":  {"requests": {"cpu": "500m", "memory": "256Mi"}, "limits": {"memory": "512Mi"&#125;&#125;,
+    "small":  {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "128Mi"}},
+    "medium": {"requests": {"cpu": "200m", "memory": "128Mi"}, "limits": {"memory": "256Mi"}},
+    "large":  {"requests": {"cpu": "500m", "memory": "256Mi"}, "limits": {"memory": "512Mi"}},
 }
 RECONCILES = Counter("linkd_operator_reconcile_total", "Запуски reconcile", ["result"])
 dyn = None
-
 
 @kopf.on.startup()
 def configure(settings: kopf.OperatorSettings, **_):
@@ -154,11 +155,9 @@ def configure(settings: kopf.OperatorSettings, **_):
     settings.posting.level = logging.WARNING                 # в Events объекта — только проблемы
     start_http_server(9090)                                  # /metrics для Prometheus
 
-
 def labels(name):
     return {"app.kubernetes.io/name": "linkd", "app.kubernetes.io/instance": name,
             "app.kubernetes.io/managed-by": MANAGER}
-
 
 def desired_children(name, namespace, spec):
     """Чистая функция: spec → манифесты детей. Тестируется без кластера."""
@@ -167,10 +166,10 @@ def desired_children(name, namespace, spec):
     volumes, mounts = [], []
     if spec.get("database"):
         env.append({"name": "LINKD_DATABASE_URL",
-                    "valueFrom": {"secretKeyRef": {"name": f"{name}-db", "key": "url"&#125;&#125;})
+                    "valueFrom": {"secretKeyRef": {"name": f"{name}-db", "key": "url"}}})
     else:                                                    # учебный режим: SQLite у каждой реплики своя
         env.append({"name": "LINKD_DB", "value": "/data/linkd.db"})
-        volumes = [{"name": "data", "emptyDir": {&#125;&#125;]
+        volumes = [{"name": "data", "emptyDir": {}}]
         mounts = [{"name": "data", "mountPath": "/data"}]
 
     def probe(path):
@@ -182,7 +181,7 @@ def desired_children(name, namespace, spec):
         "env": env, "volumeMounts": mounts, "resources": SIZES[spec.get("size", "small")],
         "livenessProbe": probe("/healthz"), "readinessProbe": probe("/readyz"),
         "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
-                            "capabilities": {"drop": ["ALL"]&#125;&#125;,
+                            "capabilities": {"drop": ["ALL"]}},
     }
     deployment = {
         "apiVersion": "apps/v1", "kind": "Deployment",
@@ -190,8 +189,8 @@ def desired_children(name, namespace, spec):
         "spec": {"replicas": spec["replicas"], "selector": {"matchLabels": selector},
                  "template": {"metadata": {"labels": labels(name)},
                               "spec": {"securityContext": {"runAsNonRoot": True, "runAsUser": 10001,
-                                                           "seccompProfile": {"type": "RuntimeDefault"&#125;&#125;,
-                                       "containers": [container], "volumes": volumes&#125;&#125;},
+                                                           "seccompProfile": {"type": "RuntimeDefault"}},
+                                       "containers": [container], "volumes": volumes}}},
     }
     service = {
         "apiVersion": "v1", "kind": "Service",
@@ -202,11 +201,10 @@ def desired_children(name, namespace, spec):
         "apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
         "metadata": {"name": name, "namespace": namespace, "labels": labels(name)},
         "spec": {"parentRefs": [GATEWAY], "hostnames": [spec["host"]],
-                 "rules": [{"matches": [{"path": {"type": "PathPrefix", "value": spec.get("path", "/")&#125;&#125;],
+                 "rules": [{"matches": [{"path": {"type": "PathPrefix", "value": spec.get("path", "/")}}],
                             "backendRefs": [{"name": name, "port": 80}]}]},
     }
     return [deployment, service, route]
-
 
 def apply(obj, owner):
     """Идемпотентно: server-side apply от одного field manager. Чужой объект не перехватываем."""
@@ -226,7 +224,6 @@ def apply(obj, owner):
     return dyn.server_side_apply(res, body=obj, name=meta["name"], namespace=meta["namespace"],
                                  field_manager=MANAGER, force_conflicts=True).to_dict()
 
-
 def condition(old, type_, status, reason, message, generation):
     prev = next((c for c in old if c.get("type") == type_), None)
     changed = prev is None or prev.get("status") != status   # время перехода — только при смене статуса
@@ -234,7 +231,6 @@ def condition(old, type_, status, reason, message, generation):
     return {"type": type_, "status": status, "reason": reason, "message": message,
             "observedGeneration": generation,
             "lastTransitionTime": now if changed else prev.get("lastTransitionTime", now)}
-
 
 def reconcile(body, spec, name, namespace, status, meta, patch, logger, **_):
     gen, old = meta["generation"], (status or {}).get("conditions", [])
@@ -270,13 +266,11 @@ def reconcile(body, spec, name, namespace, status, meta, patch, logger, **_):
     RECONCILES.labels("ok").inc()
     logger.debug(f"reconciled: ready={ready}/{spec['replicas']} accepted={accepted}")
 
-
 @kopf.on.resume(*LA)
 @kopf.on.create(*LA)
 @kopf.on.update(*LA, field="spec")
 def on_change(**kwargs):
     reconcile(**kwargs)
-
 
 @kopf.timer(*LA, interval=30, initial_delay=10)
 def resync(logger, **kwargs):
@@ -286,11 +280,11 @@ def resync(logger, **kwargs):
     except kopf.PermanentError as e:                         # таймер не останавливаем — ждём исправления
         logger.warning(f"пропускаю до исправления: {e}")
 
-
 @kopf.on.delete(*LA, optional=True)          # этому обработчику finalizer не нужен (таймеру выше — нужен)
 def on_delete(name, namespace, logger, **_):
     logger.info(f"LinkdApp {namespace}/{name} удалён: детей уберёт garbage collector")
-```text
+```
+
 ---
 
 ## 4. Разбор решений
@@ -322,7 +316,7 @@ labels={"app.kubernetes.io/managed-by": MANAGER})`: реагировать на 
 
 **Про `database: true` в учебной версии.** Оператор не читает Secret (иначе ему нужны
 права `get secrets` во **всех** namespace — это доступ ко всем паролям кластера). Он только
-ссылается на Secret `&lt;имя&gt;-db` в `secretKeyRef`; нет Secret — поды в `CreateContainerConfigError`,
+ссылается на Secret `<имя>-db` в `secretKeyRef`; нет Secret — поды в `CreateContainerConfigError`,
 статус `DeploymentNotReady` с подсказкой.
 
 > ⚠️ `kopf.adopt` копирует **метки владельца** в детей (если у них нет своих с тем же ключом).
@@ -341,7 +335,8 @@ cd linkd-operator && python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 kubectl apply -f deploy/crd.yaml
 kopf run --standalone -n team-a --verbose linkd_operator.py
-```text
+```
+
 **В кластере:**
 
 ```dockerfile
@@ -357,7 +352,8 @@ RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin 
 USER 10001
 ENTRYPOINT ["kopf", "run", "--standalone", "--all-namespaces", "--log-format=json", \
             "--liveness=http://0.0.0.0:8080/healthz", "/app/linkd_operator.py"]
-```text
+```
+
 ```yaml
 # deploy/rbac.yaml — минимально необходимое
 apiVersion: v1
@@ -383,7 +379,8 @@ kind: ClusterRoleBinding
 metadata: { name: linkd-operator }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: linkd-operator }
 subjects: [{ kind: ServiceAccount, name: linkd-operator, namespace: platform }]
-```text
+```
+
 ```yaml
 # deploy/operator.yaml
 apiVersion: apps/v1
@@ -405,14 +402,16 @@ spec:
           resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 256Mi } }
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true,
                              capabilities: { drop: [ALL] } }
-```text
+```
+
 ```bash
 docker build -t linkd-operator:0.1.0 . && kind load docker-image linkd-operator:0.1.0 --name platform
 kubectl create namespace platform
 kubectl apply -f deploy/rbac.yaml -f deploy/operator.yaml
 kubectl -n platform logs deploy/linkd-operator -f
 kubectl auth can-i get secrets -A --as=system:serviceaccount:platform:linkd-operator   # no — и хорошо
-```text
+```
+
 **Несколько экземпляров и peering.** В kopf нет классического leader election: есть
 **peering** — объекты `ClusterKopfPeering`/`KopfPeering` (`kopf.dev/v1`, CRD ставятся отдельно).
 Если peering-объект `default` есть, kopf использует его автоматически; работает экземпляр
@@ -449,7 +448,8 @@ def test_route_points_to_service():
     _, svc, route = desired_children("shortener", "team-a", SPEC)
     assert route["spec"]["rules"][0]["backendRefs"][0] == {"name": svc["metadata"]["name"], "port": 80}
     assert route["spec"]["hostnames"] == ["links.team-a.example.com"]
-```text
+```
+
 **E2E** — `kopf.testing.KopfRunner` запускает оператор в фоне против **текущего** кластера
 (kind в CI):
 ```python
@@ -466,7 +466,7 @@ def test_creates_children():
         subprocess.run("kubectl delete -f examples/shortener.yaml", shell=True, check=True)
     assert runner.exit_code == 0 and runner.exception is None
     assert "deployment.apps/shortener" in out and "httproute" in out
-```text
+```
 В CI: kind-кластер с `kindest/node:v1.36.4` → Envoy Gateway → CRD → `pytest`.
 
 ---
@@ -482,7 +482,8 @@ kubebuilder init --domain example.com --repo github.com/me/linkd-operator
 kubebuilder create api --group platform --version v1alpha1 --kind LinkdApp   # types + controller
 make manifests    # controller-gen: CRD и RBAC из маркеров в комментариях
 make install run  # CRD в кластер, контроллер локально
-```text
+```
+
 ```go
 // api/v1alpha1/linkdapp_types.go — схема CRD из Go-структур и маркеров
 type LinkdAppSpec struct {
@@ -503,7 +504,7 @@ func (r *LinkdAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
     if err := r.Get(ctx, req.NamespacedName, &app); err != nil {
         return ctrl.Result{}, client.IgnoreNotFound(err)       // удалён — делать нечего
     }
-    dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Namespace&#125;&#125;
+    dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Namespace}}
     _, err := controllerutil.CreateOrUpdate(ctx, r.Client, dep, func() error {
         dep.Spec.Replicas = &app.Spec.Replicas                   // «желаемое» внутри mutate-функции
         // ... selector, template, image
@@ -528,7 +529,8 @@ func (r *LinkdAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
         Owns(&appsv1.Deployment{}).           // события по детям → reconcile владельца
         Complete(r)
 }
-```text
+```
+
 **Как читать:** `Reconcile` получает только имя (`req`) — всё перечитывает сам;
 `CreateOrUpdate` — идемпотентное «создай или приведи»; `SetControllerReference` — наш
 `kopf.adopt`; `Owns()` — наш таймер, только событийный; маркеры `+kubebuilder:rbac` →
@@ -559,39 +561,42 @@ ClusterRole, `+kubebuilder:validation` → схема CRD. Leader election вк�
 
 **Подготовка** (стенд блока): kind `platform` на `kindest/node:v1.36.4`, Envoy Gateway v1.9.1,
 GatewayClass `eg` и Gateway `web` в `infra` с `allowedRoutes` по метке `gateway-access=true`
-([../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §7.2–7.3), CRD из темы 02.
+([Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §7.2–7.3), CRD из темы 02.
 
 ```bash
 # образ linkd 2.0: Dockerfile из 04-shipyard + app/ из 09-ledger (как в 12-autopilot);
 # тег явный — CRD запрещает :latest
-docker build -t linkd:2.0.0 -f &lt;Dockerfile из 04-shipyard&gt; ~/Projects/devops/12-autopilot
+docker build -t linkd:2.0.0 -f <Dockerfile из 04-shipyard> ~/Projects/devops/12-autopilot
 kind load docker-image linkd:2.0.0 --name platform
 kubectl create namespace team-a && kubectl label namespace team-a gateway-access=true
 kopf run --standalone -n team-a --verbose linkd_operator.py      # отдельный терминал
-```text
+```
+
 ```yaml
 # examples/shortener.yaml
 apiVersion: platform.example.com/v1alpha1
 kind: LinkdApp
 metadata: { name: shortener, namespace: team-a }
 spec: { image: "linkd:2.0.0", replicas: 2, host: links.team-a.example.com }
-```text
+```
+
 ```bash
 kubectl apply -f examples/shortener.yaml
 kubectl -n team-a get la,deploy,svc,httproute          # READY True через ~20–30 с
 kubectl -n team-a get deploy shortener -o jsonpath='{.metadata.ownerReferences[0].kind}{"\n"}'
 curl -H "Host: links.team-a.example.com" localhost:8888/healthz   # port-forward — §7.6 темы 12
-```text
+```
+
 **Шаги проверки:**
 1. **Дрейф:** `kubectl -n team-a delete deploy shortener` — через ≤30 с Deployment вернулся
    (таймер). `kubectl -n team-a scale deploy shortener --replicas=5` — вернулось 2.
-2. **Update:** `kubectl -n team-a patch la shortener --type=merge -p '{"spec":{"replicas":3&#125;&#125;'` —
+2. **Update:** <code v-pre>kubectl -n team-a patch la shortener --type=merge -p '{"spec":{"replicas":3}}'</code> —
    сравни `generation` и `status.observedGeneration` до и после.
 3. **Рестарт:** останови оператор (Ctrl+C), поменяй `size: medium`, запусти снова — сработал
    `on.resume`/update, ресурсы пода изменились.
 4. **База:** `database: true` без Secret → `Ready=False`, подсказка в message; создай
    `kubectl -n team-a create secret generic shortener-db --from-literal=url=postgresql://…`
-   (учебная PostgreSQL — любая из [../Storage/06_db_backup_replication.md](/storage/06-db-backup-replication)).
+   (учебная PostgreSQL — любая из [Хранилища: 06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication)).
 5. **Конфликт:** создай руками `kubectl -n team-a create deploy blog --image=nginx`, затем LinkdApp
    `blog` → `NameConflict` в статусе, чужой Deployment не тронут.
 6. **Удаление:** `kubectl -n team-a delete la shortener` — дети исчезли (GC). Теперь останови
@@ -611,7 +616,7 @@ Gateway API ещё не установлен?
 |--------|----------------|--------------|
 | Файл `operator.py` | Конфликт со стандартным модулем `operator`, странные ошибки импорта | `linkd_operator.py` |
 | Логика в `on.create`, а `on.update` «только diff» | Пропущенные события теряются, дрейф не лечится | Один reconcile + resume + таймер |
-| Возвращать значения из обработчиков при строгой схеме status | kopf пишет их в `status.&lt;id&gt;`, pruning вырезает, «статус не обновляется» | Явно `patch.status[...]` |
+| Возвращать значения из обработчиков при строгой схеме status | kopf пишет их в `status.<id>`, pruning вырезает, «статус не обновляется» | Явно `patch.status[...]` |
 | `create` без проверки существования | 409 AlreadyExists, дубли с `generateName` | Server-side apply с фиксированным именем |
 | SSA с `force` без проверки владельца | Оператор перехватил чужой объект с тем же именем | Сверять ownerReferences, иначе `PermanentError` |
 | `PermanentError` в таймере | Таймер для объекта остановлен навсегда | Ловить в таймере, писать condition |
@@ -673,13 +678,17 @@ Gateway API ещё не установлен?
 11. Выбор: kopf — клей и прототип, kubebuilder — серьёзный оператор надолго, Metacontroller
     и shell-operator — простые случаи, Crossplane Composition — если хватает декларатива.
 
-➡️ Дальше: [04_admission_policy.md](/platform/04-admission-policy) · Задачи: 03_writing_operator_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«Писали ли вы оператор?»*, *«Как сделать reconcile идемпотентным?»*,
+> *«Что будет, если оператор лежит?»* — отвечай конкретикой: SSA, ownerReferences,
+> status с observedGeneration, finalizers, RBAC.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Какие части контроллера kopf делает за тебя, а что пишешь ты?
 
@@ -746,7 +755,7 @@ kopf не считает «существенными» для update — пат
 
 <details><summary>Ответ</summary>
 
-kopf сохранил бы возвращённое значение в `status.&lt;id обработчика&gt;`, а строгая схема
+kopf сохранил бы возвращённое значение в `status.<id обработчика>`, а строгая схема
 его вырезала бы. Статус пишем явно через `patch.status`.
 
 </details>
@@ -948,152 +957,201 @@ Crossplane Composition — если композицию можно описат
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```python
 # B1
-```text
-```text:no-line-numbers
 @kopf.on.create("platform.example.com", "v1alpha1", "linkdapps")
-```text
-```text:no-line-numbers
 def create(spec, name, namespace, **_):
-```text
-```text:no-line-numbers
     apps.create_namespaced_deployment(namespace, build(name, spec))
-```text
+```
 Вопрос: что будет при рестарте оператора посреди обработки? А при повторном событии?
 
-```text:no-line-numbers
+```python
 # B2 — строгая схема status из темы 02
-```text
-```text:no-line-numbers
 @kopf.on.create(*LA)
-```text
-```text:no-line-numbers
 def create(**_):
-```text
-```text:no-line-numbers
     return {"url": "http://links.example.com/"}
-```text
+```
 Вопрос: где окажется `url`?
 
-```text:no-line-numbers
+```text
 # B3 — оператор остановлен (kubectl scale deploy linkd-operator --replicas=0)
-```text
-```text:no-line-numbers
 kubectl -n team-a delete la shortener
-```text
+```
 Вопрос: что увидишь? Что изменится после запуска оператора?
 
-```text:no-line-numbers
+```text
 # B4 — в namespace уже есть Deployment "blog" команды (без ownerReferences)
-```text
-```text:no-line-numbers
 kubectl apply -f linkdapp-blog.yaml      # LinkdApp с именем blog
-```text
+```
 Вопрос: что сделает наш оператор? А версия без проверки владельца (SSA с `force`)?
 
-```text:no-line-numbers
+```text
 # B5 — кто-то выполнил
-```text
-```text:no-line-numbers
 kubectl -n team-a scale deploy shortener --replicas=5
-```text
+```
 Вопрос: что будет через минуту? А после `kubectl -n team-a scale la shortener --replicas=5`?
 
-```text:no-line-numbers
+```text
 # B6 — Gateway API CRD в кластере не установлены
-```text
-```text:no-line-numbers
 kubectl apply -f shortener.yaml
-```text
+```
 Вопрос: что будет с LinkdApp и логами оператора?
 
-```text:no-line-numbers
+```yaml
 # B7 — две реплики оператора, peering-объект default есть, у обеих --priority=0
-```text
+```
 Вопрос: кто работает?
 
-```text:no-line-numbers
+```python
 # B8
-```text
-```text:no-line-numbers
 @kopf.timer(*LA, interval=30)
-```text
-```text:no-line-numbers
 def resync(**kwargs):
-```text
-```text:no-line-numbers
     reconcile(**kwargs)          # без try/except
-```text
-```text:no-line-numbers
 # у объекта NameConflict → reconcile бросает PermanentError
-```text
+```
 Вопрос: что станет с таймером для этого объекта, когда конфликт устранят?
 
-```text:no-line-numbers
-# B9 — на LinkdApp есть метка app.kubernetes.io/instance=team-a-apps (ArgoCD label tracking)
 ```text
+# B9 — на LinkdApp есть метка app.kubernetes.io/instance=team-a-apps (ArgoCD label tracking)
+```
 Вопрос: чем это может обернуться для детей?
 
-```text:no-line-numbers
-# B10 — локально запущен kopf run --standalone, в кластере работает тот же оператор
 ```text
+# B10 — локально запущен kopf run --standalone, в кластере работает тот же оператор
+```
 Вопрос: что будет?
+
+<details><summary>Ответы</summary>
+
+**B1.** Рестарт после создания, но до сохранения прогресса — повторный вызов упадёт с
+409 AlreadyExists; повторное событие — то же. Нужна идемпотентность: SSA или create-or-update.
+И нет on.update/resume — изменения spec не применяются.
+
+**B2.** kopf запишет его в `status.create` (по id обработчика), схема его вырежет — `url`
+нигде не окажется.
+
+**B3.** LinkdApp получит `deletionTimestamp`, но останется из-за finalizer (таймер).
+Дети живы. После запуска оператор остановит таймер, снимет finalizer, объект удалится,
+GC удалит детей.
+
+**B4.** Наш — поставит `Ready=False` с `NameConflict` и не тронет чужой Deployment. Версия
+без проверки заберёт чужой Deployment: поменяет образ, селектор не сможет (immutable → ошибка)
+или перезапишет поля — поломка чужого сервиса.
+
+**B5.** Через ≤30 с таймер вернёт 2 реплики (поле `replicas` — наше, SSA с force).
+`scale la` меняет `spec.replicas` LinkdApp через scale subresource → update → Deployment 5 реплик.
+
+**B6.** Deployment и Service создадутся, на HTTPRoute — `TemporaryError`, повтор через 60 с;
+в логах сообщение про отсутствие API. Статус не обновится до успешного прохода (или его
+допишет следующий проход после установки CRD).
+
+**B7.** Никто: при равных приоритетах kopf замирает во всех экземплярах с предупреждением.
+
+**B8.** Таймер для этого объекта остановлен навсегда (до рестарта оператора): дрейф больше
+не лечится, статус не обновляется таймером.
+
+**B9.** `kopf.adopt` скопирует метку на Deployment/Service/HTTPRoute; ArgoCD в режиме
+label-tracking посчитает их частью Application, покажет лишними (OutOfSync) и может удалить
+при prune. Решение — `append_owner_reference` или аннотационный tracking в ArgoCD.
+
+**B10.** Два экземпляра без peering обрабатывают одни объекты: конфликтующие патчи,
+«скачущий» статус; если версии кода разные — дети переписываются туда-обратно.
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Оператор в kind
+#### C1. 🔑 Оператор в kind
 Собери проект по §1, запусти оператор локально (`kopf run --standalone -n team-a`),
 создай `shortener`. Покажи: три ребёнка с ownerReference, `kubectl get la` с READY и URL,
 `generation == observedGeneration`, curl через Envoy Gateway.
 
-### C2. 🔑 Дрейф и update
+#### C2. 🔑 Дрейф и update
 Удали Deployment руками, поменяй replicas у Deployment руками, поменяй `spec.size` у LinkdApp.
 Для каждого случая запиши, через сколько секунд и каким обработчиком (update или таймер)
 состояние вернулось. Подсказка: `--verbose` в логах показывает имя обработчика.
 
-### C3. Рестарт и resume
+<details><summary>Ответ</summary>
+
+Удаление Deployment — таймер (≤30 с). Ручной `scale deploy` — таймер. Изменение
+`spec.size` — update-обработчик сразу.
+
+</details>
+
+#### C3. Рестарт и resume
 Останови оператор, поменяй `spec.replicas`, запусти снова. Найди в логах, какой обработчик
 сработал первым. Поменяй что-то при работающем операторе и сравни.
 
-### C4. 🔑 Finalizer таймера
+#### C4. 🔑 Finalizer таймера
 Останови оператор, удали LinkdApp. Запиши `deletionTimestamp` и `finalizers`. Запусти
 оператор — объект удалился? Затем переделай оператор: убери таймер, добавь реакцию на
 удаление детей через `@kopf.on.event` (или `@kopf.on.delete` на Deployment с фильтром по
 метке `managed-by`) — пропал ли finalizer у новых объектов?
 
-### C5. Status для Gateway
+<details><summary>Ответ</summary>
+
+С таймером — finalizer `linkd.platform.example.com/finalizer`, объект висит, после
+запуска удаляется. Без таймеров и с optional delete — finalizer не ставится.
+
+</details>
+
+#### C5. Status для Gateway
 Сними с namespace метку `gateway-access`. Какой condition и message покажет LinkdApp?
 Верни метку. Сколько ждать, пока `Ready` станет `True`, и почему?
 
-### C6. База
+<details><summary>Ответ</summary>
+
+`Ready=False`, `RouteNotAccepted`, message про метку `gateway-access=true`; в HTTPRoute
+`Accepted=False` с `NotAllowedByListeners`. После возврата метки — до 30 с (таймер).
+
+</details>
+
+#### C6. База
 Создай LinkdApp с `database: true` без Secret. Опиши, что видно в статусе, в `kubectl get pods`
 и в Events. Подними учебную PostgreSQL, создай Secret `shortener-db` с ключом `url` и проверь,
 что поды стали Ready, а `/readyz` отвечает 200.
 
-### C7. 🔑 В кластер с RBAC
+#### C7. 🔑 В кластер с RBAC
 Собери образ, загрузи в kind, примени `deploy/`. Проверь `kubectl auth can-i` для SA:
 `get secrets -A` (должно быть no), `patch linkdapps/status` (yes), `delete deployments` (no).
 Убери из ClusterRole правило на `events` — что изменится в логах?
 
-### C8. Метрики
+<details><summary>Ответ</summary>
+
+Без права на events kopf пишет в логи предупреждения о неудачной публикации Events;
+reconcile работает.
+
+</details>
+
+#### C8. Метрики
 Сделай `port-forward` на 9090 и посмотри `linkd_operator_reconcile_total`. Спровоцируй
 `NameConflict` и найди рост `result="permanent_error"`. Напиши PromQL-алерт на это.
 
-### C9. Тесты
+<details><summary>Ответ</summary>
+
+`increase(linkd_operator_reconcile_total{result="permanent_error"}[10m]) > 0`.
+
+</details>
+
+#### C9. Тесты
 Добавь unit-тест: при `size: large` у контейнера `limits.memory == 512Mi`; при `path: /api`
 HTTPRoute матчит `PathPrefix /api`. Запусти e2e-тест из конспекта против kind.
 
-### C10. Новое поле (со звёздочкой)
+#### C10. Новое поле (со звёздочкой)
 Добавь в CRD и оператор поле `spec.env` (map строк, запрет `LINKD_DATABASE_URL` CEL-правилом
 из задач темы 02). Прокинь его в контейнер. Что произойдёт с уже созданными LinkdApp после
 обновления CRD и оператора?
 
-### C11. Прочитай Go
+<details><summary>Ответ</summary>
+
+Старые объекты без `env` продолжат работать (поле необязательное). После обновления
+CRD API примет поле; оператор при resume/таймере применит детей с новым кодом.
+
+</details>
+
+#### C11. Прочитай Go
 Открой контроллер cert-manager или CloudNativePG на GitHub, найди функцию `Reconcile` и
 `SetupWithManager`. Выпиши: какие типы в `For`/`Owns`, где ставятся conditions, есть ли
 `RequeueAfter`, как обрабатывается удаление (finalizer).
@@ -1101,7 +1159,6 @@ HTTPRoute матчит `PathPrefix /api`. Запусти e2e-тест из ко�
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Оператор в `CrashLoopBackOff`, в логах `403 Forbidden ... customresourcedefinitions`.
 Что не так?
@@ -1184,13 +1241,12 @@ LinkdApp с finalizer (таймер) не удалились без операт
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Расскажите, как устроен ваш оператор: какие события, что создаёт, как пишет статус.
 
 <details><summary>Ответ</summary>
 
 LinkdApp → create/update/resume + таймер → SSA детей с ownerReference → status
-   с conditions и observedGeneration; дрейф лечит таймер.
+с conditions и observedGeneration; дрейф лечит таймер.
 
 </details>
 
@@ -1199,7 +1255,7 @@ LinkdApp → create/update/resume + таймер → SSA детей с ownerRefe
 <details><summary>Ответ</summary>
 
 Детерминированные имена, SSA с одним field manager, reconcile по полному spec, проверка
-   владельца.
+владельца.
 
 </details>
 
@@ -1208,7 +1264,7 @@ LinkdApp → create/update/resume + таймер → SSA детей с ownerRefe
 <details><summary>Ответ</summary>
 
 Упал — перезапустится, resume и таймер догонят. Час без него — ресурсы работают, изменения
-   и удаления CR ждут (finalizer), статус устаревает.
+и удаления CR ждут (finalizer), статус устаревает.
 
 </details>
 
@@ -1225,7 +1281,7 @@ LinkdApp → create/update/resume + таймер → SSA детей с ownerRefe
 <details><summary>Ответ</summary>
 
 ClusterRole только на свои типы и детей, без delete и без чтения Secret; проверка
-   `kubectl auth can-i`.
+`kubectl auth can-i`.
 
 </details>
 
@@ -1242,7 +1298,7 @@ pytest на чистые функции, e2e через `KopfRunner` в kind в 
 <details><summary>Ответ</summary>
 
 Команда пишет на Python, оператор — клей на сотни строк; Go — для масштаба, экосистемы,
-   публичного оператора.
+публичного оператора.
 
 </details>
 
@@ -1251,8 +1307,8 @@ pytest на чистые функции, e2e через `KopfRunner` в kind в 
 <details><summary>Ответ</summary>
 
 Get (IgnoreNotFound) → finalizer при необходимости → CreateOrUpdate детей
-   с SetControllerReference → статус детей → SetStatusCondition + ObservedGeneration →
-   Status().Update → Result/RequeueAfter или ошибка для повтора.
+с SetControllerReference → статус детей → SetStatusCondition + ObservedGeneration →
+Status().Update → Result/RequeueAfter или ошибка для повтора.
 
 </details>
 
@@ -1269,9 +1325,7 @@ Peering с разными приоритетами (kopf) или leader election
 <details><summary>Ответ</summary>
 
 Больше кода, свой жизненный цикл, дежурство, finalizers; Helm и Composition декларативны
-    и не требуют своего процесса.
-
----
+и не требуют своего процесса.
 
 </details>
 

@@ -1,12 +1,12 @@
 ---
 title: "07. Практика: 5 лаб по виртуализации on-prem"
-description: "Блок → Виртуализация on-prem → практика."
+description: "5 лаб: VM из облачного образа, bond + VLAN + bridge, Proxmox вложенно, учения бэкап/восстановление, Terraform + Ansible"
 ---
 
 # 07. Практика: 5 лаб по виртуализации on-prem
 
 > Блок → Виртуализация on-prem → практика.
-> Лабы делаются на стенде из [00_INDEX.md](/virtualization/) (хост с libvirt/KVM, сеть `virt-lab`,
+> Лабы делаются на стенде из [Виртуализация](/virtualization/) (хост с libvirt/KVM, сеть `virt-lab`,
 > облачный образ Ubuntu 24.04 в пуле `default`) и остаются в git: `~/labs/virt/`.
 > После них есть что показать на собесе: скрипт VM из облачного образа, сеть «bond + VLAN +
 > bridge» с доказанной изоляцией, свой Proxmox с шаблоном, отработанное восстановление из
@@ -39,12 +39,12 @@ description: "Блок → Виртуализация on-prem → практик
 ### Каркас
 ```bash
 mkdir -p ~/labs/virt/lab1 && cd ~/labs/virt/lab1
-```text
+```
 ```bash
 #!/usr/bin/env bash
-# create-vm.sh &lt;name&gt; [memory_mb] [vcpus] — VM из облачного образа в сети virt-lab
+# create-vm.sh <name> [memory_mb] [vcpus] — VM из облачного образа в сети virt-lab
 set -euo pipefail
-NAME=${1:?usage: $0 &lt;name&gt; [memory_mb] [vcpus]}
+NAME=${1:?usage: $0 <name> [memory_mb] [vcpus]}
 MEM=${2:-2048}
 CPUS=${3:-2}
 BASE=/var/lib/libvirt/images/noble-base.qcow2
@@ -56,7 +56,7 @@ virsh dominfo "$NAME" &>/dev/null && { echo "VM $NAME уже есть" >&2; exit
 virsh vol-create-as default "$NAME.qcow2" 20G --format qcow2 \
   --backing-vol "$BASE" --backing-vol-format qcow2 >/dev/null
 
-cat > "$WORK/user-data" <&lt;EOF
+cat > "$WORK/user-data" <<EOF
 #cloud-config
 hostname: $NAME
 users:
@@ -70,7 +70,7 @@ packages: [qemu-guest-agent]
 runcmd:
   - [systemctl, start, qemu-guest-agent]
 EOF
-printf 'instance-id: %s-%s\nlocal-hostname: %s\n' "$NAME" "$(date +%s)" "$NAME"&gt; "$WORK/meta-data"
+printf 'instance-id: %s-%s\nlocal-hostname: %s\n' "$NAME" "$(date +%s)" "$NAME" > "$WORK/meta-data"
 cp "$WORK/user-data" "$(dirname "$0")/user-data.example"     # образец с твоим ключом для лаб 2–5
 
 virt-install --name "$NAME" --memory "$MEM" --vcpus "$CPUS" --osinfo ubuntu24.04 \
@@ -86,19 +86,20 @@ for _ in $(seq 60); do
   echo -n .; sleep 2
 done
 echo; echo "$NAME → ${IP:-нет IP, смотри: virsh console $NAME}"
-```text
+```
 ```bash
 #!/usr/bin/env bash
-# destroy-vm.sh &lt;name&gt; — удалить VM вместе с дисками (база остаётся)
+# destroy-vm.sh <name> — удалить VM вместе с дисками (база остаётся)
 set -euo pipefail
-NAME=${1:?usage: $0 &lt;name&gt;}
+NAME=${1:?usage: $0 <name>}
 virsh destroy "$NAME" 2>/dev/null || true
 virsh undefine "$NAME" --remove-all-storage --snapshots-metadata
-```text
+```
 ```bash
 chmod +x create-vm.sh destroy-vm.sh
 ./create-vm.sh lab1-a && ./create-vm.sh lab1-b 1024 1
-```text
+```
+
 ### Требования
 - [ ] Скрипты написаны руками, каждая строка объяснима; повторный запуск с тем же именем — понятная ошибка
 - [ ] VM готова (SSH по ключу, `cloud-init status: done`) быстрее, чем за 2 минуты
@@ -116,12 +117,13 @@ chmod +x create-vm.sh destroy-vm.sh
 ip_of() { virsh domifaddr "$1" | awk '/ipv4/ {sub(/\/.*/, "", $4); print $4; exit}'; }
 virsh list --all | grep lab1-
 ssh devops@"$(ip_of lab1-a)" 'hostname; cloud-init status; systemctl is-active qemu-guest-agent; df -h / | tail -1'
-virsh qemu-agent-command lab1-a '{"execute":"guest-ping"}'          # {"return":{&#125;&#125;
+virsh qemu-agent-command lab1-a '{"execute":"guest-ping"}'          # {"return":{}}
 virsh snapshot-list lab1-a
 qemu-img info -U --backing-chain /var/lib/libvirt/images/lab1-a.qcow2 | grep -E '^image:|backing file:'
 virsh net-dumpxml virt-lab | grep "name='lab1-a'"                   # резерв DHCP
 ./destroy-vm.sh lab1-b && virsh vol-list default | grep -c lab1-b   # 0
-```text
+```
+
 ### Вопросы себе
 - Что произойдёт с `lab1-a`, если удалить или изменить `noble-base.qcow2`?
 - Почему `instance-id` в скрипте содержит время, и что будет, если сделать его постоянным?
@@ -138,29 +140,30 @@ virsh net-dumpxml virt-lab | grep "name='lab1-a'"                   # резер
 типовую схему из темы 03: `bond0` (active-backup) → `bond0.10`, `bond0.20` → `br10`, `br20`.
 Доказываем связность внутри VLAN, изоляцию между VLAN (ping + tcpdump с тегами) и failover бонда.
 
-```text
+```text:no-line-numbers
    hv1                                         hv2
    mgmt0 ── virt-lab (SSH) ──────────────────── mgmt0
    trunk0 ─┐                               ┌── trunk0
            ├ bond0 ═══ lab-trunk (L2) ═══ bond0 ┤
    trunk1 ─┘   ├ bond0.10 ─ br10 10.0.10.1 ◄──► 10.0.10.2 br10 ─ bond0.10 ┤
                └ bond0.20 ─ br20 10.0.20.1 ◄──► 10.0.20.2 br20 ─ bond0.20 ┘  └── trunk1
-```text
+```
+
 ### Каркас
 ```bash
 mkdir -p ~/labs/virt/lab2 && cd ~/labs/virt/lab2
 cat > lab-trunk.xml <<'EOF'
-&lt;network&gt;
-  &lt;name&gt;lab-trunk</name>
-  &lt;bridge name='virbr-trunk' stp='off' delay='0'/&gt;
+<network>
+  <name>lab-trunk</name>
+  <bridge name='virbr-trunk' stp='off' delay='0'/>
 </network>
 EOF
 virsh net-define lab-trunk.xml && virsh net-start lab-trunk && virsh net-autostart lab-trunk
-```text
+```
 ```bash
 # на каждую VM: свой network-config (N=1 для hv1, N=2 для hv2)
 for N in 1 2; do
-cat > net-hv$N.yaml <&lt;EOF
+cat > net-hv$N.yaml <<EOF
 version: 2
 ethernets:
   mgmt0:
@@ -178,7 +181,7 @@ ethernets:
     dhcp4: false
     optional: true
 EOF
-printf 'instance-id: hv%s-001\nlocal-hostname: hv%s\n' "$N" "$N"&gt; meta-hv$N.yaml
+printf 'instance-id: hv%s-001\nlocal-hostname: hv%s\n' "$N" "$N" > meta-hv$N.yaml
 sed "s/^hostname: .*/hostname: hv$N/" ../lab1/user-data.example > user-hv$N.yaml   # или напиши user-data как в лабе 1
 
 virsh vol-create-as default hv$N.qcow2 20G --format qcow2 \
@@ -191,7 +194,7 @@ virt-install --name hv$N --memory 1024 --vcpus 1 --osinfo ubuntu24.04 \
   --cloud-init user-data=user-hv$N.yaml,meta-data=meta-hv$N.yaml,network-config=net-hv$N.yaml \
   --import --graphics none --noautoconsole
 done
-```text
+```
 > `lab1/user-data.example` оставляет `create-vm.sh` из лабы 1 — это готовый user-data
 > с твоим ключом; здесь в нём меняется только `hostname`.
 
@@ -208,7 +211,8 @@ for v in 10 20; do
   sudo ip addr add 10.0.$v.1/24 dev br$v
 done
 cat /proc/net/bonding/bond0
-```text
+```
+
 **Шаг 2 — постоянно (netplan)**: перезагрузи VM (ручная конфигурация исчезнет) и положи файл:
 ```yaml
 # /etc/netplan/60-lab.yaml на hv1 (на hv2 — адреса .2); chmod 600
@@ -234,10 +238,10 @@ network:
       interfaces: [bond0.20]
       addresses: [10.0.20.1/24]
       parameters: { stp: false, forward-delay: 0 }
-```text
+```
 ```bash
 sudo netplan try          # автооткат через 120 с, если связь (mgmt0) пропадёт
-```text
+```
 `trunk0`/`trunk1` уже описаны в `50-cloud-init.yaml` — netplan склеивает все файлы в одну
 конфигурацию, поэтому в `60-lab.yaml` на них можно ссылаться.
 
@@ -246,11 +250,11 @@ sudo netplan try          # автооткат через 120 с, если св�
 - [ ] `hv1 ↔ hv2` пингуются в VLAN 10 и в VLAN 20
 - [ ] Изоляция доказана: адрес `10.0.10.99/24` на `br20` у `hv1` → `ping -I br20 10.0.10.2` — 100% потерь
 - [ ] На хосте `tcpdump -e` на vnet-интерфейсе транка показывает теги `vlan 10` и `vlan 20`
-- [ ] Failover: `virsh domif-setlink hv1 &lt;vnet активного слейва&gt; down` при идущем `ping -i 0.2` —
+- [ ] Failover: `virsh domif-setlink hv1 <vnet активного слейва> down` при идущем `ping -i 0.2` —
       потеряно не больше нескольких пакетов; в `/proc/net/bonding/bond0` сменился активный слейв
 - [ ] Показано, что будет, если на `hv2` перепутать VLAN (20 → 30): связи нет, в tcpdump видно `vlan 30`
 - [ ] Бонус: вместо двух бриджей — один VLAN-aware `br0` с network namespace-«VM» в VLAN 10 и 20
-- [ ] Бонус: MTU 9000 на всём пути (`&lt;mtu size='9000'/&gt;` в `lab-trunk` и во всех интерфейсах VM),
+- [ ] Бонус: MTU 9000 на всём пути (`<mtu size='9000'/>` в `lab-trunk` и во всех интерфейсах VM),
       проверка `ping -M do -s 8972`
 
 ### Критерии приёмки
@@ -261,8 +265,9 @@ ssh devops@$H1 'grep -E "Bonding Mode|Currently Active" /proc/net/bonding/bond0'
 ssh devops@$H1 'ping -c3 -W1 10.0.10.2 && ping -c3 -W1 10.0.20.2'
 ssh devops@$H1 'ping -c3 -W1 -I br20 10.0.10.2; echo "exit=$?"'     # exit=1 — изоляция
 virsh domiflist hv1                                                  # найди vnet для MAC ...:01:01
-sudo tcpdump -eni &lt;vnetX&gt; -c 20 vlan 2>/dev/null | grep -oE 'vlan (10|20)' | sort -u
-```text
+sudo tcpdump -eni <vnetX> -c 20 vlan 2>/dev/null | grep -oE 'vlan (10|20)' | sort -u
+```
+
 ### Вопросы себе
 - Почему бридж `virbr-trunk` на хосте пропускает кадры с тегами, хотя VLAN на нём не настроены?
 - Что изменится, если вместо active-backup поставить `802.3ad`? Заработает ли на `lab-trunk`?
@@ -279,24 +284,25 @@ sudo tcpdump -eni &lt;vnetX&gt; -c 20 vlan 2>/dev/null | grep -oE 'vlan (10|20)'
 LXC-контейнер. Всё — по командам тем 04 и 05, но руками от начала до конца.
 
 ### Каркас
-```text
+```text:no-line-numbers
 ~/labs/virt/lab3/
 ├── install.md          # параметры virt-install, ответы установщику, проверка nested
 ├── bootstrap.sh        # запускается на pve1: репозитории, full-upgrade, шаблон 9000
 ├── clones.sh           # запускается на pve1: app1..app3 + ct1
 └── notes.md            # что пошло не так и как починил
-```text
-1. **Установка** — [04_proxmox.md](/virtualization/04-proxmox), раздел 2 (`pve1`: 4 vCPU, 8 ГБ, 64 ГБ,
+```
+1. **Установка** — [04. Proxmox VE: VM, LXC, шаблоны, хранилища, кластер, HA, бэкапы, API](/virtualization/04-proxmox), раздел 2 (`pve1`: 4 vCPU, 8 ГБ, 64 ГБ,
    `host-passthrough`, `10.10.10.11`).
 2. **Репозитории** — раздел 3 (deb822, `pve-no-subscription`, `apt full-upgrade`).
 3. **Шаблон** — раздел 6 (`import-from`, `ide2 ...:cloudinit`, serial, агент через `virt-customize`).
 4. **Клоны** — раздел 6 (цикл `qm clone` + `ipconfig0` `10.10.10.21–23`).
-5. **LXC** — [05_lxc_containers.md](/virtualization/05-lxc-containers), раздел 6 (`pveam`, `pct create`, unprivileged, `nesting=1`).
+5. **LXC** — [05. Системные контейнеры: LXC, Incus, LXC в Proxmox](/virtualization/05-lxc-containers), раздел 6 (`pveam`, `pct create`, unprivileged, `nesting=1`).
 
 ```bash
 # на хосте перед началом и после каждого успешного шага
 virsh snapshot-create-as pve1 --name step-N-ok
-```text
+```
+
 ### Требования
 - [ ] `pve1` установлен, внутри `grep -cE 'vmx|svm' /proc/cpuinfo` > 0, VM в Proxmox работают на KVM
 - [ ] `apt update` без ошибок 401, узел обновлён через `full-upgrade`, enterprise-репозитории выключены через `Enabled: no`
@@ -316,7 +322,8 @@ ssh root@10.10.10.11 "pvesh get /cluster/resources --type vm --output-format jso
   | jq -r '.[] | "\(.vmid) \(.name) \(.status) \(.type)"'
 for i in 1 2 3; do ssh -o ConnectTimeout=5 devops@10.10.10.2$i hostname; done
 ssh root@10.10.10.11 'qm guest cmd 101 network-get-interfaces' | jq -r '.[].["ip-addresses"][]?."ip-address"'
-```text
+```
+
 ### Вопросы себе
 - Что сломается у клонов, если удалить шаблон 9000? А если его склонировать `--full`?
 - Почему для облачного образа обязательно `--serial0 socket --vga serial0`?
@@ -334,19 +341,19 @@ RPO — сколько данных можем потерять), делаем �
 с восстановлением одного файла.
 
 ### Каркас
-```text
+```text:no-line-numbers
 ~/labs/virt/lab4/
 ├── plan.md               # цели RTO/RPO, что бэкапим, сценарии, критерий успеха
 ├── runbooks/restore-vm.md
 └── drill-2026-10-xx.md   # протокол: время каждого шага, что пошло не так
-```text
+```
 ```bash
 # 1. данные-маркеры (на app1 и ct1)
 ssh devops@10.10.10.21 'date -Is | sudo tee /var/tmp/marker; sudo apt-get -y install nginx'
 ssh root@10.10.10.11 'pct exec 200 -- sh -c "date -Is > /root/marker"'
 
 # 2. бэкапы
-ssh root@10.10.10.11 'vzdump 101 --storage local --mode snapshot --compress zstd --notes-template "&#123;&#123;guestname&#125;&#125; drill"'
+ssh root@10.10.10.11 'vzdump 101 --storage local --mode snapshot --compress zstd --notes-template "{{guestname}} drill"'
 ssh root@10.10.10.11 'vzdump 200 --storage local --mode snapshot --compress zstd'
 ssh root@10.10.10.11 'ls -lh /var/lib/vz/dump/'
 
@@ -355,7 +362,7 @@ ssh root@10.10.10.11 'qm stop 101 && qm destroy 101 --purge'
 ssh root@10.10.10.11 'pct stop 200 && pct destroy 200 --purge'
 
 # 4. восстановление — строго по своему runbook'у (qmrestore / pct restore, раздел 12 темы 04)
-```text
+```
 **Бонус — PBS:** VM `pbs01` на хосте из `proxmox-backup-server_4.2-1.iso` (2 vCPU, 4 ГБ,
 диск 32 ГБ + второй диск 64 ГБ под datastore, адрес `10.10.10.20`). В веб-интерфейсе PBS
 (`https://10.10.10.20:8007`): Administration → Storage/Disks → Directory → Create на втором
@@ -383,7 +390,8 @@ ssh root@10.10.10.11 'pct exec 200 -- cat /root/marker'
 ssh root@10.10.10.11 'cat /etc/pve/jobs.cfg'
 # бонус PBS
 ssh root@10.10.10.11 'pvesm status | grep pbs; pvesm list pbs01 | tail -3'
-```text
+```
+
 ### Вопросы себе
 - Какое RPO у ежедневного бэкапа в 02:00 и что делать, если бизнесу нужно 15 минут?
 - Почему бэкап на `local` того же узла не защищает от отказа узла? Как выглядит 3-2-1 для этого стенда?
@@ -397,11 +405,11 @@ ssh root@10.10.10.11 'pvesm status | grep pbs; pvesm list pbs01 | tail -3'
 ### Что делаем
 Одной командой `make all` из пустоты получаем две VM `web1`, `web2` в libvirt (Terraform,
 провайдер dmacvicar/libvirt 0.9), настроенные Ansible'ом через динамический inventory:
-nginx со страницей «hello from &lt;имя&gt;». `make down` убирает всё. Бонус — то же в Proxmox
+nginx со страницей «hello from &lt;имя>». `make down` убирает всё. Бонус — то же в Proxmox
 (bpg/proxmox + inventory community.proxmox по тегам) и базовый образ из Packer.
 
 ### Каркас
-```text
+```text:no-line-numbers
 ~/labs/virt/lab5/
 ├── Makefile
 ├── terraform/
@@ -411,7 +419,7 @@ nginx со страницей «hello from &lt;имя&gt;». `make down` уби�
     ├── ansible.cfg
     ├── inventory/kvm.libvirt.yml   # из темы 06, раздел 7
     └── site.yml
-```text
+```
 ```makefile
 # Makefile (отступы в рецептах — табами)
 .PHONY: all up config check down
@@ -428,7 +436,7 @@ check:
 
 down:
 	cd terraform && terraform destroy -auto-approve
-```text
+```
 ```ini
 # ansible/ansible.cfg
 [defaults]
@@ -436,7 +444,7 @@ inventory = inventory/kvm.libvirt.yml
 remote_user = devops
 # только для стенда: VM пересоздаются с новыми host keys
 host_key_checking = False
-```text
+```
 ```yaml
 # ansible/site.yml
 - name: Веб-серверы
@@ -464,13 +472,14 @@ host_key_checking = False
     - name: Страница
       ansible.builtin.copy:
         dest: /var/www/html/index.html
-        content: "hello from &#123;&#123; inventory_hostname &#125;&#125; (&#123;&#123; ansible_default_ipv4.address &#125;&#125;)\n"
+        content: "hello from {{ inventory_hostname }} ({{ ansible_default_ipv4.address }})\n"
         mode: "0644"
-```text
+```
 ```bash
 ansible-galaxy collection install community.libvirt     # ≥ 2.3.0 для опции filter
 python3 -c 'import libvirt' || sudo apt install -y python3-libvirt   # модуль — в Python Ansible'а
-```text
+```
+
 ### Требования
 - [ ] `make all` на чистом стенде создаёт 2 VM и выводит две строки `hello from web1/web2`
 - [ ] Inventory динамический: `ansible-inventory --graph` показывает `web1`, `web2` без ручных IP
@@ -492,7 +501,8 @@ make all
 make check                        # hello from web1 (...) / hello from web2 (...)
 make down && virsh list --all | grep -c web                                       # 0
 git status --short | grep -c tfstate                                              # 0
-```text
+```
+
 ### Вопросы себе
 - Что произойдёт, если запустить `make config` до окончания cloud-init без задачи `cloud-init status --wait`?
 - Почему плагин libvirt без `compose: ansible_connection` пытается ходить через guest agent?
@@ -503,7 +513,7 @@ git status --short | grep -c tfstate                                            
 
 ## 🏁 Что должно остаться после блока
 
-```text
+```text:no-line-numbers
 ~/labs/virt/                       # репозиторий блока
 ├── lab1/create-vm.sh, destroy-vm.sh, user-data.example
 ├── lab2/lab-trunk.xml, net-hv*.yaml, 60-lab.yaml, tcpdump-vlan.txt
@@ -511,9 +521,8 @@ git status --short | grep -c tfstate                                            
 ├── lab4/plan.md, runbooks/restore-vm.md, drill-*.md
 ├── lab5/Makefile, terraform/, ansible/
 └── automation/packer/noble.pkr.hcl    # golden image (тема 06)
-```text
+```
+
 Это превращает «знаю, что такое KVM и Proxmox» в «вот скрипт VM из облачного образа, вот сеть
 с bond и VLAN, где изоляция доказана tcpdump'ом, вот протокол учений восстановления с RTO
 и вот VM, которые создаются и настраиваются одной командой».
-
-➡️ Дальше: [08_interview.md](/mlops/08-interview)

@@ -220,8 +220,8 @@ spot для батчей, lifecycle-политики в хранилище, ко
 > 💡 Учить стоит понятия, а руками работать там, где есть доступ и бесплатный старт
 > (Free plan у AWS, грант у Yandex Cloud, trial у локального провайдера — условия
 > меняются, смотри на сайте на момент регистрации). Глубже:
-> [08_aws_deep.md](/cloud/08-aws-deep) · [09_yandex_cloud.md](/cloud/09-yandex-cloud) ·
-> [10_kz_clouds.md](/cloud/10-kz-clouds).
+> [08. AWS глубже](/cloud/08-aws-deep) · [09. Yandex Cloud глубже](/cloud/09-yandex-cloud) ·
+> [10. Казахстанские облака](/cloud/10-kz-clouds).
 
 ---
 

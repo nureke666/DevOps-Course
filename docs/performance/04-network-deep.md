@@ -1,16 +1,16 @@
 ---
 title: "04. Сеть глубже: очереди, TIMEWAIT, conntrack и дропы"
-description: "Блок → Deep Linux Troubleshooting & Performance → тема 04. Опирается на"
+description: "ss -ti, TIME_WAIT, SYN/accept queue, retransmits, conntrack, fd-утечки, дропы NIC"
 ---
 
 # 04. Сеть глубже: очереди, TIME_WAIT, conntrack и дропы
 
 > Блок → Deep Linux Troubleshooting & Performance → тема 04. Опирается на
-> [../Network/04_l4_tcp_udp.md](/network/04-l4-tcp-udp) (состояния TCP, TIME_WAIT vs CLOSE_WAIT, эфемерные порты),
-> [../Network/09_net_tools.md](/network/09-net-tools) (ss, nc, curl),
-> [../Network/10_tcpdump_wireshark.md](/network/10-tcpdump-wireshark) (фильтры, чтение вывода, ротация),
-> [../Network/11_firewall_iptables.md](/network/11-firewall-iptables) (netfilter, conntrack),
-> [../Linux/12_kernel.md](/linux/12-kernel) (sysctl, ulimit) и [01_methodology.md](/performance/01-methodology) (USE для сети).
+> [Сети: 04. L4: TCP и UDP](/network/04-l4-tcp-udp) (состояния TCP, TIME_WAIT vs CLOSE_WAIT, эфемерные порты),
+> [Сети: 09. Утилиты диагностики](/network/09-net-tools) (ss, nc, curl),
+> [Сети: 10. tcpdump и Wireshark](/network/10-tcpdump-wireshark) (фильтры, чтение вывода, ротация),
+> [Сети: 11. Файрвол: iptables/nftables](/network/11-firewall-iptables) (netfilter, conntrack),
+> [Linux: 12. Ядро Linux](/linux/12-kernel) (sysctl, ulimit) и [01. Методология: USE, «60 секунд» и load average](/performance/01-methodology) (USE для сети).
 >
 > **После темы ты умеешь:** читать `ss -ti` по полям (rtt, cwnd, retrans), считать предел
 > эфемерных портов, находить переполнение SYN- и accept-очереди по счётчикам ядра, ловить
@@ -22,7 +22,7 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  провод ─► NIC ring buffer ─► softirq / backlog ─► netfilter + conntrack ─► TCP ─────────► приложение
            ip -s link          /proc/net/          conntrack -S            │
            ethtool -S          softnet_stat        dmesg «table full»      │ SYN ──► SYN queue (SYN-RECV)
@@ -35,7 +35,8 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
                                                сокет: rtt, cwnd, retrans (ss -ti), fd (ulimit -n)
  исходящие: эфемерный порт (ip_local_port_range) ─► TIME_WAIT 60 с на закрывшей стороне
  + DNS перед каждым «новым» соединением (resolv.conf, ndots, таймауты)
-```text
+```
+
 Каждая ступень может молча выбросить пакет. Приложение увидит только таймаут или
 «медленно». Задача темы — знать, какой счётчик на какой ступени растёт.
 
@@ -56,12 +57,13 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
 nstat -az 'TcpExtListen*'       # абсолютные значения (-a) включая нули (-z), по шаблону
 nstat -n                        # запомнить текущие значения, ничего не печатать
 sleep 10; nstat                 # приращения за эти 10 секунд (только ненулевые)
-```text
+```
+
 ---
 
 ## 2. `ss` глубже: что внутри соединения
 
-Базовые флаги и состояния — в [../Network/04_l4_tcp_udp.md](/network/04-l4-tcp-udp). Здесь — поля
+Базовые флаги и состояния — в [Сети: 04. L4: TCP и UDP](/network/04-l4-tcp-udp). Здесь — поля
 `-i` и приёмы для разбора.
 
 ```bash
@@ -69,21 +71,24 @@ ss -s                                    # сводка: сколько estab, t
 ss -tanp                                 # все TCP, с процессами
 ss -tinp state established '( dport = :5432 )'    # внутренности соединений к PostgreSQL
 ss -tino                                 # + таймеры: timer:(on,…) = идёт ретрансмит
-ss -tm                                   # память сокетов: skmem:(…,d&lt;drops&gt;)
+ss -tm                                   # память сокетов: skmem:(…,d<drops>)
 ss -tan | awk 'NR>1 {print $1}' | sort | uniq -c | sort -rn   # распределение по состояниям
-```text
-```text
+```
+
+```
 # пример вывода ss -s
 Total: 1369
 TCP:   545 (estab 104, closed 397, orphaned 1, timewait 65)
-```text
-```text
+```
+
+```
 # пример вывода ss -tin (одно соединение с потерями, разбито на строки для чтения)
 ESTAB 0 0 10.0.2.15:44120 10.0.2.20:5432
    cubic wscale:7,7 rto:412 backoff:1 rtt:205.3/48.1 mss:1448 cwnd:4 ssthresh:7
    bytes_sent:1822030 bytes_retrans:94120 bytes_acked:1726410
    send 225645bps delivery_rate 181200bps busy:18204ms unacked:3 retrans:1/65 lost:1 minrtt:0.412
-```text
+```
+
 | Поле | Что значит | Тревожный признак |
 |------|-----------|-------------------|
 | `rtt:205.3/48.1` | Сглаженный RTT / разброс, мс | RTT ≫ `minrtt` → очереди на пути (bufferbloat) или перегруз получателя |
@@ -105,17 +110,17 @@ ESTAB 0 0 10.0.2.15:44120 10.0.2.20:5432
 
 ## 3. TIME_WAIT и исчерпание эфемерных портов
 
-Что такое TIME_WAIT и почему он нормален — в [../Network/04_l4_tcp_udp.md](/network/04-l4-tcp-udp).
+Что такое TIME_WAIT и почему он нормален — в [Сети: 04. L4: TCP и UDP](/network/04-l4-tcp-udp).
 Здесь — арифметика и лечение.
 
 Соединение уникально по четвёрке `(src IP, src port, dst IP, dst port)`. Для исходящих
 соединений **к одному и тому же** `dst IP:port` с одного `src IP` меняется только src port:
 
-```text
+```text:no-line-numbers
  ip_local_port_range = 32768 60999  →  60999 − 32768 + 1 = 28 232 порта
  TIME_WAIT длится 60 с (константа ядра, sysctl не меняет)
  предел новых соединений к ОДНОМУ backend:  28 232 / 60 ≈ 470 в секунду
-```text
+```
 Сервис делает 800 коротких HTTP-запросов/с к одному upstream без keep-alive — через
 минуту `connect()` начнёт падать с `EADDRNOTAVAIL` («Cannot assign requested address»).
 TIME_WAIT живёт на стороне, **которая закрыла соединение первой**: у клиента, если закрывает
@@ -125,7 +130,8 @@ TIME_WAIT живёт на стороне, **которая закрыла сое
 ss -tan state time-wait | wc -l                                  # сколько TIME_WAIT
 ss -tan state time-wait | awk 'NR>1 {print $4}' | sort | uniq -c | sort -rn | head   # к кому
 sysctl net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse net.ipv4.tcp_max_tw_buckets
-```text
+```
+
 | Лечение | Когда |
 |---------|-------|
 | ⭐ Keep-alive и пулы соединений в клиенте (HTTP, БД) | Всегда первое: нет новых соединений — нет TIME_WAIT |
@@ -143,7 +149,7 @@ sysctl net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse net.ipv4.tcp_max_tw_bu
 
 ## 4. SYN queue и accept queue: соединения теряются до `accept()`
 
-```text
+```text:no-line-numbers
  клиент                        ядро сервера                                 приложение
    SYN ───────────────► SYN queue (SYN-RECV)  предел: tcp_max_syn_backlog
                         переполнена → syncookies (tcp_syncookies=1) или drop
@@ -153,17 +159,18 @@ sysctl net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse net.ipv4.tcp_max_tw_bu
                                               │ accept()
                                               ▼
                                          воркер приложения
-```text
+```
+
 Для **LISTEN**-сокета колонки `ss` означают другое, чем для соединения:
 
 ```bash
 ss -lnt '( sport = :8080 )'
-```text
-```text
+```
+```
 # пример вывода: приложение не успевает принимать соединения
 State  Recv-Q Send-Q Local Address:Port Peer Address:Port
 LISTEN 129    128          0.0.0.0:8080      0.0.0.0:*
-```text
+```
 `Recv-Q` — сколько установленных соединений **сейчас** ждут `accept()`; `Send-Q` — размер
 очереди (backlog). `Recv-Q` у потолка = очередь переполнена.
 
@@ -173,7 +180,8 @@ nstat -n; sleep 10; nstat 'TcpExtListen*'   # растут ли прямо се�
 dmesg -T | grep -i 'SYN flooding'  # «Possible SYN flooding on port 8080. Sending cookies.»
 sysctl net.core.somaxconn net.ipv4.tcp_max_syn_backlog net.ipv4.tcp_syncookies net.ipv4.tcp_abort_on_overflow
 sudo tcpsynbl-bpfcc                # гистограмма длины очереди у слушающих сокетов (тема 07)
-```text
+```
+
 | Счётчик / сообщение | Что значит |
 |---------------------|-----------|
 | `TcpExtListenOverflows` растёт | Accept queue полна: приложение медленно вызывает `accept()` |
@@ -207,13 +215,15 @@ backlog в приложении (например, `listen 80 backlog=4096;` в 
 nstat -az TcpOutSegs TcpRetransSegs TcpExtTCPSynRetrans TcpExtTCPTimeouts TcpExtTCPLostRetransmit
 sar -n TCP,ETCP 1                  # retrans/s в динамике; история: sar -n ETCP -f /var/log/sysstat/saDD
 sudo tcpretrans-bpfcc              # каждый ретрансмит: кто, куда, в каком состоянии (тема 07)
-```text
-```text
+```
+
+```
 # пример вывода sudo tcpretrans-bpfcc
 TIME     PID     IP LADDR:LPORT          T> RADDR:RPORT          STATE
 14:02:11 0       4  10.0.2.15:44120      R> 10.0.2.20:5432       ESTABLISHED
 14:02:12 0       4  10.0.2.15:51230      R> 10.0.2.30:443        SYN_SENT
-```text
+```
+
 | Счётчик | Что показывает |
 |---------|----------------|
 | `TcpRetransSegs / TcpOutSegs` | Доля повторов. Долгосрочно > 1% — повод разбираться, > 5% — плохо |
@@ -230,7 +240,7 @@ TIME     PID     IP LADDR:LPORT          T> RADDR:RPORT          STATE
 
 ## 6. conntrack: таблица полна — пакеты молча выбрасываются
 
-Основы conntrack и stateful-правил — в [../Network/11_firewall_iptables.md](/network/11-firewall-iptables).
+Основы conntrack и stateful-правил — в [Сети: 11. Файрвол: iptables/nftables](/network/11-firewall-iptables).
 Таблица есть на любом хосте, где загружен `nf_conntrack`: NAT, Docker, Kubernetes
 (kube-proxy в режиме iptables), ufw, правила с `-m conntrack`.
 
@@ -241,12 +251,14 @@ sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max net.netfi
 sudo conntrack -S                       # статистика по CPU
 sudo conntrack -L -o extended 2>/dev/null | awk '{print $3}' | sort | uniq -c | sort -rn   # по протоколам
 sudo conntrack -L -p tcp 2>/dev/null | awk '{print $4}' | sort | uniq -c | sort -rn      # по состояниям TCP
-```text
-```text
+```
+
+```
 # пример вывода sudo conntrack -S (таблица переполнена)
 cpu=0   found=0 invalid=1204 insert=0 insert_failed=0 drop=18233 early_drop=5120 error=0 search_restart=41
 cpu=1   found=0 invalid=988  insert=0 insert_failed=0 drop=17904 early_drop=4987 error=0 search_restart=37
-```text
+```
+
 | Поле | Смысл |
 |------|-------|
 | `drop` | Новое соединение выброшено: места для записи нет |
@@ -276,7 +288,7 @@ cpu=1   found=0 invalid=988  insert=0 insert_failed=0 drop=17904 early_drop=4987
    (и такое же правило в `OUTPUT`) — для высоконагруженного DNS-сервера.
 
 > ⚠️ Флуд conntrack для воспроизведения — только на VM стенда: лаба 4 в
-> [08_practice_labs.md](/softskills/08-practice-labs) уменьшает `nf_conntrack_max` до пары сотен и
+> [08. Практика: 6 инцидентов на стенде](/performance/08-practice-labs) уменьшает `nf_conntrack_max` до пары сотен и
 > забивает его соединениями.
 
 ---
@@ -291,8 +303,9 @@ grep 'Max open files' /proc/1234/limits           # soft и hard лимит пр
 sudo ls -l /proc/1234/fd | awk '{print $NF}' | sed -E 's/:\[.*//' | sort | uniq -c | sort -rn
 cat /proc/sys/fs/file-nr                          # выделено / 0 / fs.file-max (вся система)
 systemctl show app -p LimitNOFILE -p LimitNOFILESoft
-```text
-```text
+```
+
+```
 # пример: утечка сокетов
   4012 socket
     38 /opt/app/lib/…
@@ -300,9 +313,9 @@ systemctl show app -p LimitNOFILE -p LimitNOFILESoft
 $ ss -tanp | grep 'pid=1234' | awk '{print $1}' | sort | uniq -c
    3980 CLOSE-WAIT
      24 ESTAB
-```text
+```
 Тысячи сокетов в `CLOSE-WAIT` у процесса — приложение не закрывает соединения
-(классика из [../Network/04_l4_tcp_udp.md](/network/04-l4-tcp-udp)). Число fd растёт, пока не
+(классика из [Сети: 04. L4: TCP и UDP](/network/04-l4-tcp-udp)). Число fd растёт, пока не
 упрётся в лимит.
 
 | Ошибка | errno | Что кончилось |
@@ -316,9 +329,9 @@ $ ss -tanp | grep 'pid=1234' | awk '{print $1}' | sort | uniq -c
 sudo systemctl edit app          # [Service]
                                  # LimitNOFILE=65536
 sudo systemctl restart app && grep 'open files' /proc/$(systemctl show -p MainPID --value app)/limits
-```text
+```
 `/etc/security/limits.conf` на systemd-сервисы **не действует** — он для PAM-сессий
-(логин по SSH), см. [../Linux/12_kernel.md](/linux/12-kernel).
+(логин по SSH), см. [Linux: 12. Ядро Linux](/linux/12-kernel).
 
 > ⭐ Поднять лимит — лечение симптома. Если fd растут линейно со временем — это утечка,
 > и лимит просто отложит падение. Покажи разработчикам график числа fd и `CLOSE-WAIT`.
@@ -327,7 +340,7 @@ sudo systemctl restart app && grep 'open files' /proc/$(systemctl show -p MainPI
 
 ## 8. tcpdump + tshark: доказательство на уровне пакетов
 
-Базовые фильтры и ротация — в [../Network/10_tcpdump_wireshark.md](/network/10-tcpdump-wireshark).
+Базовые фильтры и ротация — в [Сети: 10. tcpdump и Wireshark](/network/10-tcpdump-wireshark).
 Здесь — фильтры для инцидентов и анализ дампа без GUI.
 
 ```bash
@@ -339,7 +352,8 @@ sudo tcpdump -ni any 'tcp[tcpflags] & (tcp-syn|tcp-ack) == (tcp-syn|tcp-ack) and
 sudo tcpdump -ni any 'tcp[tcpflags] & tcp-rst != 0'
 # в файл, только заголовки, ограниченно по числу пакетов
 sudo tcpdump -ni any -s 128 -c 200000 -w /tmp/incident.pcap 'port 8080'
-```text
+```
+
 Разбор дампа:
 ```bash
 tshark -r /tmp/incident.pcap -q -z conv,tcp | head -20                       # соединения, байты, длительность
@@ -352,7 +366,8 @@ tshark -r /tmp/incident.pcap -Y 'tcp.flags.reset==1' -T fields -e ip.src | sort 
 tshark -r /tmp/incident.pcap -Y 'tcp.analysis.zero_window'                   # получатель не читает
 tshark -r /tmp/incident.pcap -Y 'tcp.analysis.initial_rtt' \
   -T fields -e tcp.stream -e tcp.analysis.initial_rtt | sort -u -k1,1n | head   # iRTT хендшейка по соединениям
-```text
+```
+
 Как читать: SYN много, SYN-ACK заметно меньше, SYN-ретрансмиты к одному адресу — сервер
 не отвечает (очередь, conntrack, файрвол, сервис мёртв). Снимай дамп **с обеих сторон**:
 если SYN ушёл с клиента, но не пришёл на сервер — виноват путь (файрвол, SG, NAT); если
@@ -369,15 +384,17 @@ sudo ethtool -S eth0 | grep -iE 'drop|miss|err|fifo'    # счётчики др�
 sudo ethtool -g eth0                        # размеры ring buffer: текущие и максимум
 cat /proc/net/softnet_stat                  # строка на CPU, hex
 sudo tcpdrop-bpfcc                          # где в ядре выброшен TCP-пакет, со стеком (тема 07)
-```text
-```text
+```
+
+```
 # пример вывода ip -s link show eth0
-2: eth0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc fq_codel state UP mode DEFAULT group default qlen 1000
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP mode DEFAULT group default qlen 1000
     RX:  bytes  packets errors dropped  missed   mcast
     9876543210 8123456      0   41230       0     120
     TX:  bytes  packets errors dropped carrier collsns
     1234567890 5432109      0       0       0       0
-```text
+```
+
 `/proc/net/softnet_stat`: по строке на CPU, значения в hex. Колонка 1 — обработано пакетов,
 **колонка 2 — выброшено**, потому что переполнилась очередь backlog
 (`net.core.netdev_max_backlog`, по умолчанию 1000), **колонка 3 — time_squeeze**: softirq не
@@ -385,11 +402,11 @@ sudo tcpdrop-bpfcc                          # где в ядре выброше�
 
 | Где растёт | Что значит | Куда смотреть |
 |------------|-----------|---------------|
-| `missed` / `rx_missed_errors` / `rx_fifo_errors` | Ring buffer NIC переполнен до того, как ядро забрало пакеты | `ethtool -G eth0 rx &lt;больше&gt;`, распределение прерываний по CPU |
+| `missed` / `rx_missed_errors` / `rx_fifo_errors` | Ring buffer NIC переполнен до того, как ядро забрало пакеты | `ethtool -G eth0 rx <больше>`, распределение прерываний по CPU |
 | softnet колонка 2 | Очередь backlog полна | `netdev_max_backlog`, RPS/RSS |
 | softnet колонка 3 | Softirq не успевает | CPU `%soft` в `mpstat`, `netdev_budget` |
 | `dropped` в `ip -s link` при нуле выше | Ядро выбросило пакет выше драйвера (нет протокола, фильтр, …) | `tcpdrop-bpfcc`, `nstat` |
-| `skmem:(…,d&lt;N&gt;)` в `ss -tm` | Дропы на уровне конкретного сокета (буфер полон) | Приложение не читает, буферы сокета |
+| `skmem:(…,d<N>)` в `ss -tm` | Дропы на уровне конкретного сокета (буфер полон) | Приложение не читает, буферы сокета |
 
 ---
 
@@ -408,13 +425,13 @@ curl -o /dev/null -s -w 'dns:%{time_namelookup} connect:%{time_connect} total:%{
 sudo resolvectl statistics                         # попадания/промахи кэша systemd-resolved
 sudo gethostlatency-bpfcc                          # задержка getaddrinfo()/gethostbyname() по процессам
 sudo tcpdump -ni any port 53                       # сколько запросов реально уходит
-```text
-```text
+```
+```
 # пример вывода sudo gethostlatency-bpfcc
 TIME      PID     COMM                  LATms HOST
 14:10:02  2210    java                5012.33 billing.internal
 14:10:03  3117    curl                   2.41 api.example.com
-```text
+```
 5 секунд на `billing.internal` — первый DNS-сервер не отвечает, резолвер ждёт таймаут и
 идёт ко второму. `gethostlatency` видит только вызовы через libc; Go с собственным
 резолвером так не поймать — смотри `tcpdump port 53`.
@@ -441,7 +458,7 @@ FQDN с точкой в конце (`billing.internal.`) или меньше `nd
 
 Правила: сначала счётчик, который доказывает проблему; одно изменение за раз; замер до и
 после; постоянные значения — в `/etc/sysctl.d/*.conf` с комментарием, **зачем**
-([../Linux/12_kernel.md](/linux/12-kernel)). Копипаста «100 sysctl для highload» — источник
+([Linux: 12. Ядро Linux](/linux/12-kernel)). Копипаста «100 sysctl для highload» — источник
 инцидентов, а не их лечение.
 
 ---
@@ -514,13 +531,17 @@ FQDN с точкой в конце (`billing.internal.`) или меньше `nd
 9. `EMFILE` — лимит процесса; для systemd — `LimitNOFILE`, не `limits.conf`. Рост fd = утечка.
 10. DNS проверяй всегда: 5-секундные задержки — таймаут резолвера, в k8s — ещё и `ndots:5`.
 
-➡️ Дальше: [05_strace_hung_processes.md](/performance/05-strace-hung-processes) · задачи: 04_network_deep_tasks.md
+---
 
+## Задачи
+
+> Стенд: VM `perf-lab` из [Performance](/performance/); ⚠️ ломающие задачи — только на VM,
+> перед темой `vagrant snapshot save before_perf_04`. Рабочая папка задач — `~/perf/t04/`.
+> Полное переполнение conntrack и исчерпание портов — лаба 4 в [08. Практика: 6 инцидентов на стенде](/performance/08-practice-labs).
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Почему «`TcpExtListenOverflows 3412`» само по себе ничего не значит? Как смотреть правильно?
 
@@ -643,8 +664,11 @@ LISTEN: `Recv-Q` — сколько установленных соединен�
 
 <details><summary>Ответ</summary>
 
-1) Понять, что заполнило таблицу (протокол, состояние, адреса: DNS-флуд, сканер, клиент
+1\) Понять, что заполнило таблицу (протокол, состояние, адреса: DNS-флуд, сканер, клиент
 без keep-alive). 2) Поднять `nf_conntrack_max` (и `nf_conntrack_buckets`), учитывая память.
+3) Сократить таймауты, где безопасно (`established` с 5 суток до часов, UDP). 4) Не отслеживать
+ненужное: правило `-j CT --notrack` в таблице `raw` (PREROUTING и OUTPUT) — для высоконагруженного
+DNS или UDP, где stateful-фильтрация и NAT не нужны.
 
 </details>
 
@@ -699,362 +723,148 @@ SYN-флуда), `tcp_fin_timeout` «от TIME_WAIT» (не работает), �
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```
 B1.  $ ss -lnt '( sport = :8080 )'
-```text
-<details><summary>Ответ</summary>
+     State  Recv-Q Send-Q Local Address:Port Peer Address:Port
+     LISTEN 4097   4096         0.0.0.0:8080      0.0.0.0:*
+     $ nstat -n; sleep 10; nstat 'TcpExtListen*'
+     TcpExtListenOverflows           812                0.0
+     TcpExtListenDrops               812                0.0
 
-Accept queue переполнена: `Recv-Q` 4097 при пределе 4096 (ядро допускает backlog+1),
+B2.  # пользователь: «скачивание отчёта медленное, сеть плохая»
+     ESTAB 0 0 10.0.2.15:8000 10.0.2.40:51022
+        cubic rtt:2.1/0.4 minrtt:1.9 cwnd:10 bytes_sent:81920 retrans:0/0
+        send 55Mbps delivery_rate 1.2Mbps app_limited busy:9120ms
+
+B3.  ESTAB 0 180224 10.0.2.15:44120 10.0.2.20:5432
+        cubic rto:612 backoff:2 rtt:180.4/61.2 minrtt:0.4 cwnd:3 ssthresh:5
+        bytes_sent:9120330 bytes_retrans:468004 unacked:12 retrans:3/412 lost:3
+
+B4.  # прокси, в логе: connect() failed (99: Cannot assign requested address)
+     $ ss -s
+     TCP:   29412 (estab 1180, closed 28120, orphaned 0, timewait 28104)
+     $ sysctl net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse
+     net.ipv4.ip_local_port_range = 32768	60999
+     net.ipv4.tcp_tw_reuse = 2
+
+B5.  $ sudo dmesg -T | tail -3
+     [Sat Sep 26 03:12:40 2026] nf_conntrack: nf_conntrack: table full, dropping packet
+     [Sat Sep 26 03:12:45 2026] nf_conntrack: nf_conntrack: table full, dropping packet
+     $ sudo conntrack -L 2>/dev/null | awk '{print $1}' | sort | uniq -c
+      181204 udp
+        9310 tcp
+     $ sudo conntrack -L -p udp 2>/dev/null | grep -c 'dport=53'
+     179880
+
+B6.  $ grep 'open files' /proc/2210/limits
+     Max open files            1024                 1024                 files
+     $ ls /proc/2210/fd | wc -l
+     1021
+     $ ss -tanp | grep 'pid=2210' | awk '{print $1}' | sort | uniq -c
+         990 CLOSE-WAIT
+          28 ESTAB
+
+B7.  # /etc/sysctl.d/99-highload.conf из «гайда по тюнингу»
+     net.ipv4.tcp_tw_recycle = 1
+     net.ipv4.tcp_fin_timeout = 5        # «чтобы TIME_WAIT держался 5 секунд»
+     net.ipv4.tcp_syncookies = 0
+     net.core.somaxconn = 65535
+
+B8.  $ cat /proc/net/softnet_stat      # первые три колонки, 2 CPU
+     0a3b41c2 00012f4e 00003a91 …
+     00f10a33 00000000 00000012 …
+
+B9.  $ curl -o /dev/null -s -w 'dns:%{time_namelookup} connect:%{time_connect} total:%{time_total}\n' https://billing.internal/health
+     dns:5.012 connect:5.014 total:5.120
+
+B10. # дамп за 5 минут на клиенте
+     SYN (без ACK):                         12000
+     SYN-ACK:                                7000
+     SYN-ретрансмиты к 10.0.3.7:5432:        4800
+
+B11. $ ip -s link show eth0 | sed -n 3,4p
+         RX:  bytes  packets errors dropped  missed   mcast
+         9876543210 8123456      0   41230       0     120
+     $ sudo ethtool -S eth0 | grep -iE 'miss|fifo'
+          rx_missed_errors: 0
+          rx_fifo_errors: 0
+
+B12. # коллега добавил в /etc/security/limits.conf строку «* soft nofile 65536»,
+     # сделал systemctl restart app, а лимит не изменился
+     $ grep 'open files' /proc/$(systemctl show -p MainPID --value app)/limits
+     Max open files            1024                 524288               files
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** Accept queue переполнена: `Recv-Q` 4097 при пределе 4096 (ядро допускает backlog+1),
 за 10 секунд выброшено 812 попыток. Приложение не успевает вызывать `accept()`. Клиенты видят
 задержки подключения 1/3/7 с. Смотреть воркеров приложения, блокировки event loop, профиль
 (темы 02, 05); очередь поднимать, только если это короткие всплески.
 
-</details>
-
-```text:no-line-numbers
-     State  Recv-Q Send-Q Local Address:Port Peer Address:Port
-```text
-```text:no-line-numbers
-     LISTEN 4097   4096         0.0.0.0:8080      0.0.0.0:*
-```text
-```text:no-line-numbers
-     $ nstat -n; sleep 10; nstat 'TcpExtListen*'
-```text
-```text:no-line-numbers
-     TcpExtListenOverflows           812                0.0
-```text
-```text:no-line-numbers
-     TcpExtListenDrops               812                0.0
-```text
-```text:no-line-numbers
-B2.  # пользователь: «скачивание отчёта медленное, сеть плохая»
-```text
-<details><summary>Ответ</summary>
-
-Сеть ни при чём: `rtt` ≈ `minrtt` (2 мс), ретрансмитов нет, `cwnd` нормальный, а
+**B2.** Сеть ни при чём: `rtt` ≈ `minrtt` (2 мс), ретрансмитов нет, `cwnd` нормальный, а
 `app_limited` и `delivery_rate` 1,2 Мбит/с при расчётных 55 — приложение медленно отдаёт данные
 (генерирует отчёт, пишет маленькими порциями). Профилировать приложение.
 
-</details>
-
-```text:no-line-numbers
-     ESTAB 0 0 10.0.2.15:8000 10.0.2.40:51022
-```text
-```text:no-line-numbers
-        cubic rtt:2.1/0.4 minrtt:1.9 cwnd:10 bytes_sent:81920 retrans:0/0
-```text
-```text:no-line-numbers
-        send 55Mbps delivery_rate 1.2Mbps app_limited busy:9120ms
-```text
-```text:no-line-numbers
-B3.  ESTAB 0 180224 10.0.2.15:44120 10.0.2.20:5432
-```text
-<details><summary>Ответ</summary>
-
-Проблема пути: `rtt` 180 мс при `minrtt` 0,4 мс (очереди/перегрузка), 412 повторов за
+**B3.** Проблема пути: `rtt` 180 мс при `minrtt` 0,4 мс (очереди/перегрузка), 412 повторов за
 жизнь, ~5% байт повторно (468004 / 9120330), `lost` 3 и `backoff` 2 — прямо сейчас повторы по
 таймауту, `cwnd` упал до 3. Плюс `Send-Q` 180 КБ — данные копятся на отправке. Дальше:
 `ip -s link` и `ethtool -S` на обеих сторонах, `mtr`, дамп с двух сторон.
 
-</details>
-
-```text:no-line-numbers
-        cubic rto:612 backoff:2 rtt:180.4/61.2 minrtt:0.4 cwnd:3 ssthresh:5
-```text
-```text:no-line-numbers
-        bytes_sent:9120330 bytes_retrans:468004 unacked:12 retrans:3/412 lost:3
-```text
-```text:no-line-numbers
-B4.  # прокси, в логе: connect() failed (99: Cannot assign requested address)
-```text
-<details><summary>Ответ</summary>
-
-Исчерпаны эфемерные порты: 28 104 TIME_WAIT при диапазоне 28 232 порта; `tcp_tw_reuse=2`
+**B4.** Исчерпаны эфемерные порты: 28 104 TIME_WAIT при диапазоне 28 232 порта; `tcp_tw_reuse=2`
 разрешает переиспользование только на loopback. Прокси открывает новое соединение на каждый
 запрос. Лечение: keep-alive к upstream (`keepalive` в nginx upstream + HTTP/1.1), затем
 `tcp_tw_reuse=1`, шире `ip_local_port_range`, несколько адресов upstream/источника.
 
-</details>
-
-```text:no-line-numbers
-     $ ss -s
-```text
-```text:no-line-numbers
-     TCP:   29412 (estab 1180, closed 28120, orphaned 0, timewait 28104)
-```text
-```text:no-line-numbers
-     $ sysctl net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse
-```text
-```text:no-line-numbers
-     net.ipv4.ip_local_port_range = 32768	60999
-```text
-```text:no-line-numbers
-     net.ipv4.tcp_tw_reuse = 2
-```text
-```text:no-line-numbers
-B5.  $ sudo dmesg -T | tail -3
-```text
-<details><summary>Ответ</summary>
-
-Таблица conntrack забита UDP-записями DNS (180 тыс. из ~190 тыс.): хост шлёт или
+**B5.** Таблица conntrack забита UDP-записями DNS (180 тыс. из ~190 тыс.): хост шлёт или
 принимает огромный поток DNS-запросов, каждый живёт `nf_conntrack_udp_timeout`. Лечение:
 найти источник (кто шлёт — `conntrack -L` по `src`), кэширующий резолвер, NOTRACK для
 порта 53 в `raw`, затем при необходимости поднять `nf_conntrack_max`.
 
-</details>
-
-```text:no-line-numbers
-     [Sat Sep 26 03:12:40 2026] nf_conntrack: nf_conntrack: table full, dropping packet
-```text
-```text:no-line-numbers
-     [Sat Sep 26 03:12:45 2026] nf_conntrack: nf_conntrack: table full, dropping packet
-```text
-```text:no-line-numbers
-     $ sudo conntrack -L 2>/dev/null | awk '{print $1}' | sort | uniq -c
-```text
-```text:no-line-numbers
-      181204 udp
-```text
-```text:no-line-numbers
-        9310 tcp
-```text
-```text:no-line-numbers
-     $ sudo conntrack -L -p udp 2>/dev/null | grep -c 'dport=53'
-```text
-```text:no-line-numbers
-     179880
-```text
-```text:no-line-numbers
-B6.  $ grep 'open files' /proc/2210/limits
-```text
-<details><summary>Ответ</summary>
-
-Утечка сокетов: 990 в CLOSE-WAIT — пиры закрыли соединения, а приложение нет; fd 1021
+**B6.** Утечка сокетов: 990 в CLOSE-WAIT — пиры закрыли соединения, а приложение нет; fd 1021
 из 1024 — следующее `accept()`/`open()` упадёт с `EMFILE`. Лимит поднимать можно как временную
 меру, но это баг кода: соединения не закрываются (нет `close()`/`with`, потерянные ответы в пуле).
 
-</details>
-
-```text:no-line-numbers
-     Max open files            1024                 1024                 files
-```text
-```text:no-line-numbers
-     $ ls /proc/2210/fd | wc -l
-```text
-```text:no-line-numbers
-     1021
-```text
-```text:no-line-numbers
-     $ ss -tanp | grep 'pid=2210' | awk '{print $1}' | sort | uniq -c
-```text
-```text:no-line-numbers
-         990 CLOSE-WAIT
-```text
-```text:no-line-numbers
-          28 ESTAB
-```text
-```text:no-line-numbers
-B7.  # /etc/sysctl.d/99-highload.conf из «гайда по тюнингу»
-```text
-<details><summary>Ответ</summary>
-
-`tcp_tw_recycle` не существует с 4.12 (sysctl выдаст ошибку, а на старых ядрах ломал NAT);
+**B7.** `tcp_tw_recycle` не существует с 4.12 (sysctl выдаст ошибку, а на старых ядрах ломал NAT);
 `tcp_fin_timeout` не влияет на TIME_WAIT (это FIN-WAIT-2); `tcp_syncookies=0` снимает защиту
 от SYN-флуда; `somaxconn=65535` без backlog в приложении ничего не даст, а с ним — лишь удлинит
 очередь медленному приложению. Файл надо выбросить и тюнить по счётчикам.
 
-</details>
-
-```text:no-line-numbers
-     net.ipv4.tcp_tw_recycle = 1
-```text
-```text:no-line-numbers
-     net.ipv4.tcp_fin_timeout = 5        # «чтобы TIME_WAIT держался 5 секунд»
-```text
-```text:no-line-numbers
-     net.ipv4.tcp_syncookies = 0
-```text
-```text:no-line-numbers
-     net.core.somaxconn = 65535
-```text
-```text:no-line-numbers
-B8.  $ cat /proc/net/softnet_stat      # первые три колонки, 2 CPU
-```text
-<details><summary>Ответ</summary>
-
-CPU0: колонка 2 = 0x12f4e = 77 646 выброшенных пакетов (переполнение backlog,
+**B8.** CPU0: колонка 2 = 0x12f4e = 77 646 выброшенных пакетов (переполнение backlog,
 `netdev_max_backlog`), колонка 3 = 0x3a91 = 14 993 раза softirq не уложился в бюджет. CPU1
 почти ничего не обрабатывает — весь приём на одном ядре. Лечение: несколько очередей NIC (RSS)
 и распределение прерываний, RPS, умеренно поднять `netdev_max_backlog`/`netdev_budget`.
 
-</details>
-
-```text:no-line-numbers
-     0a3b41c2 00012f4e 00003a91 …
-```text
-```text:no-line-numbers
-     00f10a33 00000000 00000012 …
-```text
-```text:no-line-numbers
-B9.  $ curl -o /dev/null -s -w 'dns:%{time_namelookup} connect:%{time_connect} total:%{time_total}\n' https://billing.internal/health
-```text
-<details><summary>Ответ</summary>
-
-5 секунд уходят на DNS (`time_namelookup` 5,012), соединение и ответ быстрые. Типично:
+**B9.** 5 секунд уходят на DNS (`time_namelookup` 5,012), соединение и ответ быстрые. Типично:
 первый DNS-сервер в списке не отвечает, резолвер ждёт таймаут 5 с и идёт ко второму.
-Проверить `resolvectl status`, `dig @&lt;каждый сервер&gt;`, убрать мёртвый сервер, кэш на хосте.
+Проверить `resolvectl status`, `dig @<каждый сервер>`, убрать мёртвый сервер, кэш на хосте.
 
-</details>
-
-```text:no-line-numbers
-     dns:5.012 connect:5.014 total:5.120
-```text
-```text:no-line-numbers
-B10.  # дамп за 5 минут на клиенте
-```text
-<details><summary>Ответ</summary>
-
-5000 SYN остались без ответа, и почти все ретрансмиты — к одному адресу 10.0.3.7:5432:
+**B10.** 5000 SYN остались без ответа, и почти все ретрансмиты — к одному адресу 10.0.3.7:5432:
 база (или путь до неё) не отвечает на SYN — переполнена accept queue у PostgreSQL, conntrack
 или DROP в файрволе на пути, хост перегружен. Лимит `max_connections` выглядит иначе: соединение
 устанавливается, и PostgreSQL отвечает ошибкой `too many clients`. Снять дамп на стороне базы
 (дошли ли SYN), там же дельта `ListenOverflows` в `nstat` и `dmesg`.
 
-</details>
-
-```text:no-line-numbers
-     SYN (без ACK):                         12000
-```text
-```text:no-line-numbers
-     SYN-ACK:                                7000
-```text
-```text:no-line-numbers
-     SYN-ретрансмиты к 10.0.3.7:5432:        4800
-```text
-```text:no-line-numbers
-B11.  $ ip -s link show eth0 | sed -n 3,4p
-```text
-<details><summary>Ответ</summary>
-
-NIC и драйвер ничего не теряют (`missed`, `rx_missed_errors`, `rx_fifo_errors` = 0), а
+**B11.** NIC и драйвер ничего не теряют (`missed`, `rx_missed_errors`, `rx_fifo_errors` = 0), а
 `dropped` растёт — пакеты выбрасывает ядро выше драйвера: backlog (softnet_stat колонка 2),
 неизвестный протокол/VLAN, фильтры. Проверить softnet_stat, `nstat`, `sudo tcpdrop-bpfcc`
 (для TCP) и мультикаст/неподдерживаемые протоколы.
 
-</details>
-
-```text:no-line-numbers
-         RX:  bytes  packets errors dropped  missed   mcast
-```text
-```text:no-line-numbers
-         9876543210 8123456      0   41230       0     120
-```text
-```text:no-line-numbers
-     $ sudo ethtool -S eth0 | grep -iE 'miss|fifo'
-```text
-```text:no-line-numbers
-          rx_missed_errors: 0
-```text
-```text:no-line-numbers
-          rx_fifo_errors: 0
-```text
-```text:no-line-numbers
-B12.  # коллега добавил в /etc/security/limits.conf строку «* soft nofile 65536»,
-```text
-<details><summary>Ответ</summary>
-
-systemd запускает сервис без PAM-сессии, `limits.conf` на него не действует. Soft 1024 —
+**B12.** systemd запускает сервис без PAM-сессии, `limits.conf` на него не действует. Soft 1024 —
 дефолт systemd. Нужен drop-in `systemctl edit app` → `[Service]` `LimitNOFILE=65536`, затем
 restart и проверка `/proc/PID/limits`.
 
 </details>
 
-```text:no-line-numbers
-     # сделал systemctl restart app, а лимит не изменился
-```text
-```text:no-line-numbers
-     $ grep 'open files' /proc/$(systemctl show -p MainPID --value app)/limits
-```text
-```text:no-line-numbers
-     Max open files            1024                 524288               files
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Дельта-режим счётчиков
-**1.** `nstat -n`, затем минуту обычной жизни VM, затем `nstat` — что изменилось?
-
-<details><summary>Ответ</summary>
-
-В спокойной VM за минуту растут единицы счётчиков (`TcpInSegs`, `TcpOutSegs`, ARP/ICMP).
-После 2000 запросов: `TcpActiveOpens` и `TcpPassiveOpens` +2000 каждый (клиент и сервер на одной
-машине), в `ss -s` — ~2000 в `timewait`; `TcpExtTW` вырастет на ~2000 примерно через минуту,
-когда эти TIME_WAIT истекут (счётчик считает завершённые TIME_WAIT).
-
-</details>
-
-**2.** Запусти `python3 -m http.server 8000 &` и 2000 запросов:
+#### C1. 🔑 Дельта-режим счётчиков
+1. `nstat -n`, затем минуту обычной жизни VM, затем `nstat` — что изменилось?
+2. Запусти `python3 -m http.server 8000 &` и 2000 запросов:
    `for i in $(seq 2000); do curl -s -o /dev/null localhost:8000/; done`.
-
-<details><summary>Ответ</summary>
-
-`ss -lnt` показывает `Recv-Q` 9 при `Send-Q` 8 — очередь полна; `ListenOverflows` и
-`ListenDrops` растут на десятки в секунду. Новый клиент подключается мгновенно, если попал в
-момент освобождения места, или через ~1 с / ~3 с: его SYN выброшен, и он повторяет SYN по
-RTO (1 с, затем +2 с).
-
-</details>
-
-**3.** Снова `nstat` и `ss -s`: какие счётчики выросли, сколько стало TIME_WAIT?
-
-<details><summary>Ответ</summary>
-
-С 3% потерь в `ss -tin` растёт второй счётчик `retrans`, `cwnd` скачет и остаётся
-небольшим, появляются `lost`, в выводе iperf3 — колонка `Retr` с сотнями, скорость заметно
-ниже. `tcpretrans-bpfcc` печатает ретрансмиты с адресами, `nstat TcpRetransSegs` растёт.
-Без netem `retrans` 0/0 и скорость — гигабиты.
-
-</details>
-
-### C2. 🔑 Переполнить accept queue
-```text:no-line-numbers
-# ~/perf/t04/slow_accept.py — «медленное приложение»: один accept() в секунду, backlog 8
-```text
-```text:no-line-numbers
-import socket
-```text
-```text:no-line-numbers
-import time
-```text
-```text:no-line-numbers
-s = socket.socket()
-```text
-```text:no-line-numbers
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-```text
-```text:no-line-numbers
-s.bind(("127.0.0.1", 8080))
-```text
-```text:no-line-numbers
-s.listen(8)
-```text
-```text:no-line-numbers
-while True:
-```text
-```text:no-line-numbers
-    time.sleep(1)
-```text
-```text:no-line-numbers
-    c, _ = s.accept()
-```text
-```text:no-line-numbers
-    c.close()
-```text
-**1.** Запусти сервер, затем 100 параллельных подключений:
-   `for i in $(seq 100); do (timeout 10 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; sleep 2') & done`.
+3. Снова `nstat` и `ss -s`: какие счётчики выросли, сколько стало TIME_WAIT?
 
 <details><summary>Ответ</summary>
 
@@ -1065,46 +875,29 @@ while True:
 
 </details>
 
-**2.** Одновременно: `ss -lnt '( sport = :8080 )'`, `nstat -n; sleep 5; nstat 'TcpExtListen*'`.
+#### C2. 🔑 Переполнить accept queue
+```python
+# ~/perf/t04/slow_accept.py — «медленное приложение»: один accept() в секунду, backlog 8
+import socket
+import time
 
-<details><summary>Ответ</summary>
-
-`ss -lnt` показывает `Recv-Q` 9 при `Send-Q` 8 — очередь полна; `ListenOverflows` и
-`ListenDrops` растут на десятки в секунду. Новый клиент подключается мгновенно, если попал в
-момент освобождения места, или через ~1 с / ~3 с: его SYN выброшен, и он повторяет SYN по
-RTO (1 с, затем +2 с).
-
-</details>
-
-**3.** Замерь время подключения нового клиента: `time bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'`.
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", 8080))
+s.listen(8)
+while True:
+    time.sleep(1)
+    c, _ = s.accept()
+    c.close()
+```
+1. Запусти сервер, затем 100 параллельных подключений:
+   `for i in $(seq 100); do (timeout 10 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; sleep 2') & done`.
+2. Одновременно: `ss -lnt '( sport = :8080 )'`, `nstat -n; sleep 5; nstat 'TcpExtListen*'`.
+3. Замерь время подключения нового клиента: `time bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'`.
    Почему иногда ~1 с или ~3 с?
 
 <details><summary>Ответ</summary>
 
-С 3% потерь в `ss -tin` растёт второй счётчик `retrans`, `cwnd` скачет и остаётся
-небольшим, появляются `lost`, в выводе iperf3 — колонка `Retr` с сотнями, скорость заметно
-ниже. `tcpretrans-bpfcc` печатает ретрансмиты с адресами, `nstat TcpRetransSegs` растёт.
-Без netem `retrans` 0/0 и скорость — гигабиты.
-
-</details>
-
-### C3. 🔑 `ss -ti` под потерями
-**1.** `iperf3 -s -D`, затем добавь 3% потерь на loopback: `sudo tc qdisc add dev lo root netem loss 3%`
-   (если `Specified qdisc kind is unknown` — `sudo apt install linux-modules-extra-$(uname -r)`).
-
-<details><summary>Ответ</summary>
-
-В спокойной VM за минуту растут единицы счётчиков (`TcpInSegs`, `TcpOutSegs`, ARP/ICMP).
-После 2000 запросов: `TcpActiveOpens` и `TcpPassiveOpens` +2000 каждый (клиент и сервер на одной
-машине), в `ss -s` — ~2000 в `timewait`; `TcpExtTW` вырастет на ~2000 примерно через минуту,
-когда эти TIME_WAIT истекут (счётчик считает завершённые TIME_WAIT).
-
-</details>
-
-**2.** `iperf3 -c 127.0.0.1 -t 20 &` и во время теста `ss -tin '( dport = :5201 )'` раз в пару секунд.
-
-<details><summary>Ответ</summary>
-
 `ss -lnt` показывает `Recv-Q` 9 при `Send-Q` 8 — очередь полна; `ListenOverflows` и
 `ListenDrops` растут на десятки в секунду. Новый клиент подключается мгновенно, если попал в
 момент освобождения места, или через ~1 с / ~3 с: его SYN выброшен, и он повторяет SYN по
@@ -1112,7 +905,11 @@ RTO (1 с, затем +2 с).
 
 </details>
 
-**3.** Сравни `retrans`, `cwnd`, `rtt` с прогоном без потерь; посмотри `sudo tcpretrans-bpfcc`
+#### C3. 🔑 `ss -ti` под потерями
+1. `iperf3 -s -D`, затем добавь 3% потерь на loopback: `sudo tc qdisc add dev lo root netem loss 3%`
+   (если `Specified qdisc kind is unknown` — `sudo apt install linux-modules-extra-$(uname -r)`).
+2. `iperf3 -c 127.0.0.1 -t 20 &` и во время теста `ss -tin '( dport = :5201 )'` раз в пару секунд.
+3. Сравни `retrans`, `cwnd`, `rtt` с прогоном без потерь; посмотри `sudo tcpretrans-bpfcc`
    и `nstat TcpRetransSegs`. Уборка: `sudo tc qdisc del dev lo root`.
 
 <details><summary>Ответ</summary>
@@ -1124,158 +921,109 @@ RTO (1 с, затем +2 с).
 
 </details>
 
-### C4. Кто держит TIME_WAIT
+#### C4. Кто держит TIME_WAIT
 После C1 выполни `ss -tan state time-wait | head`. На какой стороне (порт 8000 или эфемерный)
 TIME_WAIT? Кто закрыл соединение первым и почему (HTTP/1.0 в `http.server`)?
 Посчитай, сколько таких запросов в секунду выдержит связка при 28 232 портах.
 
-### C5. conntrack: что лежит в таблице
-**1.** `sudo conntrack -C`, `sudo conntrack -S | head -2`.
-
 <details><summary>Ответ</summary>
 
-В спокойной VM за минуту растут единицы счётчиков (`TcpInSegs`, `TcpOutSegs`, ARP/ICMP).
-После 2000 запросов: `TcpActiveOpens` и `TcpPassiveOpens` +2000 каждый (клиент и сервер на одной
-машине), в `ss -s` — ~2000 в `timewait`; `TcpExtTW` вырастет на ~2000 примерно через минуту,
-когда эти TIME_WAIT истекут (счётчик считает завершённые TIME_WAIT).
+TIME_WAIT со стороны `127.0.0.1:8000` (локальный адрес — порт сервера): `http.server`
+отвечает по HTTP/1.0 и закрывает соединение первым. Сервер держит четвёрки со всеми
+эфемерными портами клиента; к одному серверу клиент на одном IP выдержит ~470 новых
+соединений в секунду (на loopback реальный предел выше благодаря `tcp_tw_reuse=2`).
 
 </details>
 
-**2.** 300 DNS-запросов: `for i in $(seq 300); do dig +short @1.1.1.1 test$i.example.com >/dev/null; done`.
-
-<details><summary>Ответ</summary>
-
-`ss -lnt` показывает `Recv-Q` 9 при `Send-Q` 8 — очередь полна; `ListenOverflows` и
-`ListenDrops` растут на десятки в секунду. Новый клиент подключается мгновенно, если попал в
-момент освобождения места, или через ~1 с / ~3 с: его SYN выброшен, и он повторяет SYN по
-RTO (1 с, затем +2 с).
-
-</details>
-
-**3.** Снова `conntrack -C`; разбивка по протоколам и по `dport=53`. Через сколько записи UDP исчезнут
+#### C5. conntrack: что лежит в таблице
+1. `sudo conntrack -C`, `sudo conntrack -S | head -2`.
+2. 300 DNS-запросов: `for i in $(seq 300); do dig +short @1.1.1.1 test$i.example.com >/dev/null; done`.
+3. Снова `conntrack -C`; разбивка по протоколам и по `dport=53`. Через сколько записи UDP исчезнут
    и какой sysctl это задаёт?
 
 <details><summary>Ответ</summary>
 
-С 3% потерь в `ss -tin` растёт второй счётчик `retrans`, `cwnd` скачет и остаётся
-небольшим, появляются `lost`, в выводе iperf3 — колонка `Retr` с сотнями, скорость заметно
-ниже. `tcpretrans-bpfcc` печатает ретрансмиты с адресами, `nstat TcpRetransSegs` растёт.
-Без netem `retrans` 0/0 и скорость — гигабиты.
+После 300 запросов `conntrack -C` вырастает на ~300: UDP-записи к 1.1.1.1 `dport=53`.
+Они исчезают через `nf_conntrack_udp_timeout` (30 с): короткий обмен «запрос-ответ» сохраняет
+этот таймаут. `nf_conntrack_udp_timeout_stream` (120 с) достаётся только потокам, которые
+активны дольше ~2 секунд.
 
 </details>
 
-### C6. 🔑 Утечка fd и CLOSE-WAIT
-```text:no-line-numbers
+#### C6. 🔑 Утечка fd и CLOSE-WAIT
+```python
 # ~/perf/t04/leaky_server.py — принимает соединения и «забывает» их закрыть
-```text
-```text:no-line-numbers
 import socket
-```text
-```text:no-line-numbers
+
 srv = socket.socket()
-```text
-```text:no-line-numbers
 srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-```text
-```text:no-line-numbers
 srv.bind(("127.0.0.1", 7000))
-```text
-```text:no-line-numbers
 srv.listen(128)
-```text
-```text:no-line-numbers
 conns = []
-```text
-```text:no-line-numbers
 while True:
-```text
-```text:no-line-numbers
     c, _ = srv.accept()
-```text
-```text:no-line-numbers
     conns.append(c)             # ни recv, ни close — классическая утечка
-```text
-**1.** `systemd-run --user --unit=leaky-srv -p LimitNOFILE=200 python3 ~/perf/t04/leaky_server.py`.
-
-<details><summary>Ответ</summary>
-
-В спокойной VM за минуту растут единицы счётчиков (`TcpInSegs`, `TcpOutSegs`, ARP/ICMP).
-После 2000 запросов: `TcpActiveOpens` и `TcpPassiveOpens` +2000 каждый (клиент и сервер на одной
-машине), в `ss -s` — ~2000 в `timewait`; `TcpExtTW` вырастет на ~2000 примерно через минуту,
-когда эти TIME_WAIT истекут (счётчик считает завершённые TIME_WAIT).
-
-</details>
-
-**2.** 300 коротких клиентов: `for i in $(seq 300); do timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/7000'; done`.
-
-<details><summary>Ответ</summary>
-
-`ss -lnt` показывает `Recv-Q` 9 при `Send-Q` 8 — очередь полна; `ListenOverflows` и
-`ListenDrops` растут на десятки в секунду. Новый клиент подключается мгновенно, если попал в
-момент освобождения места, или через ~1 с / ~3 с: его SYN выброшен, и он повторяет SYN по
-RTO (1 с, затем +2 с).
-
-</details>
-
-**3.** Смотри: число fd (`ls /proc/PID/fd | wc -l`), состояния сокетов сервера, лимит
+```
+1. `systemd-run --user --unit=leaky-srv -p LimitNOFILE=200 python3 ~/perf/t04/leaky_server.py`.
+2. 300 коротких клиентов: `for i in $(seq 300); do timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/7000'; done`.
+3. Смотри: число fd (`ls /proc/PID/fd | wc -l`), состояния сокетов сервера, лимит
    в `/proc/PID/limits`, `journalctl --user -u leaky-srv`. Что упало и с какой ошибкой?
 
 <details><summary>Ответ</summary>
 
-С 3% потерь в `ss -tin` растёт второй счётчик `retrans`, `cwnd` скачет и остаётся
-небольшим, появляются `lost`, в выводе iperf3 — колонка `Retr` с сотнями, скорость заметно
-ниже. `tcpretrans-bpfcc` печатает ретрансмиты с адресами, `nstat TcpRetransSegs` растёт.
-Без netem `retrans` 0/0 и скорость — гигабиты.
+Число fd растёт на 1 с каждым клиентом, сокеты сервера — в `CLOSE-WAIT`
+(`ss -tanp | grep 7000`). На ~196-м клиенте (200 минус stdin/stdout/stderr и слушающий сокет)
+`accept()` падает: в журнале `OSError: [Errno 24] Too many open files`, сервис завершился
+с ошибкой. `Max open files` в `/proc/PID/limits` — 200/200. Вывод: CLOSE-WAIT + рост fd = утечка
+в коде; поднятие лимита лишь отложит падение.
 
 </details>
 
-### C7. tcpdump + tshark по переполненной очереди
+#### C7. tcpdump + tshark по переполненной очереди
 Повтори C2, записывая дамп: `sudo tcpdump -ni lo -w ~/perf/t04/q.pcap 'port 8080' &`.
 Посчитай в tshark SYN, SYN-ACK, SYN-ретрансмиты и RST. Совпадает ли картина с `nstat`?
 
-### C8. DNS как часть latency
-**1.** `resolvectl flush-caches`, затем дважды
+<details><summary>Ответ</summary>
+
+Пример: SYN 130, SYN-ACK ~90, заметная доля SYN с флагом `tcp.analysis.retransmission`,
+RST — 0 (при `tcp_abort_on_overflow=0`). Разница SYN и SYN-ACK примерно соответствует дельте
+`ListenOverflows`/`ListenDrops` за то же время.
+
+</details>
+
+#### C8. DNS как часть latency
+1. `resolvectl flush-caches`, затем дважды
    `curl -o /dev/null -s -w 'dns:%{time_namelookup} total:%{time_total}\n' https://example.com`.
+2. В соседнем окне `sudo gethostlatency-bpfcc`, в первом — `getent ahosts example.org`.
+3. Как выглядит «мёртвый» DNS-сервер: `dig @192.0.2.1 example.com +timeout=2 +tries=1`.
 
 <details><summary>Ответ</summary>
 
-В спокойной VM за минуту растут единицы счётчиков (`TcpInSegs`, `TcpOutSegs`, ARP/ICMP).
-После 2000 запросов: `TcpActiveOpens` и `TcpPassiveOpens` +2000 каждый (клиент и сервер на одной
-машине), в `ss -s` — ~2000 в `timewait`; `TcpExtTW` вырастет на ~2000 примерно через минуту,
-когда эти TIME_WAIT истекут (счётчик считает завершённые TIME_WAIT).
+Холодный кэш: `dns` — десятки мс; тёплый — доли мс (отвечает systemd-resolved).
+`gethostlatency-bpfcc` показывает `getent` и время резолва. `dig @192.0.2.1` через 2 с
+печатает `communications error … timed out` / `no servers could be reached` — так выглядит
+мёртвый сервер, и столько же добавится к каждому запросу приложения, если он первый в списке.
 
 </details>
 
-**2.** В соседнем окне `sudo gethostlatency-bpfcc`, в первом — `getent ahosts example.org`.
-
-<details><summary>Ответ</summary>
-
-`ss -lnt` показывает `Recv-Q` 9 при `Send-Q` 8 — очередь полна; `ListenOverflows` и
-`ListenDrops` растут на десятки в секунду. Новый клиент подключается мгновенно, если попал в
-момент освобождения места, или через ~1 с / ~3 с: его SYN выброшен, и он повторяет SYN по
-RTO (1 с, затем +2 с).
-
-</details>
-
-**3.** Как выглядит «мёртвый» DNS-сервер: `dig @192.0.2.1 example.com +timeout=2 +tries=1`.
-
-<details><summary>Ответ</summary>
-
-С 3% потерь в `ss -tin` растёт второй счётчик `retrans`, `cwnd` скачет и остаётся
-небольшим, появляются `lost`, в выводе iperf3 — колонка `Retr` с сотнями, скорость заметно
-ниже. `tcpretrans-bpfcc` печатает ретрансмиты с адресами, `nstat TcpRetransSegs` растёт.
-Без netem `retrans` 0/0 и скорость — гигабиты.
-
-</details>
-
-### C9. Декодер softnet_stat
+#### C9. Декодер softnet_stat
 Напиши однострочник, который печатает по каждому CPU обработанные, выброшенные пакеты
 и time_squeeze в десятичном виде (в Ubuntu `awk` — это mawk, без `strtonum`).
+
+<details><summary>Ответ</summary>
+
+```bash
+n=0; while read -r a b c _; do
+  printf 'cpu%d processed=%d dropped=%d squeezed=%d\n' $n 0x$a 0x$b 0x$c; n=$((n+1))
+done < /proc/net/softnet_stat
+```
+`printf` в bash понимает числа с префиксом `0x`.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После релиза ~1% запросов к API стали дольше ровно на 1 или 3 секунды. В логах
 сервера чисто, CPU 20%. Как искать?
@@ -1376,13 +1124,14 @@ IRQ, RPS (`/sys/class/net/eth0/queues/rx-0/rps_cpus`), затем умеренн
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как понять, что сервер не успевает принимать новые соединения?
 
 <details><summary>Ответ</summary>
 
-/3/7 с и SYN-ретрансмиты; в `dmesg` возможно `Possible SYN flooding`. Причина обычно —
-   медленный `accept()` в приложении.
+Слушающий сокет в `ss -lnt`: `Recv-Q` у значения `Send-Q` — accept queue полна; дельта
+`TcpExtListenOverflows`/`ListenDrops` в `nstat` растёт; у клиентов задержки подключения
+1/3/7 с и SYN-ретрансмиты; в `dmesg` возможно `Possible SYN flooding`. Причина обычно —
+медленный `accept()` в приложении.
 
 </details>
 
@@ -1391,9 +1140,9 @@ IRQ, RPS (`/sys/class/net/eth0/queues/rx-0/rps_cpus`), затем умеренн
 <details><summary>Ответ</summary>
 
 TIME_WAIT — нормальное состояние ядра на стороне, закрывшей соединение первой, 60 с; много
-   их — много коротких соединений, опасно исчерпанием портов; лечится keep-alive и
-   `tcp_tw_reuse`. CLOSE_WAIT — пир закрыл, а приложение не вызвало `close()`: баг и утечка fd,
-   лечится в коде.
+их — много коротких соединений, опасно исчерпанием портов; лечится keep-alive и
+`tcp_tw_reuse`. CLOSE_WAIT — пир закрыл, а приложение не вызвало `close()`: баг и утечка fd,
+лечится в коде.
 
 </details>
 
@@ -1402,8 +1151,8 @@ TIME_WAIT — нормальное состояние ядра на сторон
 <details><summary>Ответ</summary>
 
 `tcp_tw_reuse=1` разрешает безопасно переиспользовать TIME_WAIT для исходящих соединений
-   (по timestamps), дефолт 2 — только loopback. `tcp_tw_recycle` ломал клиентов за NAT и удалён
-   в 4.12 — ответ «никогда».
+(по timestamps), дефолт 2 — только loopback. `tcp_tw_recycle` ломал клиентов за NAT и удалён
+в 4.12 — ответ «никогда».
 
 </details>
 
@@ -1412,8 +1161,8 @@ TIME_WAIT — нормальное состояние ядра на сторон
 <details><summary>Ответ</summary>
 
 С одного src IP к одному dst IP:port меняется только src port: 28 232 порта / 60 с TIME_WAIT
-   ≈ 470 новых соединений в секунду. Больше — keep-alive, `tcp_tw_reuse`, шире диапазон,
-   больше адресов.
+≈ 470 новых соединений в секунду. Больше — keep-alive, `tcp_tw_reuse`, шире диапазон,
+больше адресов.
 
 </details>
 
@@ -1422,8 +1171,8 @@ TIME_WAIT — нормальное состояние ядра на сторон
 <details><summary>Ответ</summary>
 
 Таблица отслеживания соединений netfilter для stateful-фильтрации и NAT (Docker, k8s,
-   файрволы). При переполнении новые соединения молча выбрасываются: случайные таймауты при
-   нормальных CPU и памяти; в `dmesg` — `table full, dropping packet`.
+файрволы). При переполнении новые соединения молча выбрасываются: случайные таймауты при
+нормальных CPU и памяти; в `dmesg` — `table full, dropping packet`.
 
 </details>
 
@@ -1432,9 +1181,9 @@ TIME_WAIT — нормальное состояние ядра на сторон
 <details><summary>Ответ</summary>
 
 Понять, чей лимит: `EMFILE` (процесс) или `ENFILE` (система); сравнить
-   `ls /proc/PID/fd | wc -l` с `/proc/PID/limits`; посмотреть, что за fd и растут ли (CLOSE-WAIT —
-   утечка). Временно поднять `LimitNOFILE` в юните, постоянно — чинить утечку и алертить на
-   долю использованных fd.
+`ls /proc/PID/fd | wc -l` с `/proc/PID/limits`; посмотреть, что за fd и растут ли (CLOSE-WAIT —
+утечка). Временно поднять `LimitNOFILE` в юните, постоянно — чинить утечку и алертить на
+долю использованных fd.
 
 </details>
 
@@ -1443,8 +1192,8 @@ TIME_WAIT — нормальное состояние ядра на сторон
 <details><summary>Ответ</summary>
 
 `ss -ti`: ретрансмиты, `lost`, RTT ≫ minRTT — путь; `app_limited`, `rwnd_limited`, большой
-   `Recv-Q` у получателя — приложение. Плюс `curl -w` по фазам и дамп с двух сторон:
-   где пропадают пакеты или время.
+`Recv-Q` у получателя — приложение. Плюс `curl -w` по фазам и дамп с двух сторон:
+где пропадают пакеты или время.
 
 </details>
 
@@ -1453,8 +1202,8 @@ TIME_WAIT — нормальное состояние ядра на сторон
 <details><summary>Ответ</summary>
 
 Ring buffer NIC (`missed`, `rx_fifo_errors`), backlog softirq (softnet_stat), netfilter/conntrack,
-   очереди TCP (SYN/accept), буфер сокета (`skmem` drops). Инструменты: `ip -s link`,
-   `ethtool -S`, `/proc/net/softnet_stat`, `conntrack -S`, `nstat`, `tcpdrop-bpfcc`.
+очереди TCP (SYN/accept), буфер сокета (`skmem` drops). Инструменты: `ip -s link`,
+`ethtool -S`, `/proc/net/softnet_stat`, `conntrack -S`, `nstat`, `tcpdrop-bpfcc`.
 
 </details>
 
@@ -1463,8 +1212,8 @@ Ring buffer NIC (`missed`, `rx_fifo_errors`), backlog softirq (softnet_stat), ne
 <details><summary>Ответ</summary>
 
 Резолв выполняется до соединения и в метриках прячется внутри времени запроса; мёртвый
-   первый сервер даёт ровно 5 с, в k8s `ndots:5` множит запросы. Ловится `time_namelookup`,
-   `gethostlatency-bpfcc`, `tcpdump port 53`.
+первый сервер даёт ровно 5 с, в k8s `ndots:5` множит запросы. Ловится `time_namelookup`,
+`gethostlatency-bpfcc`, `tcpdump port 53`.
 
 </details>
 
@@ -1473,12 +1222,10 @@ Ring buffer NIC (`missed`, `rx_fifo_errors`), backlog softirq (softnet_stat), ne
 <details><summary>Ответ</summary>
 
 Только по доказательству: `somaxconn` + backlog приложения — при растущих `ListenOverflows`
-    на всплесках; `ip_local_port_range`/`tcp_tw_reuse=1` — при `EADDRNOTAVAIL`;
-    `nf_conntrack_max` — при `table full`; `netdev_max_backlog` — при дропах в softnet_stat.
-    По одному, с замером до/после, в `/etc/sysctl.d` с комментарием. Никогда — `tcp_tw_recycle`
-    и `tcp_syncookies=0`.
-
----
+на всплесках; `ip_local_port_range`/`tcp_tw_reuse=1` — при `EADDRNOTAVAIL`;
+`nf_conntrack_max` — при `table full`; `netdev_max_backlog` — при дропах в softnet_stat.
+По одному, с замером до/после, в `/etc/sysctl.d` с комментарием. Никогда — `tcp_tw_recycle`
+и `tcp_syncookies=0`.
 
 </details>
 

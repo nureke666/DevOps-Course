@@ -1,13 +1,13 @@
 ---
 title: "08. Портал разработчика: Backstage"
-description: "Блок → Platform Engineering → единая точка входа. Зачем портал и как мерить платформу —"
+description: "Каталог и catalog-info.yaml, шаблоны (scaffolder), TechDocs, плагины, внедрение и метрики использования"
 ---
 
 # 08. Портал разработчика: Backstage
 
 > Блок → Platform Engineering → **единая точка входа**. Зачем портал и как мерить платформу —
-> [01_platform_engineering.md](/platform/01-platform-engineering); GitOps и App of Apps —
-> [../Left/07_ArgoCD/04_app_of_apps.md](/argocd/04-app-of-apps).
+> [01. Platform Engineering: платформа как продукт](/platform/01-platform-engineering); GitOps и App of Apps —
+> [ArgoCD: 04. App of Apps и ApplicationSet](/argocd/04-app-of-apps).
 > Вопросы собеса: *«Как у вас узнают, кто владелец сервиса?»*, *«Как создаётся новый сервис?»*,
 > *«Внедряли Backstage? Сколько стоит его поддерживать?»*
 > **После темы ты умеешь:** описать linkd в каталоге (`catalog-info.yaml` с владельцем, системой,
@@ -21,7 +21,7 @@ description: "Блок → Platform Engineering → единая точка вх
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                          Backstage (localhost:3000 UI, :7007 backend)
  ┌───────────────────────────────────────────────────────────────────────────────┐
  │ Каталог: Component linkd ─ owner ─► Group team-a ─ system ─► System shortener │
@@ -34,7 +34,8 @@ description: "Блок → Platform Engineering → единая точка вх
             ▼                       ▼ publish:gitlab →          ▼ ArgoCD API
      GitLab / GitHub          новый репозиторий          kind: LinkdApp, Deployment,
      (discovery)              + catalog:register         Application в ArgoCD
-```text
+```
+
 ---
 
 ## 1. Что такое Backstage и сколько он стоит
@@ -125,7 +126,8 @@ apiVersion: backstage.io/v1alpha1
 kind: System
 metadata: { name: shortener }
 spec: { owner: group:team-a, domain: growth }
-```text
+```
+
 ```yaml
 # org.yaml — в репозитории платформы (или синхронизация из GitLab/LDAP/Entra ID)
 apiVersion: backstage.io/v1alpha1
@@ -141,7 +143,8 @@ apiVersion: backstage.io/v1alpha1
 kind: User
 metadata: { name: nurdaulet }
 spec: { memberOf: [team-a], profile: { email: nurdaulet@example.kz } }
-```text
+```
+
 Ссылки на сущности — `kind:namespace/name`, по умолчанию `component:default/linkd`.
 Из `owner`, `system`, `dependsOn`, `providesApis` каталог строит **граф связей**: «что сломается,
 если упадёт `linkd-db`», «все сервисы команды», «кто потребляет этот API».
@@ -174,7 +177,8 @@ catalog:
         group: platform-kz                      # сканировать группу и подгруппы
         entityFilename: catalog-info.yaml
         schedule: { frequency: { minutes: 30 }, timeout: { minutes: 3 } }
-```text
+```
+
 Каталог устаревает, когда `catalog-info.yaml` живёт отдельно от кода. Правило: **файл в репозитории
 сервиса**, меняется тем же MR, что и код; CI проверяет его схему (`owner` существует, `lifecycle`
 из списка); discovery сам подхватывает изменения. Сущность, чей файл исчез, становится
@@ -187,10 +191,10 @@ catalog:
 Scaffolder — форма (JSON Schema) + шаги (actions). Шаблон — тоже сущность каталога,
 `apiVersion: scaffolder.backstage.io/v1beta3`.
 
-```text
+```text:no-line-numbers
 templates/linkd-service/
 ├── template.yaml
-└── skeleton/                          # файлы с подстановками $&#123;&#123; values.* &#125;&#125; (nunjucks)
+└── skeleton/                          # файлы с подстановками ${{ values.* }} (nunjucks)
     ├── app/main.py                    # «hello» на Python c /healthz, /readyz, /metrics
     ├── Dockerfile
     ├── .gitlab-ci.yml                 # сборка, тесты, trivy, push, bump тега в gitops
@@ -199,7 +203,8 @@ templates/linkd-service/
     ├── catalog-info.yaml              # owner, system, аннотации — из формы
     ├── mkdocs.yml
     └── docs/index.md                  # «как запустить локально», runbook-заготовка
-```text
+```
+
 ```yaml
 # templates/linkd-service/template.yaml
 apiVersion: scaffolder.backstage.io/v1beta3
@@ -247,16 +252,16 @@ spec:
       input:
         url: ./skeleton
         values:
-          name: $&#123;&#123; parameters.name &#125;&#125;
-          owner: $&#123;&#123; parameters.owner &#125;&#125;
-          system: $&#123;&#123; parameters.system &#125;&#125;
-          database: $&#123;&#123; parameters.database &#125;&#125;
-          host: $&#123;&#123; parameters.name &#125;&#125;.apps.example.kz
+          name: ${{ parameters.name }}
+          owner: ${{ parameters.owner }}
+          system: ${{ parameters.system }}
+          database: ${{ parameters.database }}
+          host: ${{ parameters.name }}.apps.example.kz
     - id: publish
       name: Репозиторий
       action: publish:gitlab                      # publish:github / publish:gitea — модулями
       input:
-        repoUrl: $&#123;&#123; parameters.repoUrl &#125;&#125;
+        repoUrl: ${{ parameters.repoUrl }}
         defaultBranch: main
         repoVisibility: internal
     - id: gitops
@@ -264,40 +269,42 @@ spec:
       action: publish:gitlab:merge-request        # MR в gitops-репо: Application для сервиса
       input:
         repoUrl: git.example.kz?owner=platform-kz&repo=gitops
-        branchName: add-$&#123;&#123; parameters.name &#125;&#125;
-        title: "Добавить $&#123;&#123; parameters.name &#125;&#125;"
+        branchName: add-${{ parameters.name }}
+        title: "Добавить ${{ parameters.name }}"
         description: Создано шаблоном linkd-service
         sourcePath: ./gitops                      # подготовлен вторым fetch:template (опущен)
-        targetPath: apps/$&#123;&#123; parameters.name &#125;&#125;
+        targetPath: apps/${{ parameters.name }}
     - id: register
       name: Каталог
       action: catalog:register
       input:
-        repoContentsUrl: $&#123;&#123; steps.publish.output.repoContentsUrl &#125;&#125;
+        repoContentsUrl: ${{ steps.publish.output.repoContentsUrl }}
         catalogInfoPath: /catalog-info.yaml
   output:
     links:
-      - { title: Репозиторий, url: "$&#123;&#123; steps.publish.output.remoteUrl &#125;&#125;" }
-      - { title: Открыть в каталоге, icon: catalog, entityRef: "$&#123;&#123; steps.register.output.entityRef &#125;&#125;" }
-```text
+      - { title: Репозиторий, url: "${{ steps.publish.output.remoteUrl }}" }
+      - { title: Открыть в каталоге, icon: catalog, entityRef: "${{ steps.register.output.entityRef }}" }
+```
+
 ```yaml
 # skeleton/catalog-info.yaml — подстановки из values
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: $&#123;&#123; values.name &#125;&#125;
+  name: ${{ values.name }}
   annotations:
     backstage.io/techdocs-ref: dir:.
-    backstage.io/kubernetes-id: $&#123;&#123; values.name &#125;&#125;
-    argocd/app-name: $&#123;&#123; values.name &#125;&#125;
+    backstage.io/kubernetes-id: ${{ values.name }}
+    argocd/app-name: ${{ values.name }}
 spec:
   type: service
   lifecycle: experimental
-  owner: $&#123;&#123; values.owner &#125;&#125;
-  system: $&#123;&#123; values.system &#125;&#125;
-```text
+  owner: ${{ values.owner }}
+  system: ${{ values.system }}
+```
+
 - Шаги выполняются **по порядку на backend**; у шага есть `if:` и `each:`, в новых версиях —
-  `if: $&#123;&#123; failure() &#125;&#125;` для уборки (удалить репозиторий, если дальше упало).
+  <code v-pre>if: ${{ failure() }}</code> для уборки (удалить репозиторий, если дальше упало).
 - Встроенные действия: `fetch:template`, `fetch:plain`, `publish:github`, `publish:gitlab`,
   `catalog:register`, `debug:log`; модули — `publish:gitea`, `publish:bitbucket`, `gitlab:*`, `github:*`.
   Список на своём инстансе — `/create/actions`.
@@ -320,7 +327,8 @@ nav:
   - Runbook: runbook.md
   - API: api.md
 plugins: [techdocs-core]
-```text
+```
+
 | Режим | Как | Где |
 |-------|-----|-----|
 | `techdocs.builder: local` | Backstage сам собирает при открытии (генератор в Docker или локально) | Стенд, маленькие инсталляции |
@@ -351,17 +359,19 @@ kubernetes:
     - type: config
       clusters:
         - name: kind-platform
-          url: https://127.0.0.1:&lt;порт из kubectl config view&gt;
+          url: https://127.0.0.1:<порт из kubectl config view>
           authProvider: serviceAccount
           serviceAccountToken: ${K8S_SA_TOKEN}   # kubectl create token backstage -n backstage --duration=24h
           skipTLSVerify: true                    # только стенд
-```text
+```
+
 ```ts
 // packages/backend/src/index.ts — новая backend-система: плагин = одна строка
 backend.add(import('@backstage/plugin-kubernetes-backend'));             // уже есть в create-app
 backend.add(import('@backstage/plugin-scaffolder-backend-module-gitlab')); // publish:gitlab
 backend.add(import('@backstage/plugin-catalog-backend-module-gitlab'));    // discovery
-```text
+```
+
 ---
 
 ## 7. Auth и права — коротко
@@ -386,7 +396,8 @@ backend.add(import('@backstage/plugin-catalog-backend-module-gitlab'));    // di
 npx @backstage/create-app@latest         # имя: platform-portal
 cd platform-portal
 yarn start                               # UI http://localhost:3000, backend :7007, вход guest
-```text
+```
+
 **Шаг 2. linkd в каталоге.** Положи `catalog-info.yaml` из §2 и `org.yaml` в каталог
 `catalog/` рядом и подключи их статично (файлы — относительно `packages/backend`):
 
@@ -398,7 +409,8 @@ catalog:
     - { type: file, target: ../../catalog/linkd/catalog-info.yaml,
         rules: [{ allow: [Component, API, System, Resource] }] }
     - { type: file, target: ../../templates/linkd-service/template.yaml, rules: [{ allow: [Template] }] }
-```text
+```
+
 Перезапусти `yarn start`. Проверь: страница `linkd`, вкладка Dependencies (граф с `linkd-db`,
 `linkd-api`, `shortener`), «My Groups» у команды `team-a`, вкладка API с OpenAPI.
 
@@ -440,7 +452,7 @@ linkd метку `backstage.io/kubernetes-id: linkd` — поды появятс
 | Использование шаблонов | Запусков в месяц, доля новых сервисов «через шаблон» | Большинство новых |
 | Активные пользователи | WAU портала среди разработчиков | Растёт после каждого плагина |
 | Свежесть | Доля сущностей с orphan/ошибками, доков старше года | Снижается |
-| Удовлетворённость | Опрос DevEx раз в квартал ([01_platform_engineering.md](/platform/01-platform-engineering)) | Растёт |
+| Удовлетворённость | Опрос DevEx раз в квартал ([01. Platform Engineering: платформа как продукт](/platform/01-platform-engineering)) | Растёт |
 
 **Антипаттерны:** «портал ради портала» без данных; обязательное заполнение 30 полей;
 Backstage как единственный способ создать сервис (golden path должен быть удобным, а не
@@ -506,7 +518,7 @@ Backstage как единственный способ создать серви
 | Документация | `mkdocs.yml` + `docs/` + `backstage.io/techdocs-ref: dir:.` |
 | Автонаполнение | `catalog.providers.gitlab` / `github` (discovery) |
 | Шаблон | `scaffolder.backstage.io/v1beta3`: `parameters` + `steps` (`fetch:template` → `publish:*` → `catalog:register`) |
-| Подстановки в скелете | `$&#123;&#123; values.name &#125;&#125;`, условия `{% if values.database %}` |
+| Подстановки в скелете | <code v-pre>${{ values.name }}</code>, условия `{% if values.database %}` |
 | Проверить шаблон | Template Editor `/create/edit`, список действий `/create/actions` |
 | Плагин на backend | `backend.add(import('@backstage/plugin-...'))` |
 | Обновить Backstage | `yarn backstage-cli versions:bump` |
@@ -531,13 +543,16 @@ Backstage как единственный способ создать серви
     time to first deploy, использование шаблонов.
 11. Альтернативы: Port, Cortex (SaaS), Roadie/RHDH (Backstage как сервис), «README + шаблоны» для малых команд.
 
-➡️ Дальше: [09_practice_labs.md](/python/09-practice-labs) · Задачи: 08_backstage_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«Как узнать владельца сервиса?»*, *«Как создаётся новый сервис?»*,
+> *«Стоит ли Backstage своих денег?»* — сильный ответ содержит метрики и цену поддержки.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Что такое Backstage? Почему его называют фреймворком, а не продуктом?
 
@@ -655,7 +670,7 @@ sign-in resolver не находит пользователя, «My Groups» п�
 <details><summary>Ответ</summary>
 
 `parameters` — что спросить у пользователя; `steps` — что сделать на backend по порядку.
-В `fetch:template` значения передаются в `values`, в скелете — `$&#123;&#123; values.name &#125;&#125;` и условия nunjucks.
+В `fetch:template` значения передаются в `values`, в скелете — <code v-pre>${{ values.name }}</code> и условия nunjucks.
 
 </details>
 
@@ -777,172 +792,190 @@ Port, Cortex, OpsLevel (SaaS), Roadie и Red Hat Developer Hub (Backstage как
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```yaml
 # B1
-```text
-```text:no-line-numbers
 spec:
-```text
-```text:no-line-numbers
   type: service
-```text
-```text:no-line-numbers
   owner: vasya
-```text
+```
 Вопрос: что покажет каталог и что будет, когда Вася уйдёт?
 
-```text:no-line-numbers
+```yaml
 # B2 — catalog-info.yaml в общем репозитории «service-registry», не рядом с кодом
-```text
+```
 Вопрос: что станет с каталогом через полгода?
 
-```text:no-line-numbers
+```yaml
 # B3
-```text
-```text:no-line-numbers
 spec:
-```text
-```text:no-line-numbers
   owner: group:team-z      # такой Group нет в каталоге
-```text
+```
 Вопрос: примет ли каталог сущность? Где искать ошибку?
 
-```text:no-line-numbers
+```yaml
 # B4 — catalog.rules
-```text
-```text:no-line-numbers
 - allow: [Component, API, Group, User, Location]
-```text
-```text:no-line-numbers
 # в репозитории сервиса есть kind: Resource linkd-db
-```text
+```
 Вопрос: появится ли `linkd-db` в каталоге?
 
-```text:no-line-numbers
+```yaml
 # B5 — шаблон
-```text
-```text:no-line-numbers
 name:
-```text
-```text:no-line-numbers
   type: string
-```text
-```text:no-line-numbers
   pattern: '^[a-z][a-z0-9-]{2,30}$'
-```text
-```text:no-line-numbers
 # пользователь вводит "Linkd_Service"
-```text
+```
 Вопрос: что произойдёт?
 
-```text:no-line-numbers
+```yaml
 # B6 — шаги шаблона
-```text
-```text:no-line-numbers
 - id: publish
-```text
-```text:no-line-numbers
   action: publish:gitlab
-```text
-```text:no-line-numbers
 - id: register
-```text
-```text:no-line-numbers
   action: catalog:register
-```text
-```text:no-line-numbers
 # publish прошёл, register упал: в catalog-info.yaml опечатка
-```text
+```
 Вопрос: в каком состоянии останутся репозиторий и каталог? Как улучшить шаблон?
 
-```text:no-line-numbers
+```yaml
 # B7 — app-config
-```text
-```text:no-line-numbers
 techdocs:
-```text
-```text:no-line-numbers
   builder: local
-```text
-```text:no-line-numbers
 # 300 сервисов, у каждого большие доки
-```text
+```
 Вопрос: что заметят пользователи портала?
 
-```text:no-line-numbers
+```yaml
 # B8 — Deployment linkd без метки backstage.io/kubernetes-id, в catalog-info аннотация есть
-```text
+```
 Вопрос: что покажет вкладка Kubernetes?
 
-```text:no-line-numbers
+```yaml
 # B9 — permission: allow-all-policy в проде; шаблон «удалить репозиторий» доступен всем
-```text
+```
 Вопрос: что может пойти не так?
 
-```text:no-line-numbers
+```bash
 # B10 — Backstage 1.43, решили обновиться сразу на 1.55
-```text
-```text:no-line-numbers
 yarn backstage-cli versions:bump
-```text
+```
 Вопрос: чего ждать?
+
+<details><summary>Ответы</summary>
+
+**B1.** Каталог покажет `owner: user:vasya` (или ошибку связи, если такого User нет). Когда Вася
+уйдёт, сервис станет без владельца. Нужен `group:...`.
+
+**B2.** Файл перестанет совпадать с реальностью: его забывают менять вместе с кодом. Владельцы,
+ссылки и зависимости устареют.
+
+**B3.** Сущность обработается, но связь `ownedBy` будет висеть на несуществующую группу; ошибки видно
+в логах обработки каталога и в UI (сообщения о проблемах сущности), у сущности не будет владельца в фильтрах.
+
+**B4.** Нет — `Resource` не разрешён правилами каталога, сущность будет отклонена с ошибкой в логах.
+
+**B5.** Форма не даст перейти дальше: значение не проходит `pattern` JSON Schema.
+
+**B6.** Репозиторий создан, в каталоге сервиса нет. Улучшения: валидировать `catalog-info.yaml`
+в Template Editor/CI скелета, шаг уборки <code v-pre>if: ${{ failure() }}</code>, понятный `output` с инструкцией.
+
+**B7.** Медленное открытие вкладки Docs (сборка на лету), нагрузка на backend, таймауты.
+Для прода — `external` со сборкой в CI.
+
+**B8.** Вкладка пустая или «нет ресурсов»: плагин ищет объекты по метке `backstage.io/kubernetes-id=linkd`.
+
+**B9.** Любой пользователь удалит чужой репозиторий. Нужна permission-политика: такие шаблоны —
+только владельцам или платформе.
+
+**B10.** Прыжок через 12 версий с накопленными ломающими изменениями (удалённые API каталога,
+TechDocs, плагины). Правильнее обновляться регулярно; при прыжке — читать changelog каждой минорной
+и чинить поэтапно.
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Локальный Backstage
+#### C1. 🔑 Локальный Backstage
 Создай приложение `npx @backstage/create-app@latest`, запусти `yarn start`, войди как guest.
 Определи по коду `packages/app`, на какой frontend-системе создано приложение, и найди
 в `packages/backend/src/index.ts` плагины каталога, scaffolder'а, TechDocs и Kubernetes.
 
-### C2. 🔑 linkd в каталоге
+<details><summary>Ответ</summary>
+
+В свежих версиях `packages/app/src/App.tsx` импортирует `createApp` из
+`@backstage/frontend-defaults` — новая frontend-система; legacy-приложение — `@backstage/app-defaults`.
+
+</details>
+
+#### C2. 🔑 linkd в каталоге
 Опиши linkd как в конспекте: Component, API (реальный OpenAPI на эндпоинты linkd 2.0 из CHANGELOG),
 Resource `linkd-db`, System `shortener`, Group и User. Подключи файлы статично. Проверь граф
 зависимостей и страницу API.
 
-### C3. Ошибки каталога
+#### C3. Ошибки каталога
 Сломай сущности: несуществующий owner, неизвестный kind, невалидный YAML. Найди, где Backstage
 показывает ошибки обработки (логи backend и UI), и запиши, как это увидел бы владелец сервиса.
 
-### C4. 🔑 Шаблон golden path
+<details><summary>Ответ</summary>
+
+Ошибки видны в логах backend (`catalog` processing errors), в UI — на странице сущности
+и через плагин каталога с ошибками; владелец без доступа к логам узнает только через UI или уведомления.
+
+</details>
+
+#### C4. 🔑 Шаблон golden path
 Напиши шаблон `linkd-service` со скелетом: `app/main.py`, Dockerfile, CI, `deploy/linkdapp.yaml`,
 `deploy/database.yaml` по условию, `catalog-info.yaml`, `mkdocs.yml`, `docs/`. Публикация —
 в GitHub или GitLab. Прогони в Template Editor, затем по-настоящему.
 
-### C5. Шаг «приложение в ArgoCD»
+#### C5. Шаг «приложение в ArgoCD»
 Добавь в шаблон шаг, который создаёт MR (или PR) в gitops-репозиторий с ArgoCD Application
 для нового сервиса. После мержа проверь, что ArgoCD подхватил приложение.
 
-### C6. Уборка при ошибке
-Добавь в шаблон шаг с `if: $&#123;&#123; failure() &#125;&#125;`, который удаляет созданный репозиторий, если
+#### C6. Уборка при ошибке
+Добавь в шаблон шаг с <code v-pre>if: ${{ failure() }}</code>, который удаляет созданный репозиторий, если
 регистрация в каталоге упала. Проверь на намеренно сломанном `catalog-info.yaml`.
 
-### C7. TechDocs
+#### C7. TechDocs
 Подключи доки linkd: `mkdocs.yml`, три страницы (обзор, runbook, API). Затем собери их
 в «внешнем» режиме: `npx @techdocs/cli generate` локально и посмотри, что получилось.
 
-### C8. 🔑 Вкладка Kubernetes
+#### C8. 🔑 Вкладка Kubernetes
 Создай в kind ServiceAccount с правами только на чтение, выдай токен, подключи кластер к плагину
 Kubernetes. Поставь метку на Deployment linkd и убедись, что поды видны; сломай под (неверный образ)
 и посмотри, как это отображается.
 
-### C9. Метрики внедрения
+#### C9. Метрики внедрения
 Придумай, как считать «покрытие каталога» для кластера: сравни список Deployment с меткой
 `backstage.io/kubernetes-id` со списком всех Deployment в namespace команд (скрипт на Python
 или kubectl + jq). Запиши процент.
 
-### C10. «Портал без портала» (со звёздочкой)
+<details><summary>Ответ</summary>
+
+Пример: `kubectl get deploy -A -l backstage.io/kubernetes-id --no-headers | wc -l` делить на
+`kubectl get deploy -A --no-headers | grep -E '^team-' | wc -l` (namespace команд); скрипт на Python
+с клиентом `kubernetes` считает долю и печатает Deployment без метки — их владельцам и пишем.
+
+</details>
+
+#### C10. «Портал без портала» (со звёздочкой)
 Опиши минимальную альтернативу для 8 сервисов: `services.yaml` в git (владелец, дежурство,
 ссылки), репозиторий шаблонов (copier/cookiecutter или шаблоны проектов GitLab), доки в репозиториях,
 дашборд Grafana. Что потеряешь по сравнению с Backstage и когда станет пора переходить?
 
+<details><summary>Ответ</summary>
+
+Потеряешь граф связей, поиск, вкладки статусов, формы шаблонов и права. Пора переходить,
+когда сервисов десятки, команд много и поиск владельца/доков стоит времени на инцидентах.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Пользователи жалуются: половина сервисов в каталоге с неверными владельцами. Как исправить
 сейчас и навсегда?
@@ -1024,7 +1057,6 @@ GitLab, большие репозитории. Проверить логи, ув
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Что такое Backstage и из чего он состоит?
 
 <details><summary>Ответ</summary>
@@ -1038,7 +1070,7 @@ GitLab, большие репозитории. Проверить логи, ув
 <details><summary>Ответ</summary>
 
 `catalog-info.yaml` в репозитории сервиса (Component + API + Resource + System, owner — Group,
-   аннотации), discovery из GitLab, org-данные из источника правды, проверка в CI.
+аннотации), discovery из GitLab, org-данные из источника правды, проверка в CI.
 
 </details>
 
@@ -1047,7 +1079,7 @@ GitLab, большие репозитории. Проверить логи, ув
 <details><summary>Ответ</summary>
 
 Скелет: код с пробами и метриками, Dockerfile, CI, LinkdApp (и LinkdDatabase по галочке),
-   catalog-info, доки; шаги: `fetch:template` → `publish:gitlab` → MR в gitops → `catalog:register`.
+catalog-info, доки; шаги: `fetch:template` → `publish:gitlab` → MR в gitops → `catalog:register`.
 
 </details>
 
@@ -1080,7 +1112,7 @@ Kubernetes и ArgoCD (статус без kubectl), CI, дежурства и д
 <details><summary>Ответ</summary>
 
 Каталог → шаблон с пилотом → доки → плагины → scorecards; покрытие каталога, time to first deploy,
-   использование шаблонов, WAU, опросы DevEx.
+использование шаблонов, WAU, опросы DevEx.
 
 </details>
 
@@ -1089,7 +1121,7 @@ Kubernetes и ArgoCD (статус без kubectl), CI, дежурства и д
 <details><summary>Ответ</summary>
 
 По людям и масштабу: есть TypeScript-экспертиза и десятки сервисов — Backstage; нужен быстрый
-   результат без разработки — Port/Cortex; мало сервисов — «README + шаблоны».
+результат без разработки — Port/Cortex; мало сервисов — «README + шаблоны».
 
 </details>
 
@@ -1106,9 +1138,7 @@ SSO, sign-in resolver на User, permission-политика, минимальн
 <details><summary>Ответ</summary>
 
 Шаблон создаёт LinkdApp и Application (MR в gitops), ArgoCD доставляет, оператор разворачивает,
-    портал показывает статус через плагины Kubernetes и ArgoCD.
-
----
+портал показывает статус через плагины Kubernetes и ArgoCD.
 
 </details>
 

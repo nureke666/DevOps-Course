@@ -1,14 +1,14 @@
 ---
 title: "04. Управление уязвимостями"
-description: "Блок → Безопасность → тема 04. Опирается на"
+description: "CVE, CVSS v3.1/v4.0, EPSS, KEV, триаж Trivy, .trivyignore со сроком, SBOM, Renovate"
 ---
 
 # 04. Управление уязвимостями
 
 > Блок → Безопасность → тема 04. Опирается на
-> [../Docker/10_security_best_practices.md](/docker/10-security-best-practices) (сканеры, SBOM, cosign) ·
-> [../CICD/13_quality_security.md](/cicd/13-quality-security) (виды сканов, gate, supply chain) ·
-> [01_security_mindset.md](/security/01-security-mindset) (риск и поверхность атаки).
+> [Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices) (сканеры, SBOM, cosign) ·
+> [CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security) (виды сканов, gate, supply chain) ·
+> [01. Security mindset: как думать о безопасности](/security/01-security-mindset) (риск и поверхность атаки).
 > Там — **как запустить сканер**. Здесь — **что делать с его отчётом**: как отличить
 > срочное от шума, как оформить исключение, в какие сроки патчить и как не дать самому
 > сканеру стать точкой взлома.
@@ -22,7 +22,7 @@ description: "Блок → Безопасность → тема 04. Опира�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  ИСТОЧНИКИ ЗНАНИЙ           СКАНЕР                 ТРИАЖ                        РЕШЕНИЕ
  ────────────────           ──────                 ─────                        ───────
  CVE / NVD, GHSA, OSV  ─┐                          KEV? ─► да ─────────────────► P0: чинить сейчас
@@ -36,7 +36,8 @@ description: "Блок → Безопасность → тема 04. Опира�
                                                    есть fixed version? ── нет ► компенсирующие меры
                                                      ▼ да                         + пересмотр
                                                    патч в срок SLA по приоритету ► метрики: MTTR, SLA %
-```text
+```
+
 ---
 
 ## 1. Словарь: CVE, CWE и откуда берутся данные
@@ -61,7 +62,7 @@ description: "Блок → Безопасность → тема 04. Опира�
 
 **CVSS v3.1** — то, что до сих пор чаще всего в отчётах:
 
-```text
+```text:no-line-numbers
 CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H   = 9.8 CRITICAL
          │    │    │    │    │   └──┴───┴── последствия: конфиденциальность, целостность, доступность
          │    │    │    │    └── Scope: U — остаёмся в том же компоненте, C — выходим за него
@@ -69,7 +70,8 @@ CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H   = 9.8 CRITICAL
          │    │    └── Privileges Required: N — без логина
          │    └── Attack Complexity: L — без особых условий
          └── Attack Vector: N сеть · A соседняя сеть · L локально · P физически
-```text
+```
+
 **CVSS v4.0** (FIRST, ноябрь 2023) — что поменялось:
 
 | | v3.1 | v4.0 |
@@ -80,9 +82,10 @@ CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H   = 9.8 CRITICAL
 | Эксплуатация | Temporal E | **Threat: E** = X / A (attacked) / P (PoC) / U (unreported) |
 | Подпись оценки | просто «9.8» | **CVSS-B, CVSS-BT, CVSS-BE, CVSS-BTE** — видно, какие группы учтены |
 
-```text
+```
 CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N
-```text
+```
+
 Шкала одинакова для обеих версий: None 0.0 · Low 0.1–3.9 · Medium 4.0–6.9 · High 7.0–8.9 ·
 Critical 9.0–10.0.
 
@@ -117,7 +120,8 @@ curl -s -o kev.json https://www.cisa.gov/sites/default/files/feeds/known_exploit
 jq -r '.catalogVersion, .count' kev.json
 jq -r --arg c CVE-2021-44228 '.vulnerabilities[] | select(.cveID==$c)
   | [.cveID, .dateAdded, .dueDate, .knownRansomwareCampaignUse] | @tsv' kev.json
-```text
+```
+
 Живые данные для калибровки (EPSS на 26.09.2026, CVSS — NVD v3.1):
 
 | CVE | Что | CVSS | EPSS | KEV | Вывод |
@@ -137,7 +141,7 @@ jq -r --arg c CVE-2021-44228 '.vulnerabilities[] | select(.cveID==$c)
 
 ## 4. Триаж: алгоритм «что с этим делать»
 
-```text
+```text:no-line-numbers
  1. В KEV или есть публичный рабочий эксплойт / EPSS высокий (≳ 0.1)?
       └─ да → кандидат в P0/P1, дальше проверяем только достижимость
  2. Достижимо у нас?
@@ -152,7 +156,8 @@ jq -r --arg c CVE-2021-44228 '.vulnerabilities[] | select(.cveID==$c)
       └─ нет → компенсирующие меры: убрать пакет, выключить фичу, WAF-правило,
                NetworkPolicy, другой базовый образ; пересмотр каждые 30 дней
  4. Записать решение там, где его увидят: MR с фиксом, .trivyignore.yaml, VEX, тикет
-```text
+```
+
 | Решение | Когда | Где фиксируется |
 |---------|-------|-----------------|
 | **Fix now** | KEV/эксплойт + достижимо | Emergency change, инцидент при необходимости |
@@ -170,10 +175,11 @@ IMG=python:3.12-slim
 TRIVY='docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache
        -v "$PWD":/work -w /work aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969'
 eval $TRIVY image --quiet --scanners vuln --format json -o report.json $IMG
-```text
+```
+
 Реальный прогон 27.09.2026 (у тебя цифры будут другими — базы обновляются каждый день):
 
-```text
+```
 python:3.12-slim (Debian 13.7):  162 находки, но уникальных CVE — 74
   по severity:  CRITICAL 0 · HIGH 44 · MEDIUM 58 · LOW 58 · UNKNOWN 2
   уникальных HIGH CVE — всего 8: одна CVE util-linux «размножается» на bsdutils, libblkid1,
@@ -182,7 +188,8 @@ python:3.12-slim (Debian 13.7):  162 находки, но уникальных C
   все 6 fixed — pip 25.0.1 (lang-pkgs), MEDIUM/LOW
 Вывод: в слое ОС чинить нечего (фиксов нет), единственное действие — pip:
   обновить или вообще убрать из runtime-образа (multi-stage)
-```text
+```
+
 Поля, которые нужны для триажа:
 
 | Поле JSON | Смысл |
@@ -214,7 +221,8 @@ jq -r '[.Results[].Vulnerabilities[]?] | group_by(.PkgName)
 # CRITICAL/HIGH с источником оценки
 jq -r '.Results[].Vulnerabilities[]? | select(.Severity|test("CRITICAL|HIGH"))
   | [.VulnerabilityID,.PkgName,.Status,.Severity,(.SeveritySource//"-")] | @tsv' report.json
-```text
+```
+
 **Base image vs зависимости приложения:**
 
 | Находка | Кто чинит | Как |
@@ -232,22 +240,23 @@ jq -r '.Results[].Vulnerabilities[]? | select(.Severity|test("CRITICAL|HIGH"))
 
 ## 6. «Не всё CRITICAL срочно»: разбор CVE-2023-45853
 
-```text
+```
 debian:12-slim (Debian 12.15), Trivy 0.74.0, 27.09.2026:
   zlib1g 1:1.2.13.dfsg-1   CVE-2023-45853   CRITICAL   will_not_fix   SeveritySource=nvd (9.8)
-```text
+```
+
 | Вопрос триажа | Ответ |
 |---------------|-------|
 | KEV? | Нет |
 | EPSS? | 0.03179 на 26.09.2026 — низкая |
 | Что уязвимо? | MiniZip — отдельный contrib-код в исходниках zlib, «not a supported part of zlib» |
-| Достижимо? | Debian: `[bookworm] - zlib &lt;ignored&gt; (contrib/minizip not built…)` — **уязвимого кода нет в бинарном пакете** |
+| Достижимо? | Debian: `[bookworm] - zlib <ignored> (contrib/minizip not built…)` — **уязвимого кода нет в бинарном пакете** |
 | Фикс? | В Debian 13 (trixie) исправлено; в bookworm чинить нечего |
 | Решение | Not affected (`vulnerable_code_not_present`) через VEX или исключение со сроком до переезда на Debian 13 |
 
 Контрпример — **CVE-2023-44487**: всего HIGH (7.5), но в KEV и EPSS ≈ 1. Если твой nginx/Ingress
 терминирует HTTP/2 снаружи — это P0: обновить или ограничить HTTP/2 на краю
-([03_web_edge_security.md](/security/03-web-edge-security)).
+([03. Безопасность веба и периметра (edge)](/security/03-web-edge-security)).
 
 > ⭐ Приоритет = эксплуатируемость × достижимость × ценность актива. Severity из отчёта —
 > только стартовая точка.
@@ -263,7 +272,7 @@ vulnerabilities:
     purls:
       - "pkg:deb/debian/zlib1g"          # сужаем: только этот пакет
     expired_at: 2027-03-31               # после даты правило перестаёт действовать
-    statement: "MiniZip не собирается в bookworm (Debian &lt;ignored&gt;). Уйдём на trixie. SEC-142, владелец @nurik"
+    statement: "MiniZip не собирается в bookworm (Debian <ignored>). Уйдём на trixie. SEC-142, владелец @nurik"
   - id: CVE-2026-9538
     paths:
       - "usr/lib/x86_64-linux-gnu/perl-base"   # или сузь через purls
@@ -273,12 +282,14 @@ misconfigurations:
   - id: AVD-DS-0002
     paths: ["docker/debug.Dockerfile"]
     statement: "Отладочный образ, в прод не катится"
-```text
+```
+
 ```bash
 eval $TRIVY image --scanners vuln --severity CRITICAL --exit-code 1 \
   --ignorefile .trivyignore.yaml --show-suppressed debian:12-slim
 # ... в конце: «Suppressed Vulnerabilities» — ID, Statement и файл-источник
-```text
+```
+
 Проверено: запись с `expired_at` в прошлом **не применяется** — находка возвращается в отчёт,
 и gate снова краснеет. Это и есть механизм «исключение само напомнит о себе».
 
@@ -316,10 +327,11 @@ YAML лучше: есть `statement`, `purls`, `paths`.
     "impact_statement": "contrib/minizip не собирается в Debian 12"
   }]
 }
-```text
+```
 ```bash
 eval $TRIVY image --vex vex.openvex.json registry.example.kz/team/app:1.4.2
-```text
+```
+
 | | `.trivyignore.yaml` | VEX |
 |---|---------------------|-----|
 | Смысл | «Принимаем риск до даты» | «Уязвимость к продукту неприменима» — факт |
@@ -344,7 +356,7 @@ eval $TRIVY image --vex vex.openvex.json registry.example.kz/team/app:1.4.2
 - Просрочка SLA = исключение с подписью владельца риска, а не тишина.
 - Регуляторы задают минимум: PCI DSS 4.0.1, требование 6.3.3 — патчи для критичных
   уязвимостей ставятся в течение месяца после выхода (проверь актуальную редакцию;
-  подробнее о compliance — [07_security_incidents_compliance.md](/security/07-security-incidents-compliance)).
+  подробнее о compliance — [07. Инциденты безопасности и compliance](/security/07-security-incidents-compliance)).
 
 ---
 
@@ -377,7 +389,8 @@ jq -r '.components[] | select(.name|test("^xz|liblzma")) | "\(.name) \(.version)
 # привязать SBOM к образу подписанной аттестацией (cosign v3)
 cosign attest --key cosign.key --type cyclonedx --predicate sbom.cdx.json registry.example.kz/team/app@sha256:…
 cosign verify-attestation --key cosign.pub --type cyclonedx registry.example.kz/team/app@sha256:…
-```text
+```
+
 Практика: SBOM — артефакт CI на **каждый digest** образа; хранится столько же, сколько
 образ живёт в проде; `cosign attach sbom` устарел — используй аттестации.
 
@@ -399,7 +412,8 @@ cosign verify-attestation --key cosign.pub --type cyclonedx registry.example.kz/
     { "matchUpdateTypes": ["major"], "dependencyDashboardApproval": true }
   ]
 }
-```text
+```
+
 - `config:best-practices` = `config:recommended` + `docker:pinDigests` +
   `helpers:pinGitHubActionDigests` + ещё несколько пресетов: Renovate сам пропишет digest
   к `FROM python:3.12-slim` и будет его обновлять.
@@ -412,8 +426,8 @@ cosign verify-attestation --key cosign.pub --type cyclonedx registry.example.kz/
 
 Процесс обновления базового образа:
 
-```text
- FROM python:3.12-slim@sha256:&lt;digest&gt;     ← пин: сборка воспроизводима
+```text:no-line-numbers
+ FROM python:3.12-slim@sha256:<digest>     ← пин: сборка воспроизводима
         │  Renovate: MR «update python digest» (раз в неделю / при security-фиксе)
         ▼
  CI: build --pull → trivy (gate) → SBOM → push → deploy stage
@@ -422,7 +436,8 @@ cosign verify-attestation --key cosign.pub --type cyclonedx registry.example.kz/
  cron каждую ночь:  пересканировать образы, которые СЕЙЧАС в проде:
         kubectl get pods -A -o jsonpath='{..image}' | tr ' ' '\n' | sort -u
  метрика: «возраст базового образа» — дней с даты сборки базы (docker inspect .Created)
-```text
+```
+
 ---
 
 ## 11. Урок марта 2026: сканер как точка атаки
@@ -430,11 +445,11 @@ cosign verify-attestation --key cosign.pub --type cyclonedx registry.example.kz/
 19–23 марта 2026 злоумышленники (TeamPCP) скомпрометировали экосистему Trivy
 (advisory GHSA-69fq-xp46-6x23): вредоносные бинарники v0.69.4, образы Docker Hub **v0.69.5 и
 v0.69.6**, перебиты 76 из 77 тегов `aquasecurity/trivy-action` и все 7 тегов `setup-trivy`.
-Код читал память раннера через `/proc/&lt;pid&gt;/mem`, собирал SSH-ключи, облачные креды и
+Код читал память раннера через `/proc/<pid>/mem`, собирал SSH-ключи, облачные креды и
 токены Kubernetes; запасной канал вывоза — публичный репозиторий `tpcp-docs`.
 
 Кто в эти дни тянул `aquasec/trivy:latest` (как в примере из
-[../CICD/13_quality_security.md](/cicd/13-quality-security) — там `latest` ради простоты),
+[CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security) — там `latest` ради простоты),
 мог получить заражённый образ, **ничего не меняя в своём пайплайне**.
 
 | Мера | Как |
@@ -443,7 +458,7 @@ v0.69.6**, перебиты 76 из 77 тегов `aquasecurity/trivy-action` и
 | Зеркало в свой registry | CI тянет только из своего registry, обновление — осознанным MR |
 | Задержка новых версий | `minimumReleaseAge` в Renovate |
 | Минимум секретов у scan-джоб | Скан — в отдельной стадии без protected-переменных и deploy-токенов |
-| Готовность к ротации | Инвентарь секретов, доступных пайплайну ([../Project/08_secrets_security.md](/project/08-secrets-security)) |
+| Готовность к ротации | Инвентарь секретов, доступных пайплайну ([Пет-проект: 08. Секреты и безопасность](/project/08-secrets-security)) |
 | Если затронут | Обновиться на безопасную версию, **ротировать всё**, что видел раннер, искать `tpcp-docs` в своей организации |
 
 ---
@@ -530,13 +545,18 @@ v0.69.6**, перебиты 76 из 77 тегов `aquasecurity/trivy-action` и
 9. SBOM на каждый digest — ответ на «где у нас X» за минуты; рескан SBOM без пересборки.
 10. Сканер — тоже supply chain: пин по digest/SHA, зеркало, минимум секретов (урок марта 2026).
 
-➡️ Дальше: [05_iam_access.md](/security/05-iam-access) · задачи: 04_vuln_management_tasks.md
+---
 
+## Задачи
+
+> Стенд: `~/labs/security/ci` из [Безопасность](/security/) — демо-приложение с
+> `requirements.txt` и Dockerfile на `python:3.12-slim`. Сканеры — контейнерами с пином
+> версии: `aquasec/trivy:0.74.0`, `anchore/syft:v1.52.0`. Переменная `TRIVY` — как в разделе 5
+> конспекта. Цифры в отчётах у тебя будут другими: базы обновляются каждый день.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем CVE отличается от CWE и GHSA? Кто выдаёт CVE ID?
 
@@ -603,7 +623,8 @@ EPSS не знает твою архитектуру — нужен триаж �
 
 <details><summary>Ответ</summary>
 
-1) KEV / публичный эксплойт / высокий EPSS? 2) Достижимо у нас? 3) Есть fixed version?
+1\) KEV / публичный эксплойт / высокий EPSS? 2) Достижимо у нас? 3) Есть fixed version?
+4) Решение (fix now / fix in SLA / mitigate / accept / not affected) и запись там, где его увидят.
 
 </details>
 
@@ -673,6 +694,9 @@ PCI DSS 4.0.1 в 6.3.3?
 <details><summary>Ответ</summary>
 
 P0 (KEV/эксплуатация + достижимо) — 24–72 часа; P1 (CRITICAL + эксплойт/EPSS + достижимо) —
+7 дней; P2 (CRITICAL/HIGH с фиксом) — 30 дней; P3 — 90 дней; без фикса — компенсация и пересмотр
+раз в 30 дней. Часы идут с момента обнаружения при доступном фиксе — это прописывается.
+PCI DSS 4.0.1, 6.3.3: патчи для критичных уязвимостей — в течение месяца после выхода.
 
 </details>
 
@@ -703,243 +727,244 @@ protected-переменных и deploy-токенов, инвентарь се
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```yaml
 B1.  # .trivyignore.yaml
-```text
-<details><summary>Ответ</summary>
+     vulnerabilities:
+       - id: CVE-2024-6387
+         statement: Accept the risk
 
-⚠️ Нет срока, нет причины, нет сужения по пакету — и это regreSSHion с EPSS ≈ 0,995.
+B2.  # gate в CI
+     trivy image --severity HIGH,CRITICAL --exit-code 1 app:$CI_COMMIT_SHORT_SHA
+     # базовый образ python:3.12-slim, пайплайн красный третью неделю
+
+B3.  scan:image:
+       image: {name: aquasec/trivy:latest, entrypoint: [""]}
+       variables:
+         KUBECONFIG_PROD: $KUBECONFIG_PROD      # «чтобы потом сразу задеплоить»
+       script: [trivy image --exit-code 1 --severity CRITICAL $IMAGE]
+
+B4.  # решение на планёрке
+     «CVE-2023-45853 в zlib1g, CRITICAL 9.8 — стоп всех релизов до фикса.»
+     # образы на debian:12-slim
+
+B5.  # отчёт по образу публичного nginx-ingress
+     CVE-2023-44487  HIGH 7.5  → «не CRITICAL, берём в плановые 90 дней»
+
+B6.  # письмо руководству
+     «В образе python:3.12-slim найдено 162 уязвимости!»
+
+B7.  // renovate.json
+     { "extends": ["config:recommended"],
+       "packageRules": [{ "matchUpdateTypes": ["major","minor","patch"], "automerge": true }] }
+
+B8.  # образ собран и просканирован 8 месяцев назад, с тех пор крутится в проде без изменений
+
+B9.  # Dockerfile
+     FROM python:3.12-slim
+     # «сборка воспроизводима, у нас же тег версии»
+
+B10. # дашборд уязвимостей для security-команды
+     trivy image --ignore-unfixed --format json …
+
+B11. - id: CVE-2026-9538
+       expired_at: 2030-01-01
+       statement: "фикса нет"
+
+B12. # политика: «Critical — 7 дней». Команда: «Фикс вышел месяц назад, но мы узнали вчера —
+     # у нас ещё 6 дней». Безопасность: «Просрочено на 3 недели».
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Нет срока, нет причины, нет сужения по пакету — и это regreSSHion с EPSS ≈ 0,995.
 Исключение без `expired_at` и нормального `statement` — забытая дыра. Здесь — обновить OpenSSH
 или убрать sshd из образа.
 
-</details>
-
-```text:no-line-numbers
-     vulnerabilities:
-```text
-```text:no-line-numbers
-       - id: CVE-2024-6387
-```text
-```text:no-line-numbers
-         statement: Accept the risk
-```text
-```text:no-line-numbers
-B2.  # gate в CI
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Gate по HIGH без `--ignore-unfixed` требует невозможного: у пакетов ОС фиксов нет,
+**B2.** ⚠️ Gate по HIGH без `--ignore-unfixed` требует невозможного: у пакетов ОС фиксов нет,
 команда перестаёт смотреть на красный. Gate: CRITICAL с фиксом (+ KEV), остальное — в отчёт.
 
-</details>
-
-```text:no-line-numbers
-     trivy image --severity HIGH,CRITICAL --exit-code 1 app:$CI_COMMIT_SHORT_SHA
-```text
-```text:no-line-numbers
-     # базовый образ python:3.12-slim, пайплайн красный третью неделю
-```text
-```text:no-line-numbers
-B3.  scan:image:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Образ сканера `latest` без digest (март 2026) и прод-kubeconfig в той же джобе:
+**B3.** ⚠️ Образ сканера `latest` без digest (март 2026) и прод-kubeconfig в той же джобе:
 заражённый сканер унесёт доступ к проду. Пин по digest, скан — отдельная стадия без deploy-секретов.
 
-</details>
+**B4.** ⚠️ Не проведён триаж: KEV нет, EPSS ≈ 0,03, а в Debian 12 MiniZip даже не собирается
+(`<ignored>`). Решение — not affected через VEX или исключение со сроком до переезда на Debian 13.
 
-```text:no-line-numbers
-       image: {name: aquasec/trivy:latest, entrypoint: [""]}
-```text
-```text:no-line-numbers
-       variables:
-```text
-```text:no-line-numbers
-         KUBECONFIG_PROD: $KUBECONFIG_PROD      # «чтобы потом сразу задеплоить»
-```text
-```text:no-line-numbers
-       script: [trivy image --exit-code 1 --severity CRITICAL $IMAGE]
-```text
-```text:no-line-numbers
-B4.  # решение на планёрке
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Не проведён триаж: KEV нет, EPSS ≈ 0,03, а в Debian 12 MiniZip даже не собирается
-(`&lt;ignored&gt;`). Решение — not affected через VEX или исключение со сроком до переезда на Debian 13.
-
-</details>
-
-```text:no-line-numbers
-     «CVE-2023-45853 в zlib1g, CRITICAL 9.8 — стоп всех релизов до фикса.»
-```text
-```text:no-line-numbers
-     # образы на debian:12-slim
-```text
-```text:no-line-numbers
-B5.  # отчёт по образу публичного nginx-ingress
-```text
-<details><summary>Ответ</summary>
-
-⚠️ HIGH, но в KEV и EPSS ≈ 1, компонент торчит в интернет — это P0. Обновить
+**B5.** ⚠️ HIGH, но в KEV и EPSS ≈ 1, компонент торчит в интернет — это P0. Обновить
 ingress/nginx немедленно или ограничить HTTP/2 на краю.
 
-</details>
-
-```text:no-line-numbers
-     CVE-2023-44487  HIGH 7.5  → «не CRITICAL, берём в плановые 90 дней»
-```text
-```text:no-line-numbers
-B6.  # письмо руководству
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Находки ≠ CVE ≠ риск: 162 строки — это 74 уникальных CVE, одна CVE util-linux даёт
+**B6.** ⚠️ Находки ≠ CVE ≠ риск: 162 строки — это 74 уникальных CVE, одна CVE util-linux даёт
 десяток строк, почти все без фикса. Сообщать уникальные CVE, статусы и что требует действий.
 
-</details>
-
-```text:no-line-numbers
-     «В образе python:3.12-slim найдено 162 уязвимости!»
-```text
-```text:no-line-numbers
-B7.  // renovate.json
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Automerge мажорных и минорных версий по расписанию — сломанный прод без человека.
+**B7.** ⚠️ Automerge мажорных и минорных версий по расписанию — сломанный прод без человека.
 Automerge только patch/digest при зелёном пайплайне, мажорные — через одобрение.
 
-</details>
-
-```text:no-line-numbers
-     { "extends": ["config:recommended"],
-```text
-```text:no-line-numbers
-       "packageRules": [{ "matchUpdateTypes": ["major","minor","patch"], "automerge": true }] }
-```text
-```text:no-line-numbers
-B8.  # образ собран и просканирован 8 месяцев назад, с тех пор крутится в проде без изменений
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Новые CVE появились за 8 месяцев, а образ никто не сканирует. Ночной рескан образов
+**B8.** ⚠️ Новые CVE появились за 8 месяцев, а образ никто не сканирует. Ночной рескан образов
 из кластера или SBOM, регулярная пересборка.
 
-</details>
-
-```text:no-line-numbers
-B9.  # Dockerfile
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Тег `3.12-slim` плавающий: сегодня и через месяц это разные образы. Воспроизводимость —
+**B9.** ⚠️ Тег `3.12-slim` плавающий: сегодня и через месяц это разные образы. Воспроизводимость —
 `FROM python:3.12-slim@sha256:…` + Renovate для обновления digest.
 
-</details>
-
-```text:no-line-numbers
-     FROM python:3.12-slim
-```text
-```text:no-line-numbers
-     # «сборка воспроизводима, у нас же тег версии»
-```text
-```text:no-line-numbers
-B10.  # дашборд уязвимостей для security-команды
-```text
-<details><summary>Ответ</summary>
-
-⚠️ В дашборде не видно находок без фикса — именно тех, где нужны компенсирующие меры.
+**B10.** ⚠️ В дашборде не видно находок без фикса — именно тех, где нужны компенсирующие меры.
 Для отчётов — полный скан.
 
-</details>
-
-```text:no-line-numbers
-     trivy image --ignore-unfixed --format json …
-```text
-```text:no-line-numbers
-B11.  - id: CVE-2026-9538
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Срок на 3+ года — фактически бессрочно; нет владельца, тикета и объяснения, почему
+**B11.** ⚠️ Срок на 3+ года — фактически бессрочно; нет владельца, тикета и объяснения, почему
 безопасно. Срок ≤ 90 дней или до события, `statement` = почему безопасно + тикет + владелец.
 
-</details>
-
-```text:no-line-numbers
-       expired_at: 2030-01-01
-```text
-```text:no-line-numbers
-       statement: "фикса нет"
-```text
-```text:no-line-numbers
-B12.  # политика: «Critical — 7 дней». Команда: «Фикс вышел месяц назад, но мы узнали вчера —
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Точка отсчёта не определена. Политика должна прямо сказать: «от момента обнаружения
+**B12.** ⚠️ Точка отсчёта не определена. Политика должна прямо сказать: «от момента обнаружения
 при доступном фиксе» (и какой автоматикой обнаружение фиксируется — например, ночной скан).
 
 </details>
 
-```text:no-line-numbers
-     # у нас ещё 6 дней». Безопасность: «Просрочено на 3 недели».
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Разобрать настоящий отчёт
+#### C1. 🔑 Разобрать настоящий отчёт
 Просканируй `python:3.12-slim` в JSON. Ответь через `jq`: сколько находок по severity;
 сколько **уникальных** CVE; что можно починить прямо сейчас (`Status=="fixed"`); как делятся
 находки между `os-pkgs` и `lang-pkgs`; топ-5 пакетов по числу находок. Сформулируй одной фразой:
 «что реально нужно сделать с этим образом».
 
-### C2. 🔑 Обогатить отчёт EPSS и KEV
+<details><summary>Ответ</summary>
+
+Команды — рецепты `jq` из раздела 5. Типичный вывод на момент написания: сотни находок,
+десятки уникальных CVE, CRITICAL 0, почти все `affected` в пакетах ОС, `fixed` — в `pip`.
+Фраза: «в слое ОС чинить нечего, обновить или убрать pip из runtime-образа (multi-stage)».
+
+</details>
+
+#### C2. 🔑 Обогатить отчёт EPSS и KEV
 Напиши скрипт `enrich.sh report.json`: берёт уникальные CVE, запрашивает EPSS пачками
 (до ~50 CVE на запрос), скачивает KEV и печатает таблицу `CVE · пакет · severity · status ·
 EPSS · в KEV?`, отсортированную по EPSS.
 
-### C3. 🔑 Триаж пяти находок
+<details><summary>Ответ</summary>
+
+Каркас:
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+r=${1:?report.json}
+jq -r '.Results[].Vulnerabilities[]? | [.VulnerabilityID,.PkgName,.Severity,.Status] | @tsv' "$r" | sort -u > f.tsv
+cut -f1 f.tsv | sort -u > cves.txt
+: > epss.tsv
+split -l 50 cves.txt chunk_
+for c in chunk_*; do
+  curl -s "https://api.first.org/data/v1/epss?cve=$(paste -sd, "$c")" | jq -r '.data[] | [.cve,.epss] | @tsv' >> epss.tsv
+done
+curl -s https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json \
+  | jq -r '.vulnerabilities[].cveID' > kev.txt
+while IFS=$'\t' read -r id pkg sev st; do
+  e=$(awk -v c="$id" '$1==c {print $2}' epss.tsv); k=$(grep -qx "$id" kev.txt && echo yes || echo no)
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$pkg" "$sev" "$st" "${e:-0}" "$k"
+done < f.tsv | sort -t$'\t' -k5,5gr | column -t
+rm -f chunk_*
+```
+
+</details>
+
+#### C3. 🔑 Триаж пяти находок
 Возьми из отчёта C1 (и из скана `debian:12-slim`) пять находок, включая CVE-2023-45853. Для каждой
 пройди алгоритм раздела 4: KEV/EPSS → достижимость → фикс → решение, и запиши, где решение
 будет зафиксировано.
 
-### C4. 🔑 Исключение со сроком
+<details><summary>Ответ</summary>
+
+Пример записи: «CVE-2023-45853 / zlib1g / CRITICAL / KEV нет / EPSS 0,03 / MiniZip не
+собирается в bookworm → недостижимо / фикс только в trixie → not affected (VEX) или ignore до
+переезда, SEC-142». Для находок с `fixed` в lang-pkgs — «fix in SLA, Renovate MR». Для HIGH без
+фикса в неиспользуемой утилите ОС — «accept до даты или сменить базу на distroless».
+
+</details>
+
+#### C4. 🔑 Исключение со сроком
 Создай `.trivyignore.yaml` для CVE-2023-45853 (с `purls`, `expired_at`, `statement` с тикетом
 и владельцем). Запусти gate на `debian:12-slim` с `--ignorefile` и `--show-suppressed`.
 Затем поставь `expired_at` в прошлое и докажи, что находка вернулась и gate упал.
 
-### C5. SBOM и рескан
+<details><summary>Ответ</summary>
+
+Запись — как в разделе 7 конспекта. С действующим `expired_at` gate зелёный, в конце вывода
+секция подавленных с `statement`. С датой в прошлом — CVE снова в отчёте, `exit code 1`.
+
+</details>
+
+#### C5. SBOM и рескан
 Сделай SBOM образа из `ci/` в CycloneDX и SPDX через syft и CycloneDX через Trivy. Найди в SBOM
 версии `openssl` и `pip` через `jq`. Пересканируй SBOM (`trivy sbom`) и сравни с прямым сканом образа.
 
-### C6. VEX вместо исключения
+<details><summary>Ответ</summary>
+
+`docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/out anchore/syft:v1.52.0 <img> -o cyclonedx-json=/out/sbom.cdx.json -o spdx-json=/out/sbom.spdx.json`;
+`jq -r '.components[] | select(.name|test("openssl|^pip$")) | "\(.name) \(.version)"' sbom.cdx.json`;
+`trivy sbom sbom.cdx.json` — находки должны совпасть с прямым сканом по пакетам ОС и зависимостям
+(возможны мелкие расхождения из-за разных каталогизаторов syft/trivy).
+
+</details>
+
+#### C6. VEX вместо исключения
 Напиши OpenVEX-документ `not_affected` / `vulnerable_code_not_present` для CVE-2023-45853 и
 проверь `trivy image --vex vex.openvex.json debian:12-slim`. Когда VEX лучше `.trivyignore.yaml`?
 
-### C7. Renovate для демо-репо
+<details><summary>Ответ</summary>
+
+Документ — как в разделе 7. После `--vex` Trivy пишет, что находка отфильтрована по VEX
+(`status: not_affected`). VEX лучше, когда это факт о продукте, а не временное принятие риска,
+и когда им нужно поделиться с клиентами/аудиторами или другими сканерами.
+
+</details>
+
+#### C7. Renovate для демо-репо
 Положи `renovate.json` из раздела 10 в `ci/`. Объясни каждую строку. Какой вид примет строка
 `FROM` после первого MR от Renovate и почему automerge разрешён только для patch/digest?
 
-### C8. SLA-политика на одну страницу
+<details><summary>Ответ</summary>
+
+Строка станет `FROM python:3.12-slim@sha256:<digest>` (`config:best-practices` включает
+`docker:pinDigests`), дальше Renovate будет приносить MR с новым digest. Automerge только
+patch/digest: они почти не меняют поведение, а зелёный пайплайн со сканом и тестами — страховка;
+minor/major могут сломать API.
+
+</details>
+
+#### C8. SLA-политика на одну страницу
 Напиши `docs/vuln-sla.md` для своего проекта: приоритеты P0–P3 с условиями, сроки, точка отсчёта,
 что делать без фикса, как оформляется просрочка, кто владелец риска, какие метрики считаем.
 
-### C9. Пин сканера по digest
+<details><summary>Ответ</summary>
+
+Проверка качества: у каждого приоритета — условие и срок; точка отсчёта прописана;
+для «нет фикса» — компенсация и пересмотр; просрочка = исключение с подписью владельца риска;
+метрики — MTTR по приоритетам, % в SLA, активные/истёкшие исключения, возраст базовых образов.
+
+</details>
+
+#### C9. Пин сканера по digest
 Узнай digest `aquasec/trivy:0.74.0` (`docker buildx imagetools inspect` или
-`docker inspect --format '&#123;&#123;index .RepoDigests 0&#125;&#125;'` после pull) и перепиши job `scan:image`
-из [../CICD/13_quality_security.md](/cicd/13-quality-security) с пином, отдельной стадией без
+<code v-pre>docker inspect --format '{{index .RepoDigests 0}}'</code> после pull) и перепиши job `scan:image`
+из [CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security) с пином, отдельной стадией без
 deploy-переменных и `--show-suppressed`.
+
+<details><summary>Ответ</summary>
+
+```yaml
+scan:image:
+  stage: scan                       # отдельная стадия, без deploy-переменных
+  needs: [build]
+  image:
+    name: aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+    entrypoint: [""]
+  script:
+    - trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1
+        --ignorefile .trivyignore.yaml --show-suppressed "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+```
+Digest сверяй сам на момент выполнения — выше значение на 27.09.2026.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Понедельник: в базовом образе появилась CRITICAL без фикса, gate блокирует все релизы,
 включая срочный багфикс.
@@ -1036,14 +1061,13 @@ Renovate-MR как доказательство регулярных обнов�
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Пайплайн красный от сотни уязвимостей в базовом образе. Что будешь делать?
 
 <details><summary>Ответ</summary>
 
 Триаж вместо паники: уникальные CVE, статус (есть ли фикс), KEV/EPSS, достижимость, класс
-   (ОС или зависимости). Gate — на CRITICAL с фиксом и KEV, остальное — в отчёт; пересобрать
-   с актуальной базой, убрать лишнее (multi-stage, slim/distroless), исключения — со сроком.
+(ОС или зависимости). Gate — на CRITICAL с фиксом и KEV, остальное — в отчёт; пересобрать
+с актуальной базой, убрать лишнее (multi-stage, slim/distroless), исключения — со сроком.
 
 </details>
 
@@ -1052,7 +1076,7 @@ Renovate-MR как доказательство регулярных обнов�
 <details><summary>Ответ</summary>
 
 Стандарт оценки тяжести уязвимости (v3.1, v4.0). Base score не знает контекста: эксплойта,
-   достижимости, ценности актива; HIGH из KEV срочнее CRITICAL без эксплойта.
+достижимости, ценности актива; HIGH из KEV срочнее CRITICAL без эксплойта.
 
 </details>
 
@@ -1061,7 +1085,7 @@ Renovate-MR как доказательство регулярных обнов�
 <details><summary>Ответ</summary>
 
 EPSS — вероятность эксплуатации за 30 дней от FIRST; KEV — каталог CISA уже эксплуатируемых CVE.
-   Используются как сигналы приоритета.
+Используются как сигналы приоритета.
 
 </details>
 
@@ -1070,8 +1094,8 @@ EPSS — вероятность эксплуатации за 30 дней от F
 <details><summary>Ответ</summary>
 
 `.trivyignore.yaml` в git: `id`, сужение по `purls`/`paths`, `expired_at` ≤ 90 дней,
-   `statement` с причиной, тикетом и владельцем; MR с ревью (CODEOWNERS), `--show-suppressed`,
-   ежемесячный обзор; факты «не затронуты» — VEX.
+`statement` с причиной, тикетом и владельцем; MR с ревью (CODEOWNERS), `--show-suppressed`,
+ежемесячный обзор; факты «не затронуты» — VEX.
 
 </details>
 
@@ -1080,7 +1104,7 @@ EPSS — вероятность эксплуатации за 30 дней от F
 <details><summary>Ответ</summary>
 
 Перечень компонентов артефакта (CycloneDX/SPDX), генерируется в CI на каждый digest; позволяет
-   пересканировать выпущенное и за минуты найти «где у нас X».
+пересканировать выпущенное и за минуты найти «где у нас X».
 
 </details>
 
@@ -1089,7 +1113,7 @@ EPSS — вероятность эксплуатации за 30 дней от F
 <details><summary>Ответ</summary>
 
 `FROM …@sha256:` + Renovate MR с новым digest, еженедельная пересборка без изменений кода,
-   ночной рескан прод-образов, метрика возраста базового образа, automerge patch/digest при зелёном скане.
+ночной рескан прод-образов, метрика возраста базового образа, automerge patch/digest при зелёном скане.
 
 </details>
 
@@ -1098,7 +1122,7 @@ EPSS — вероятность эксплуатации за 30 дней от F
 <details><summary>Ответ</summary>
 
 P0 (KEV/эксплуатация) — 24–72 часа, P1 — 7 дней, P2 — 30, P3 — 90, без фикса — компенсация;
-   точка отсчёта — обнаружение при доступном фиксе; с оглядкой на регулятора (PCI 6.3.3 — месяц).
+точка отсчёта — обнаружение при доступном фиксе; с оглядкой на регулятора (PCI 6.3.3 — месяц).
 
 </details>
 
@@ -1107,7 +1131,7 @@ P0 (KEV/эксплуатация) — 24–72 часа, P1 — 7 дней, P2 �
 <details><summary>Ответ</summary>
 
 ОС — чинится обновлением/сменой базового образа, часто фиксов нет, severity у дистрибутива;
-   зависимости — обновлением lock-файла командой сервиса.
+зависимости — обновлением lock-файла командой сервиса.
 
 </details>
 
@@ -1116,7 +1140,7 @@ P0 (KEV/эксплуатация) — 24–72 часа, P1 — 7 дней, P2 �
 <details><summary>Ответ</summary>
 
 Машиночитаемое заявление о применимости уязвимости к продукту: `not_affected` с обоснованием,
-   `affected`, `fixed`, `under_investigation`; Trivy учитывает через `--vex`.
+`affected`, `fixed`, `under_investigation`; Trivy учитывает через `--vex`.
 
 </details>
 
@@ -1125,9 +1149,7 @@ P0 (KEV/эксплуатация) — 24–72 часа, P1 — 7 дней, P2 �
 <details><summary>Ответ</summary>
 
 Пин по digest/SHA, своё зеркало, `minimumReleaseAge`, минимум секретов у scan-джоб, проверка
-    подписей инструментов, готовность ротировать — урок компрометации Trivy в марте 2026.
-
----
+подписей инструментов, готовность ротировать — урок компрометации Trivy в марте 2026.
 
 </details>
 

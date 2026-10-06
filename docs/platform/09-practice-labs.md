@@ -1,6 +1,6 @@
 ---
 title: "09. Практика: мини-платформа в kind"
-description: "Блок → Platform Engineering → практика. Шесть лаб собирают из тем 01–08 одну платформу:"
+description: "6 лаб — мини-платформа в kind: оператор LinkdApp, guardrails, canary с анализом, «база по запросу» через Crossplane, шаблон Backstage → репозиторий → ArgoCD, итоговый golden path"
 ---
 
 # 09. Практика: мини-платформа в kind
@@ -39,16 +39,17 @@ description: "Блок → Platform Engineering → практика. Шесть
 kind create cluster --name platform --image kindest/node:v1.36.4   # EG 1.9 и KEDA 2.21 — до 1.36
 helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.9.1 \
   -n envoy-gateway-system --create-namespace                       # ставит Gateway API v1.6.1
-```text
+```
+
 | Компонент | Когда ставить | Откуда |
 |-----------|---------------|--------|
-| Envoy Gateway + Gateway `web` в `infra` | Лаба 1 | [../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §7, [05_gateway_mesh.md](/platform/05-gateway-mesh) §2 |
-| kube-prometheus-stack (релиз `prometheus`, ns `monitoring`) | Лаба 1 (метрики оператора), обязательно к лабе 3 | [../Left/02_Monitoring/11_long_term_and_operator.md](/monitoring/11-long-term-and-operator) §7 |
-| Kyverno | Лаба 2 | [04_admission_policy.md](/platform/04-admission-policy) |
-| Argo Rollouts v1.10 + плагин Gateway API v0.17 | Лаба 3 | [06_progressive_delivery.md](/platform/06-progressive-delivery) |
-| CloudNativePG 1.30 + Crossplane v2.4 | Лаба 4 | [07_crossplane_self_service.md](/platform/07-crossplane-self-service) |
-| ArgoCD | Лаба 5 | [../Left/07_ArgoCD/02_argocd_install.md](/argocd/02-argocd-install) |
-| Backstage | Лаба 5 (локально, не в кластере) | [08_backstage.md](/platform/08-backstage) |
+| Envoy Gateway + Gateway `web` в `infra` | Лаба 1 | [Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §7, [05. Gateway API глубже и service mesh](/platform/05-gateway-mesh) §2 |
+| kube-prometheus-stack (релиз `prometheus`, ns `monitoring`) | Лаба 1 (метрики оператора), обязательно к лабе 3 | [Мониторинг: 11. Долгое хранение и Operator](/monitoring/11-long-term-and-operator) §7 |
+| Kyverno | Лаба 2 | [04. Admission и политики: ограждения, а не шлагбаумы](/platform/04-admission-policy) |
+| Argo Rollouts v1.10 + плагин Gateway API v0.17 | Лаба 3 | [06. Progressive delivery: Argo Rollouts, анализ метрик, feature flags](/platform/06-progressive-delivery) |
+| CloudNativePG 1.30 + Crossplane v2.4 | Лаба 4 | [07. Самообслуживание: Crossplane](/platform/07-crossplane-self-service) |
+| ArgoCD | Лаба 5 | [ArgoCD: 02. Установка и устройство ArgoCD](/argocd/02-argocd-install) |
+| Backstage | Лаба 5 (локально, не в кластере) | [08. Портал разработчика: Backstage](/platform/08-backstage) |
 
 > 💡 Mesh из темы 05 в лабах не обязателен: Istio ambient снимай после мини-лабы темы
 > (`istioctl uninstall --purge -y`), он съедает память, нужную Crossplane и Backstage.
@@ -58,16 +59,16 @@ helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.9.1 \
 ## 🧪 Лаба 1. Оператор LinkdApp деплоит linkd 🔑
 
 ### Цель
-Оператор из [03_writing_operator.md](/platform/03-writing-operator) работает **в кластере** (не `kopf run`
+Оператор из [03. Свой оператор на Python: kopf и LinkdApp](/platform/03-writing-operator) работает **в кластере** (не `kopf run`
 с ноутбука), обслуживает две команды на общем Gateway и сам сообщает о своём здоровье.
 
 ### Стенд
-Общий стенд + CRD LinkdApp из [02_crd_operators.md](/platform/02-crd-operators) + kube-prometheus-stack.
+Общий стенд + CRD LinkdApp из [02. CRD и операторы: API платформы и паттерн контроллера](/platform/02-crd-operators) + kube-prometheus-stack.
 
 ### Требования
 1. **Gateway для двух команд.** В `infra` — Gateway `web` с listeners на `*.team-a.example.com`
    и `*.team-b.example.com`, `allowedRoutes` по метке namespace, которую ставишь ты как платформа
-   ([05_gateway_mesh.md](/platform/05-gateway-mesh) §2). Namespace `team-a`, `team-b` создаются из git,
+   ([05. Gateway API глубже и service mesh](/platform/05-gateway-mesh) §2). Namespace `team-a`, `team-b` создаются из git,
    а не руками.
 2. **Оператор в кластере.** Образ `linkd-operator:0.1.0`, Deployment в namespace `platform` (как в теме 03),
    ServiceAccount и ClusterRole по принципу минимальных прав: CRUD на Deployment/Service/HTTPRoute,
@@ -87,7 +88,8 @@ kubectl get la -A                                   # обе READY True, URL в 
 curl -H "Host: links.team-a.example.com" localhost:8888/healthz     # port-forward к Envoy
 curl -H "Host: links.team-b.example.com" localhost:8888/healthz
 kubectl -n team-a delete deploy shortener && sleep 40 && kubectl -n team-a get deploy shortener
-```text
+```
+
 ### Критерии приёмки
 - [ ] Оператор запущен в кластере, `kubectl auth can-i` подтверждает минимальные права
 - [ ] Две команды с одинаковым именем LinkdApp не мешают друг другу
@@ -114,7 +116,7 @@ kubectl -n team-a delete deploy shortener && sleep 40 && kubectl -n team-a get d
 безопасные дефолты проставляются сами; падение webhook не кладёт кластер.
 
 ### Стенд
-Стенд лабы 1 + Kyverno + свой mutating webhook на Python (FastAPI) из [04_admission_policy.md](/platform/04-admission-policy).
+Стенд лабы 1 + Kyverno + свой mutating webhook на Python (FastAPI) из [04. Admission и политики: ограждения, а не шлагбаумы](/platform/04-admission-policy).
 
 ### Требования
 1. **VAP на LinkdApp** (CEL): образ с явным тегом и не `:latest`; `replicas` ≤ 3 в namespace
@@ -138,7 +140,8 @@ kubectl apply --dry-run=server -f bad/latest-image.yaml      # отказ: те�
 kubectl apply --dry-run=server -f bad/foreign-host.yaml      # отказ от VAP
 kubectl get policyreport -A                                  # что нашёл Audit до Enforce
 kubectl -n team-a get deploy shortener -o jsonpath='{.metadata.labels}'   # метки от webhook
-```text
+```
+
 ### Критерии приёмки
 - [ ] Каждый отказ содержит причину и способ исправления, а не только «denied»
 - [ ] Audit → Enforce сделан осознанно: есть список нарушений до включения
@@ -165,7 +168,7 @@ kubectl -n team-a get deploy shortener -o jsonpath='{.metadata.labels}'   # ме
 
 ### Стенд
 Стенд лаб 1–2 + kube-prometheus-stack + Argo Rollouts v1.10 и плагин Gateway API v0.17
-([06_progressive_delivery.md](/platform/06-progressive-delivery) §2, §4).
+([06. Progressive delivery: Argo Rollouts, анализ метрик, feature flags](/platform/06-progressive-delivery) §2, §4).
 
 ### Требования
 1. **Базовый путь:** linkd как Rollout в `team-a` (руками, как в мини-лабе темы 06): Services
@@ -187,7 +190,8 @@ kubectl argo rollouts get rollout shortener -n team-a -w
 # плохой релиз: LINKD_FAULT_ERROR_RATE=0.3 → AnalysisRun Failed → веса 100/0
 # медленный релиз: LINKD_FAULT_LATENCY_MS=400 → проходит success-rate, падает на p95
 kubectl get httproute -n team-a -o jsonpath='{.items[0].spec.rules[0].backendRefs[*].weight}{"\n"}'
-```text
+```
+
 ### Критерии приёмки
 - [ ] Видел все три исхода: успешная выкатка, abort по ошибкам, abort по латентности
 - [ ] Анализ меряет **только** canary-поды (доказано запросом в Prometheus)
@@ -213,11 +217,11 @@ kubectl get httproute -n team-a -o jsonpath='{.items[0].spec.rules[0].backendRef
 
 ### Стенд
 Стенд лаб 1–3 + CloudNativePG 1.30 + Crossplane v2.4 + функции patch-and-transform и python
-([07_crossplane_self_service.md](/platform/07-crossplane-self-service) §5).
+([07. Самообслуживание: Crossplane](/platform/07-crossplane-self-service) §5).
 
 ### Требования
 1. **API:** XRD `LinkdDatabase` (namespaced) с `size`, `storageGB` (1–20), `version`, `backup`
-   и дефолтами; композиция на CNPG с контрактом **Secret `&lt;имя&gt;-db`, ключ `url`**.
+   и дефолтами; композиция на CNPG с контрактом **Secret `<имя>-db`, ключ `url`**.
 2. **Связка с оператором:** при `database: true` оператор создаёт `LinkdDatabase` с тем же именем
    (ownerReference на LinkdApp) и ждёт `Ready` — пока базы нет, у LinkdApp `Ready=False`
    с понятным `message`. Дай оператору права на `linkddatabases`, но не на секреты.
@@ -231,12 +235,13 @@ kubectl get httproute -n team-a -o jsonpath='{.items[0].spec.rules[0].backendRef
 
 ### Проверки
 ```bash
-kubectl -n team-a patch la shortener --type=merge -p '{"spec":{"database":true&#125;&#125;'
+kubectl -n team-a patch la shortener --type=merge -p '{"spec":{"database":true}}'
 kubectl -n team-a get la,linkddatabase,clusters.postgresql.cnpg.io,secret -w
 crossplane resource trace linkddatabase shortener -n team-a
 kubectl -n team-a exec deploy/shortener -- python -c "import os; print(os.environ['LINKD_DATABASE_URL'].split('@')[1])"
-kubectl auth can-i create clusters.postgresql.cnpg.io -n team-a --as=&lt;пользователь команды&gt;   # no
-```text
+kubectl auth can-i create clusters.postgresql.cnpg.io -n team-a --as=<пользователь команды>   # no
+```
+
 ### Критерии приёмки
 - [ ] От `database: true` до `/readyz` 200 — меньше 3 минут без ручных действий
 - [ ] `linkd_db_up 1`, данные переживают рестарт подов
@@ -270,11 +275,11 @@ Git: GitHub (`publish:github` есть из коробки) или GitLab (мо�
 
 ### Требования
 1. **GitOps-репозиторий** `platform-gitops`: ApplicationSet с git-генератором по каталогам
-   `apps/*` — новый каталог = новое Application ([../Left/07_ArgoCD/04_app_of_apps.md](/argocd/04-app-of-apps) §2).
-2. **Шаблон** `linkd-service` ([08_backstage.md](/platform/08-backstage) §4): форма (имя по regex,
+   `apps/*` — новый каталог = новое Application ([ArgoCD: 04. App of Apps и ApplicationSet](/argocd/04-app-of-apps) §2).
+2. **Шаблон** `linkd-service` ([08. Портал разработчика: Backstage](/platform/08-backstage) §4): форма (имя по regex,
    владелец из каталога, система, галочка «нужна база»); скелет с `app/`, Dockerfile, CI,
    `catalog-info.yaml`, `mkdocs.yml`; шаги: репозиторий сервиса → PR/MR в `platform-gitops`
-   с `apps/&lt;имя&gt;/linkdapp.yaml` (и `linkddatabase` по галочке) → регистрация в каталоге.
+   с `apps/<имя>/linkdapp.yaml` (и `linkddatabase` по галочке) → регистрация в каталоге.
 3. **ArgoCD:** Application нового сервиса синхронизируется автоматически после мержа; для
    LinkdDatabase — `Prune=false` и порядок синхронизации после CRD.
 4. **Каталог:** у сервиса владелец-группа, вкладки Kubernetes (поды из kind) и ArgoCD (статус sync)
@@ -298,7 +303,7 @@ Git: GitHub (`publish:github` есть из коробки) или GitLab (мо�
 
 ### Сломай сам
 - Запусти шаблон с именем уже существующего сервиса — где упадёт и что увидит пользователь?
-  Добавь шаг уборки `if: $&#123;&#123; failure() &#125;&#125;`.
+  Добавь шаг уборки <code v-pre>if: ${{ failure() }}</code>.
 - Укажи в скелете `owner` несуществующей группы — где это видно?
 - Удали каталог `apps/demo-links` из gitops-репозитория: что удалит ArgoCD, а что нет (база)?
 
@@ -335,15 +340,16 @@ Git: GitHub (`publish:github` есть из коробки) или GitLab (мо�
    Минимум два прогона: ты и «новичок» (коллега, друг или ты через неделю, строго по README).
    Записывай каждый вопрос и каждую ручную правку.
 6. **Отчёт** `docs/platform-report.md`: время прогонов, список трений (friction log),
-   топ-3 улучшения, что из платформы оказалось лишним (честно — см. [01_platform_engineering.md](/platform/01-platform-engineering)).
+   топ-3 улучшения, что из платформы оказалось лишним (честно — см. [01. Platform Engineering: платформа как продукт](/platform/01-platform-engineering)).
 
 ### Проверки
 ```bash
 make platform-up                        # или свой скрипт; засеки время
 # прогон «новичка»: только README, ты молчишь и записываешь
 kubectl get la,linkddatabase,rollout -A
-kubectl argo rollouts get rollout &lt;сервис&gt; -n team-a
-```text
+kubectl argo rollouts get rollout <сервис> -n team-a
+```
+
 ### Критерии приёмки
 - [ ] Весь путь проходит без ручных `kubectl apply` и без помощи автора
 - [ ] Time to first deploy измерен дважды; у «новичка» ≤ 30–60 минут
@@ -373,5 +379,3 @@ kubectl argo rollouts get rollout &lt;сервис&gt; -n team-a
 - [ ] Лаба 5: шаблон Backstage → репозиторий → ArgoCD → сервис в каталоге
 - [ ] Лаба 6: golden path целиком, README платформы, time to first deploy измерен
 - [ ] Всё лежит в `platform-lab` с README, схемой и ADR — это готовый проект для резюме
-
-➡️ Дальше: [10_interview.md](/python/10-interview) — вопросы с собеседований

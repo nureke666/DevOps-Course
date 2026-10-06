@@ -1,14 +1,14 @@
 ---
 title: "02. LVM, файловые системы и RAID на Linux"
-description: "Блок → Хранилища и stateful → тема 02. Опирается на"
+description: "LVM, lvextend -r, thin, снапшоты, pvmove, growpart, mdadm, ZFS"
 ---
 
 # 02. LVM, файловые системы и RAID на Linux
 
 > Блок → Хранилища и stateful → тема 02. Опирается на
-> [../Linux/10_the_filesystem.md](/linux/10-the-filesystem) (разделы, `mkfs`, `mount`, поля
+> [Linux: 10. Файловая система](/linux/10-the-filesystem) (разделы, `mkfs`, `mount`, поля
 > `/etc/fstab`, `df`/`du`, inode, `fsck` — там LVM упомянут в три строки, здесь — всерьёз)
-> и [01_storage_basics.md](/storage/01-storage-basics) (уровни RAID, write penalty, rebuild).
+> и [01. Основы хранения: блок, файл, объект, IOPS, RAID](/storage/01-storage-basics) (уровни RAID, write penalty, rebuild).
 >
 > **После темы ты умеешь:** собрать LVM из нескольких дисков, расширить том онлайн одной
 > командой, понимать, когда уменьшать нельзя; делать и откатывать снапшоты и объяснять, почему
@@ -20,7 +20,7 @@ description: "Блок → Хранилища и stateful → тема 02. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  /dev/vdb   /dev/vdc   /dev/vdd          /dev/vde  /dev/vdf
     │          │          │                  └──┬──┘
     │  (раздел, если нужен: growpart)       mdadm RAID1 → /dev/md0
@@ -35,24 +35,25 @@ description: "Блок → Хранилища и stateful → тема 02. Оп�
                                          → ext4 → /srv/thin
  рост:    lvextend -r  (LV + ФС онлайн)
  замена:  vgextend → pvmove → vgreduce → pvremove
-```text
+```
+
 ---
 
 ## 0. Стенд
 
-VM `stor1` из [00_INDEX.md](/storage/): диски добавлены в `Vagrantfile` провайдера libvirt —
+VM `stor1` из [Хранилища](/storage/): диски добавлены в `Vagrantfile` провайдера libvirt —
 ```ruby
 v.storage :file, size: "5G", serial: "lvm-a"    # /dev/vdb
 v.storage :file, size: "5G", serial: "lvm-b"    # /dev/vdc
 v.storage :file, size: "5G", serial: "lvm-c"    # /dev/vdd
 v.storage :file, size: "3G", serial: "raid-a"   # /dev/vde   (+ raid-b, raid-c → vdf, vdg)
-```text
+```
 ```bash
 vagrant snapshot save stor1 before_02
 vagrant ssh stor1
 lsblk -o NAME,SIZE,SERIAL,TYPE,MOUNTPOINTS      # ⚠️ сверяй перед КАЖДОЙ разрушающей командой
 ls -l /dev/disk/by-id/ | grep virtio            # virtio-lvm-a → ../../vdb и т.д.
-```text
+```
 > ⚠️ Все `pvcreate`, `mkfs`, `wipefs`, `mdadm --create`, `zpool create` в теме — только на
 > дополнительных дисках учебной VM. Буквы `vdX` могут сдвинуться; серийник в `by-id` — нет.
 
@@ -76,7 +77,7 @@ sudo mkfs.xfs /dev/data/app && sudo mkfs.ext4 /dev/data/logs
 sudo mkdir -p /srv/app /srv/logs
 sudo mount /dev/data/app /srv/app && sudo mount /dev/data/logs /srv/logs
 sudo pvs; sudo vgs; sudo lvs -a -o +devices        # на каких PV лежит каждый LV
-```text
+```
 Путь к тому стабилен: `/dev/data/app` = `/dev/mapper/data-app` (дефис в имени VG/LV в mapper
 удваивается: `my-vg` → `my--vg`).
 
@@ -92,7 +93,7 @@ striping. В проде чаще встречаются «LVM поверх ап�
 sudo lvextend -r -L +1G data/app                   # ⭐ LV + ФС за один шаг, без размонтирования
 sudo lvextend -r -l +100%FREE data/logs            # всё свободное место VG
 df -h /srv/app /srv/logs
-```text
+```
 `-r` (`--resizefs`) вызывает `fsadm`, а тот — нужную утилиту ФС:
 
 | ФС | Чем растёт | Что передать | Онлайн |
@@ -104,7 +105,8 @@ df -h /srv/app /srv/logs
 ```bash
 sudo pvcreate /dev/vdd && sudo vgextend data /dev/vdd
 sudo lvextend -r -L +3G data/app
-```text
+```
+
 > ⚠️ Классическая ошибка — `lvextend` без `-r`: LV стал больше, а `df` показывает старый размер.
 > Лечится вторым шагом: `resize2fs`/`xfs_growfs`.
 
@@ -123,7 +125,7 @@ sudo umount /srv/logs
 sudo e2fsck -f /dev/data/logs
 sudo lvreduce -r -L 2G data/logs     # -r: fsadm сначала уменьшит ФС, потом LV
 sudo mount /dev/data/logs /srv/logs
-```text
+```
 > 🔴 Уменьшить LV **раньше** ФС (без `-r`) = отрезать конец файловой системы с данными.
 > Порядок при уменьшении: ФС → LV. При увеличении: LV → ФС. `-r` делает правильно сам.
 
@@ -138,7 +140,7 @@ sudo pvmove /dev/vdb                                      # 2. экстенты 
 sudo pvmove /dev/vdb /dev/vdd                             #    …или явно, куда
 sudo vgreduce data /dev/vdb                               # 3. выкинуть старый PV из VG
 sudo pvremove /dev/vdb                                    # 4. снять метку LVM
-```text
+```
 - `pvmove` зеркалирует экстенты во временный LV и переключает — данные доступны всё время.
 - Долго и нагружает диски; прерванный `pvmove` продолжается командой `sudo pvmove` без аргументов.
 - `sudo pvmove -n app /dev/vdb` — перенести только экстенты одного LV.
@@ -153,14 +155,16 @@ sudo lvcreate -s -n app_snap -L 500M data/app      # COW-снапшот: 500M п
 sudo lvs data                                       # Origin=app, Data% — заполненность
 sudo mkdir -p /mnt/snap
 sudo mount -o ro,nouuid /dev/data/app_snap /mnt/snap   # XFS: nouuid обязателен (тот же UUID)
-```text
+```
+
 Как работает классический (thick) снапшот:
-```text
+```text:no-line-numbers
  до изменения блока:   снапшот ссылается на блок оригинала (места не тратит)
  запись в оригинал:    старый блок КОПИРУЕТСЯ в область снапшота, потом перезаписывается
                        → каждая первая запись в блок = 2 операции (COW-penalty)
  область заполнилась:  Data% = 100 → снапшот INVALID, его можно только удалить
-```text
+```
+
 Откат к снапшоту:
 ```bash
 sudo umount /mnt/snap /srv/app
@@ -168,7 +172,8 @@ sudo lvconvert --merge data/app_snap               # слить снапшот �
 # если оригинал был открыт — слияние произойдёт при следующей активации:
 sudo lvchange -an data/app && sudo lvchange -ay data/app
 sudo mount /dev/data/app /srv/app
-```text
+```
+
 Автоматическое расширение снапшота — в `/etc/lvm/lvm.conf` (секция `activation`):
 `snapshot_autoextend_threshold = 70`, `snapshot_autoextend_percent = 20` (нужен мониторинг
 `dmeventd`, включён по умолчанию).
@@ -191,7 +196,7 @@ sudo mount /dev/data/app /srv/app
   ФС — снапшот консистентен **на уровне ФС** («как после внезапного выключения», crash-consistent).
 - Для приложения это «выдернули питание». PostgreSQL такое переживает, **если весь PGDATA
   вместе с `pg_wal` на одном LV**; иначе — `pg_backup_start()`/`pg_backup_stop()` или
-  физический бэкап штатными средствами ([06_db_backup_replication.md](/storage/06-db-backup-replication)).
+  физический бэкап штатными средствами ([06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication)).
 - `fsfreeze -f /srv/app … fsfreeze -u /srv/app` нужен, когда снапшот делает не LVM, а гипервизор
   или СХД: они про ФС внутри ВМ ничего не знают.
 
@@ -204,16 +209,18 @@ sudo lvcreate --type thin-pool -L 3G -n pool data                     # реал
 sudo lvcreate --type thin -V 10G --thinpool pool -n thin1 data        # виртуальный том 10G!
 sudo mkfs.ext4 /dev/data/thin1
 sudo lvs -o lv_name,lv_size,pool_lv,data_percent,metadata_percent data
-```text
-```text
+```
+
+```text:no-line-numbers
  thick LV:  место выделяется сразу, целиком
  thin LV:   место берётся из пула по мере записи → можно выдать больше, чем есть (overcommit)
  thin-снапшот: без -L, общий пул, почти бесплатный, цепочки снапшотов без COW-penalty
-```text
+```
 ```bash
 sudo lvcreate -s -n thin1_snap data/thin1           # размер не нужен
 sudo lvchange -ay -K data/thin1_snap                # у thin-снапшотов стоит флаг «не активировать» — -K
-```text
+```
+
 > 🔴 **Главная опасность — переполнение пула.** Пул на 100% → запись во **все** thin-тома пула
 > встаёт в очередь (по умолчанию до 60 секунд), затем получает ошибки ввода-вывода; ФС уходят
 > в read-only, базы падают. Защита:
@@ -223,7 +230,7 @@ sudo lvchange -ay -K data/thin1_snap                # у thin-снапшотов
 > - `discard`/`fstrim` внутри thin-томов, чтобы удалённые файлы возвращали место в пул.
 
 Thin — это то, как работают облака и гипервизоры (qcow2 тоже «тонкий»), Docker devicemapper
-в прошлом, TopoLVM/OpenEBS LVM в Kubernetes ([05_k8s_stateful.md](/storage/05-k8s-stateful)).
+в прошлом, TopoLVM/OpenEBS LVM в Kubernetes ([05. Stateful в Kubernetes: CSI, StatefulSet, Rook-Ceph, снапшоты](/storage/05-k8s-stateful)).
 
 ---
 
@@ -234,7 +241,7 @@ Thin — это то, как работают облака и гипервизо
 | Дефолт в | Ubuntu, Debian | RHEL, Rocky, Alma |
 | Рост онлайн | ✅ `resize2fs DEV` | ✅ `xfs_growfs MOUNTPOINT` |
 | Уменьшение | Только offline | ❌ невозможно |
-| Inode | Фиксируются при `mkfs` (могут кончиться — [../Linux/10_the_filesystem.md](/linux/10-the-filesystem)) | Выделяются динамически |
+| Inode | Фиксируются при `mkfs` (могут кончиться — [Linux: 10. Файловая система](/linux/10-the-filesystem)) | Выделяются динамически |
 | Сильные стороны | Универсальна, проверена, умеет уменьшаться | Большие файлы, параллельная запись, большие тома |
 | Проверка/ремонт | `e2fsck` | `xfs_repair` (на размонтированной) |
 | Инфо | `tune2fs -l`, `dumpe2fs -h` | `xfs_info /mount` |
@@ -242,13 +249,13 @@ Thin — это то, как работают облака и гипервизо
 
 Выбор на практике: берут дефолт дистрибутива. XFS — под большие тома с данными (БД, Ceph
 раньше, логи, медиа); ext4 — когда может понадобиться уменьшение. Резерв 5% под root у ext4
-и `tune2fs -m` — в [../Linux/10_the_filesystem.md](/linux/10-the-filesystem).
+и `tune2fs -m` — в [Linux: 10. Файловая система](/linux/10-the-filesystem).
 
 ---
 
 ## 8. Монтирование и fstab — то, чего нет в Linux/10
 
-Поля fstab, UUID и `nofail` разобраны в [../Linux/10_the_filesystem.md](/linux/10-the-filesystem).
+Поля fstab, UUID и `nofail` разобраны в [Linux: 10. Файловая система](/linux/10-the-filesystem).
 Сверху — то, что встречается на серверах с данными:
 
 | Опция | Зачем |
@@ -268,7 +275,7 @@ echo "UUID=$(sudo blkid -s UUID -o value /dev/data/app) /srv/app xfs defaults,no
   | sudo tee -a /etc/fstab
 sudo findmnt --verify              # ⭐ проверка fstab: синтаксис, существование устройств, типы ФС
 sudo mount -a && findmnt /srv/app  # и боевая проверка до перезагрузки
-```text
+```
 > 💡 Для XFS шестое поле (`fsck`) ставят 0: `fsck.xfs` ничего не делает, XFS восстанавливается
 > по журналу при монтировании.
 
@@ -279,7 +286,7 @@ sudo mount -a && findmnt /srv/app  # и боевая проверка до пе�
 Облако или гипервизор расширили диск с 20 до 40 ГБ, `df -h` показывает всё те же 20.
 Проверяй по слоям снизу вверх — где размер «застрял»:
 
-```text
+```text:no-line-numbers
  lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
  ┌─────────────────────────┐
  │ 1. ДИСК стал 40G?        │── нет → ядро не узнало: rescan (SCSI) / проверить в консоли облака
@@ -288,7 +295,8 @@ sudo mount -a && findmnt /srv/app  # и боевая проверка до пе�
  │ 4. LV стал больше?       │── нет → lvextend -l +100%FREE          (vgs → VFree)
  │ 5. ФС стала больше?      │── нет → resize2fs / xfs_growfs         (df -h)
  └─────────────────────────┘
-```text
+```
+
 ```bash
 # 1. ядро видит новый размер? (virtio обычно само: dmesg | grep -i capacity)
 echo 1 | sudo tee /sys/class/block/sda/device/rescan     # для SCSI-дисков (sdX)
@@ -299,7 +307,8 @@ sudo growpart /dev/vda 3                                 # ⚠️ пробел: 
 sudo pvresize /dev/vda3
 sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
 df -h /
-```text
+```
+
 | Раскладка | Шаги |
 |-----------|------|
 | Раздел → PV → LV → ФС (типичный сервер) | `growpart` → `pvresize` → `lvextend -r` |
@@ -310,7 +319,8 @@ df -h /
 На стенде расширить диск «как в облаке» можно с хоста, не выключая VM:
 ```bash
 virsh blockresize storage-lab_stor1 vdd 8G     # на хосте; в госте: dmesg | tail → новый размер vdd
-```text
+```
+
 ---
 
 ## 10. Программный RAID: mdadm
@@ -329,7 +339,8 @@ sudo mkfs.ext4 /dev/md0 && sudo mkdir -p /srv/raid && sudo mount /dev/md0 /srv/r
 # ⭐ без этого после ребута массив может собраться как /dev/md127
 sudo mdadm --detail --scan | sudo tee -a /etc/mdadm/mdadm.conf
 sudo update-initramfs -u
-```text
+```
+
 Учения: отказ и замена диска
 ```bash
 sudo mdadm /dev/md0 --fail /dev/vdf          # имитация отказа
@@ -337,7 +348,7 @@ cat /proc/mdstat                             # [2/1] [U_], у vdf пометка
 sudo mdadm /dev/md0 --remove /dev/vdf        # вынуть из массива
 sudo mdadm /dev/md0 --add /dev/vdg           # добавить «новый» диск → пошёл rebuild
 watch -n1 cat /proc/mdstat                   # recovery = 37.5% ... finish=0.2min
-```text
+```
 - Hot spare: `--spare-devices=1` при создании или `--add` в здоровый массив — rebuild начнётся
   сам в момент отказа.
 - Скорость rebuild ограничивают `/proc/sys/dev/raid/speed_limit_min` и `speed_limit_max` (КБ/с):
@@ -354,7 +365,8 @@ watch -n1 cat /proc/mdstat                   # recovery = 37.5% ... finish=0.2mi
 sudo umount /srv/raid && sudo mdadm --stop /dev/md0
 sudo mdadm --zero-superblock /dev/vde /dev/vdf /dev/vdg      # ⚠️ стирает метку md
 sudo sed -i '/^ARRAY \/dev\/md0/d' /etc/mdadm/mdadm.conf && sudo update-initramfs -u
-```text
+```
+
 ---
 
 ## 11. ZFS — обзор
@@ -373,7 +385,8 @@ sudo zfs rollback tank/data@before             # откат
 sudo zfs send tank/data@s1 | ssh backup sudo zfs receive backup/data             # полная копия
 sudo zfs send -i tank/data@s1 tank/data@s2 | ssh backup sudo zfs receive backup/data   # инкремент
 sudo zpool scrub tank                          # проверка всех данных по контрольным суммам
-```text
+```
+
 | Понятие | Смысл |
 |---------|-------|
 | pool / vdev | Пул из виртуальных устройств: `mirror`, `raidz1/2/3` (аналог RAID5/6/«7»), special, log, cache |
@@ -413,7 +426,7 @@ sudo zpool scrub tank                          # проверка всех да�
 ## 💼 Как это в DevOps
 
 - Сервер с данными размечают так: система отдельно, данные — на LVM (часто поверх
-  RAID-контроллера или mdadm), `/var/lib/&lt;сервис&gt;` на своём LV. Тогда «кончилось место»
+  RAID-контроллера или mdadm), `/var/lib/<сервис>` на своём LV. Тогда «кончилось место»
   лечится `vgextend` + `lvextend -r` без простоя.
 - «Диск расширили, а места нет» — один из самых частых тикетов в облаке и на VMware; лестница
   «диск → раздел → PV → LV → ФС» решает его за минуту. Её же автоматизируют в Ansible
@@ -463,13 +476,17 @@ sudo zpool scrub tank                          # проверка всех да�
 10. mdadm: `/proc/mdstat`, `--fail/--remove/--add`; `mdadm.conf` + `update-initramfs`; без мониторинга RAID бесполезен.
 11. ZFS = ФС + тома + RAID + снапшоты + контрольные суммы; `send/receive` — готовая репликация; любит RAM, не в основном ядре.
 
-➡️ Дальше: [03_nfs_minio.md](/storage/03-nfs-minio) · задачи: 02_lvm_filesystems_tasks.md
+---
 
+## Задачи
+
+> Стенд: VM `stor1` из [Хранилища](/storage/) — доп. диски vdb/vdc/vdd (5G, `lvm-a/b/c`)
+> и vde/vdf/vdg (3G, `raid-a/b/c`). Перед практикой: `vagrant snapshot save stor1 before_02_tasks`.
+> ⚠️ Всё разрушающее — только на доп. дисках; перед командой — `lsblk -o NAME,SIZE,SERIAL,TYPE,MOUNTPOINTS`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Что такое PV, VG, LV и физический экстент (PE)? Какой размер PE по умолчанию?
 
@@ -632,180 +649,99 @@ ZFS под лицензией CDDL, несовместимой с GPL, поэт�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```bash
 B1.  sudo lvextend -L +5G /dev/data/app && df -h /srv/app
-```text
-<details><summary>Ответ</summary>
 
-⚠️ Без `-r` LV вырос, а ФС — нет: `df` покажет старый размер. Дорастить: `resize2fs` или
+B2.  sudo xfs_growfs /dev/data/app          # XFS смонтирована в /srv/app
+
+B3.  sudo lvreduce -L 2G data/logs          # ext4, смонтирована, без -r
+
+B4.  sudo lvcreate -s -n daily -L 200M data/app
+     # «снапшот — наш ежедневный бэкап», его не удаляют неделю; на томе активная запись
+
+B5.  sudo mount /dev/data/app_snap /mnt/snap          # XFS
+     # mount: wrong fs type, bad option, bad superblock …
+
+B6.  sudo lvcreate --type thin-pool -L 5G -n pool data
+     for i in 1 2 3 4; do sudo lvcreate --type thin -V 5G --thinpool pool -n t$i data; done
+     # мониторинга пула нет
+
+B7.  sudo growpart /dev/vda3
+
+B8.  sudo growpart /dev/vda 3 && sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
+     # lvextend: «Insufficient free space»
+
+B9.  # /etc/fstab
+     /dev/vdb1  /srv/data  ext4  defaults  0 2
+
+B10. sudo mdadm --create /dev/md0 --level=1 --raid-devices=2 /dev/vde /dev/vdf
+     sudo mkfs.ext4 /dev/md0
+     # в fstab: /dev/md0 /srv/raid ext4 defaults 0 2 ; ребут → emergency mode
+
+B11. sudo pvcreate /dev/vdc        # «диск же пустой»; lsblk не запускали
+
+B12. sudo vgreduce data /dev/vdb   # pvmove не делали; на vdb лежат экстенты LV app
+
+B13. # RAID5 из четырёх HDD по 16 ТБ, один диск умер, «заменим в понедельник»
+
+B14. sudo zpool create tank /dev/vde /dev/vdf      # «теперь данные защищены»
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Без `-r` LV вырос, а ФС — нет: `df` покажет старый размер. Дорастить: `resize2fs` или
 `xfs_growfs /srv/app` (или сразу `lvextend -r`).
 
-</details>
-
-```text:no-line-numbers
-B2.  sudo xfs_growfs /dev/data/app          # XFS смонтирована в /srv/app
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `xfs_growfs` ожидает точку монтирования: `xfs_growfs /srv/app` (новые версии
+**B2.** ⚠️ `xfs_growfs` ожидает точку монтирования: `xfs_growfs /srv/app` (новые версии
 принимают и устройство смонтированной ФС, но правило — mountpoint).
 
-</details>
-
-```text:no-line-numbers
-B3.  sudo lvreduce -L 2G data/logs          # ext4, смонтирована, без -r
-```text
-<details><summary>Ответ</summary>
-
-🔴 LV урезан раньше ФС: конец ext4 с данными отрезан, ФС повреждена. Правильно:
+**B3.** 🔴 LV урезан раньше ФС: конец ext4 с данными отрезан, ФС повреждена. Правильно:
 `umount` → `e2fsck -f` → `lvreduce -r -L 2G`. После такой ошибки — только восстановление из бэкапа
 (иногда помогает немедленный `lvextend` обратно до прежнего размера, пока ничего не перезаписано).
 
-</details>
-
-```text:no-line-numbers
-B4.  sudo lvcreate -s -n daily -L 200M data/app
-```text
-<details><summary>Ответ</summary>
-
-⚠️ 200M под изменения за неделю активной записи — снапшот переполнится и станет invalid,
+**B4.** ⚠️ 200M под изменения за неделю активной записи — снапшот переполнится и станет invalid,
 всё это время запись идёт с COW-штрафом. И это не бэкап: те же диски.
 
-</details>
+**B5.** ⚠️ Дубликат UUID у XFS. `mount -o ro,nouuid /dev/data/app_snap /mnt/snap`.
 
-```text:no-line-numbers
-     # «снапшот — наш ежедневный бэкап», его не удаляют неделю; на томе активная запись
-```text
-```text:no-line-numbers
-B5.  sudo mount /dev/data/app_snap /mnt/snap          # XFS
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Дубликат UUID у XFS. `mount -o ro,nouuid /dev/data/app_snap /mnt/snap`.
-
-</details>
-
-```text:no-line-numbers
-     # mount: wrong fs type, bad option, bad superblock …
-```text
-```text:no-line-numbers
-B6.  sudo lvcreate --type thin-pool -L 5G -n pool data
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Выдано 20G виртуально при 5G реальных, без алертов. Когда пул дойдёт до 100%, все
+**B6.** ⚠️ Выдано 20G виртуально при 5G реальных, без алертов. Когда пул дойдёт до 100%, все
 четыре тома получат I/O errors. Нужны алерт на `data_percent`/`metadata_percent` > 80%,
 autoextend в `lvm.conf` и свободное место в VG, `fstrim`.
 
-</details>
+**B7.** ⚠️ Синтаксис: `growpart /dev/vda 3` — диск и номер раздела через пробел.
 
-```text:no-line-numbers
-     for i in 1 2 3 4; do sudo lvcreate --type thin -V 5G --thinpool pool -n t$i data; done
-```text
-```text:no-line-numbers
-     # мониторинга пула нет
-```text
-```text:no-line-numbers
-B7.  sudo growpart /dev/vda3
-```text
-<details><summary>Ответ</summary>
+**B8.** ⚠️ Пропущен `pvresize /dev/vda3`: раздел вырос, а PV о новом месте не знает, в VG `VFree = 0`.
 
-⚠️ Синтаксис: `growpart /dev/vda 3` — диск и номер раздела через пробел.
-
-</details>
-
-```text:no-line-numbers
-B8.  sudo growpart /dev/vda 3 && sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Пропущен `pvresize /dev/vda3`: раздел вырос, а PV о новом месте не знает, в VG `VFree = 0`.
-
-</details>
-
-```text:no-line-numbers
-     # lvextend: «Insufficient free space»
-```text
-```text:no-line-numbers
-B9.  # /etc/fstab
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `/dev/vdb1` может стать другим диском после добавления дисков; нет `nofail` — без
+**B9.** ⚠️ `/dev/vdb1` может стать другим диском после добавления дисков; нет `nofail` — без
 диска сервер не загрузится. Правильно: `UUID=… /srv/data ext4 defaults,nofail 0 2`.
 
-</details>
-
-```text:no-line-numbers
-     /dev/vdb1  /srv/data  ext4  defaults  0 2
-```text
-```text:no-line-numbers
-B10.  sudo mdadm --create /dev/md0 --level=1 --raid-devices=2 /dev/vde /dev/vdf
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Массив не записан в `mdadm.conf` и initramfs — после ребута он собрался как
+**B10.** ⚠️ Массив не записан в `mdadm.conf` и initramfs — после ребута он собрался как
 `/dev/md127` (или позже), `/dev/md0` не существует, а без `nofail` загрузка падает в emergency.
 Писать в fstab UUID ФС, добавить `nofail`, сохранить конфиг массива.
 
-</details>
-
-```text:no-line-numbers
-     sudo mkfs.ext4 /dev/md0
-```text
-```text:no-line-numbers
-     # в fstab: /dev/md0 /srv/raid ext4 defaults 0 2 ; ребут → emergency mode
-```text
-```text:no-line-numbers
-B11.  sudo pvcreate /dev/vdc        # «диск же пустой»; lsblk не запускали
-```text
-<details><summary>Ответ</summary>
-
-🔴 Без `lsblk -f`/`wipefs -n` можно затереть чужие данные («пустой» по мнению человека
+**B11.** 🔴 Без `lsblk -f`/`wipefs -n` можно затереть чужие данные («пустой» по мнению человека
 диск может быть PV другой VG или ФС без точки монтирования). Сначала проверить сигнатуры.
 
-</details>
-
-```text:no-line-numbers
-B12.  sudo vgreduce data /dev/vdb   # pvmove не делали; на vdb лежат экстенты LV app
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `vgreduce` откажется: на PV есть используемые экстенты. Сначала `pvmove /dev/vdb`.
+**B12.** ⚠️ `vgreduce` откажется: на PV есть используемые экстенты. Сначала `pvmove /dev/vdb`.
 (Если диск уже умер — `vgreduce --removemissing` с потерей данных LV, лежавших на нём.)
 
-</details>
-
-```text:no-line-numbers
-B13.  # RAID5 из четырёх HDD по 16 ТБ, один диск умер, «заменим в понедельник»
-```text
-<details><summary>Ответ</summary>
-
-🔴 RAID5 без одного диска не имеет избыточности: второй отказ или URE при rebuild
+**B13.** 🔴 RAID5 без одного диска не имеет избыточности: второй отказ или URE при rebuild
 (на 48 ТБ оставшихся данных это вполне вероятно) — потеря массива. Менять сразу, держать hot
 spare, для больших HDD — RAID6/RAID10, и бэкап актуален.
 
-</details>
-
-```text:no-line-numbers
-B14.  sudo zpool create tank /dev/vde /dev/vdf      # «теперь данные защищены»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без `mirror` это stripe из двух дисков (аналог RAID0): отказ любого — потеря пула.
+**B14.** ⚠️ Без `mirror` это stripe из двух дисков (аналог RAID0): отказ любого — потеря пула.
 Правильно: `zpool create tank mirror /dev/disk/by-id/… /dev/disk/by-id/…`.
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 LVM с нуля и расширение онлайн
-**1.** Из `vdb` и `vdc` собери VG `data`, создай LV `app` на 3G (XFS) и `logs` на 50% свободного (ext4).
+#### C1. 🔑 LVM с нуля и расширение онлайн
+1. Из `vdb` и `vdc` собери VG `data`, создай LV `app` на 3G (XFS) и `logs` на 50% свободного (ext4).
+2. Смонтируй через fstab по UUID с `nofail`, проверь `findmnt --verify` и `mount -a`.
+3. Запусти фоновую запись в `/srv/app` и расширь оба тома на 1G онлайн. Покажи `df -h` до и после.
 
 <details><summary>Ответ</summary>
 
@@ -818,10 +754,13 @@ echo "UUID=$(sudo blkid -s UUID -o value /dev/data/app)  /srv/app  xfs  defaults
 echo "UUID=$(sudo blkid -s UUID -o value /dev/data/logs) /srv/logs ext4 defaults,noatime,nofail 0 2" | sudo tee -a /etc/fstab
 sudo findmnt --verify && sudo systemctl daemon-reload && sudo mount -a
 sudo lvextend -r -L +1G data/app && sudo lvextend -r -L +1G data/logs && df -h /srv/app /srv/logs
-```text
+```
+
 </details>
 
-**2.** Смонтируй через fstab по UUID с `nofail`, проверь `findmnt --verify` и `mount -a`.
+#### C2. Уменьшение ext4
+Уменьши `logs` до 1G. Запиши последовательность и объясни, что было бы, если бы сначала уменьшил LV.
+Что ответишь, если попросят то же самое для `app` (XFS)?
 
 <details><summary>Ответ</summary>
 
@@ -832,60 +771,26 @@ sudo lvextend -r -L +1G data/app && sudo lvextend -r -L +1G data/logs && df -h /
 
 </details>
 
-**3.** Запусти фоновую запись в `/srv/app` и расширь оба тома на 1G онлайн. Покажи `df -h` до и после.
-
-<details><summary>Ответ</summary>
-
-) Лестница: `lsblk` (диск) → раздел → `pvs` → `vgs`/`lvs` → `df -h`.
-
-</details>
-
-### C2. Уменьшение ext4
-Уменьши `logs` до 1G. Запиши последовательность и объясни, что было бы, если бы сначала уменьшил LV.
-Что ответишь, если попросят то же самое для `app` (XFS)?
-
-### C3. 🔑 Замена диска под нагрузкой
+#### C3. 🔑 Замена диска под нагрузкой
 Добавь `vdd` в VG и переведи все экстенты с `vdb` на другие диски, не размонтируя тома. Докажи,
 что `vdb` пуст, выведи его из VG и сними метку LVM. Сколько времени занял `pvmove` и что было
 с латентностью записи (посмотри `iostat -x 1`)?
 
-### C4. 🔑 Снапшот, восстановление файла и откат тома
-**1.** Запиши `important.txt` в `/srv/app`, сними снапшот 500M, удали файл.
-
 <details><summary>Ответ</summary>
 
-```bash
-sudo pvcreate /dev/vdb /dev/vdc && sudo vgcreate data /dev/vdb /dev/vdc
-sudo lvcreate -n app -L 3G data && sudo lvcreate -n logs -l 50%FREE data
-sudo mkfs.xfs /dev/data/app && sudo mkfs.ext4 /dev/data/logs
-sudo mkdir -p /srv/app /srv/logs
-echo "UUID=$(sudo blkid -s UUID -o value /dev/data/app)  /srv/app  xfs  defaults,noatime,nofail 0 0" | sudo tee -a /etc/fstab
-echo "UUID=$(sudo blkid -s UUID -o value /dev/data/logs) /srv/logs ext4 defaults,noatime,nofail 0 2" | sudo tee -a /etc/fstab
-sudo findmnt --verify && sudo systemctl daemon-reload && sudo mount -a
-sudo lvextend -r -L +1G data/app && sudo lvextend -r -L +1G data/logs && df -h /srv/app /srv/logs
-```text
-</details>
-
-**2.** Достань файл из снапшота (смонтируй read-only).
-
-<details><summary>Ответ</summary>
-
-`sudo umount /srv/logs && sudo e2fsck -f /dev/data/logs && sudo lvreduce -r -L 1G data/logs
-&& sudo mount /srv/logs`. Если бы сначала урезали LV — конец ФС с данными оказался бы за
-границей тома: повреждение ФС. Для XFS — отказ: уменьшить нельзя, только новый LV меньшего
-размера, перенос данных и переключение (с окном или через репликацию на уровне приложения).
+`sudo pvcreate /dev/vdd && sudo vgextend data /dev/vdd && sudo pvmove /dev/vdb`;
+проверка `sudo pvs` (у vdb `PFree = PSize`) и `sudo lvs -a -o +devices` (vdb нигде нет); затем
+`sudo vgreduce data /dev/vdb && sudo pvremove /dev/vdb`. Во время `pvmove` в `iostat -x` растут
+`w_await` и `%util` на vdb и vdd — это копирование экстентов; на 5G — десятки секунд, на
+терабайтах — часы, поэтому в проде его запускают вне пика.
 
 </details>
 
-**3.** Верни весь том к состоянию снапшота через `lvconvert --merge`.
-
-<details><summary>Ответ</summary>
-
-) Лестница: `lsblk` (диск) → раздел → `pvs` → `vgs`/`lvs` → `df -h`.
-
-</details>
-
-**4.** Отдельно: сними снапшот на 100M и переполни его записью в оригинал. Что покажет `lvs`?
+#### C4. 🔑 Снапшот, восстановление файла и откат тома
+1. Запиши `important.txt` в `/srv/app`, сними снапшот 500M, удали файл.
+2. Достань файл из снапшота (смонтируй read-only).
+3. Верни весь том к состоянию снапшота через `lvconvert --merge`.
+4. Отдельно: сними снапшот на 100M и переполни его записью в оригинал. Что покажет `lvs`?
 
 <details><summary>Ответ</summary>
 
@@ -896,122 +801,108 @@ sudo mount -o ro,nouuid /dev/data/app_snap /mnt/snap && cat /mnt/snap/important.
 sudo umount /mnt/snap /srv/app && sudo lvconvert --merge data/app_snap
 sudo lvchange -an data/app && sudo lvchange -ay data/app && sudo mount /srv/app
 ls /srv/app/important.txt            # файл вернулся
-```text
+```
 Переполненный снапшот на 100M: в `lvs` `Data%` = 100 и атрибут `I` (invalid) в `lv_attr`
 (`swi-I-s---`), в `dmesg` — сообщение device-mapper о том, что снапшот стал недействительным.
 
 </details>
 
-### C5. Thin provisioning
+#### C5. Thin provisioning
 Создай thin-пул 3G и два thin-тома по 5G. Заполняй один из них, пока пул не подойдёт к 100%.
 Что увидело приложение и `dmesg`? Как вернуть место после удаления файлов? Какой алерт поставишь?
 
-### C6. 🔑 «Расширили диск, а места нет» — оба варианта
-**1.** PV на целом диске: на хосте `sudo virsh blockresize storage-lab_stor1 vdd 8G`, в госте доведи
+<details><summary>Ответ</summary>
+
+`sudo lvcreate --type thin-pool -L 3G -n pool data`, два тома
+`lvcreate --type thin -V 5G --thinpool pool -n tN data`, ext4, запись `dd`. Около 100% запись
+зависает (очередь до 60 с), затем `dd` получает Input/output error, в `dmesg` — «reached low
+water mark» и «switching pool to out-of-data-space», ext4 перемонтируется read-only (если
+`errors=remount-ro`). Вернуть место — удалить файлы и `fstrim /srv/thin` (или `discard`), либо
+расширить пул `lvextend -L +1G data/pool`. Алерт: `data_percent > 80` и `metadata_percent > 80`
+через textfile collector из `lvs --reportformat json`.
+
+</details>
+
+#### C6. 🔑 «Расширили диск, а места нет» — оба варианта
+1. PV на целом диске: на хосте `sudo virsh blockresize storage-lab_stor1 vdd 8G`, в госте доведи
    новое место до ФС.
-
-<details><summary>Ответ</summary>
-
-```bash
-sudo pvcreate /dev/vdb /dev/vdc && sudo vgcreate data /dev/vdb /dev/vdc
-sudo lvcreate -n app -L 3G data && sudo lvcreate -n logs -l 50%FREE data
-sudo mkfs.xfs /dev/data/app && sudo mkfs.ext4 /dev/data/logs
-sudo mkdir -p /srv/app /srv/logs
-echo "UUID=$(sudo blkid -s UUID -o value /dev/data/app)  /srv/app  xfs  defaults,noatime,nofail 0 0" | sudo tee -a /etc/fstab
-echo "UUID=$(sudo blkid -s UUID -o value /dev/data/logs) /srv/logs ext4 defaults,noatime,nofail 0 2" | sudo tee -a /etc/fstab
-sudo findmnt --verify && sudo systemctl daemon-reload && sudo mount -a
-sudo lvextend -r -L +1G data/app && sudo lvextend -r -L +1G data/logs && df -h /srv/app /srv/logs
-```text
-</details>
-
-**2.** PV в разделе: освободи `vdb`, создай GPT-раздел 1MiB–3GiB, сделай его PV и добавь в VG;
+2. PV в разделе: освободи `vdb`, создай GPT-раздел 1MiB–3GiB, сделай его PV и добавь в VG;
    затем расширь раздел до конца диска и доведи место до ФС.
+3. Запиши лестницу проверок, которой пользовался.
 
 <details><summary>Ответ</summary>
 
-`sudo umount /srv/logs && sudo e2fsck -f /dev/data/logs && sudo lvreduce -r -L 1G data/logs
-&& sudo mount /srv/logs`. Если бы сначала урезали LV — конец ФС с данными оказался бы за
-границей тома: повреждение ФС. Для XFS — отказ: уменьшить нельзя, только новый LV меньшего
-размера, перенос данных и переключение (с окном или через репликацию на уровне приложения).
+1\) После `virsh blockresize` в госте `dmesg | tail` показывает новый размер vdd; затем
+`sudo pvresize /dev/vdd && sudo lvextend -r -l +100%FREE data/app`. 2) После `pvmove` с vdb:
+`sudo parted -s /dev/vdb mklabel gpt mkpart lvm 1MiB 3GiB && sudo pvcreate /dev/vdb1 && sudo vgextend data /dev/vdb1`,
+потом `sudo growpart /dev/vdb 1 && sudo pvresize /dev/vdb1 && sudo lvextend -r -l +100%FREE data/app`.
+3) Лестница: `lsblk` (диск) → раздел → `pvs` → `vgs`/`lvs` → `df -h`.
 
 </details>
 
-**3.** Запиши лестницу проверок, которой пользовался.
-
-<details><summary>Ответ</summary>
-
-) Лестница: `lsblk` (диск) → раздел → `pvs` → `vgs`/`lvs` → `df -h`.
-
-</details>
-
-### C7. 🔑 RAID1 на mdadm и учения
-**1.** Собери RAID1 из `vde` и `vdf`, создай ext4, запиши файл 300 МБ и его `sha256sum`.
+#### C7. 🔑 RAID1 на mdadm и учения
+1. Собери RAID1 из `vde` и `vdf`, создай ext4, запиши файл 300 МБ и его `sha256sum`.
+2. Сохрани конфиг массива так, чтобы он собирался после перезагрузки. Перезагрузись, проверь.
+3. Проведи отказ `vdf`, замену на `vdg`, дождись окончания rebuild, сверь контрольную сумму.
+4. Напиши алерт для node_exporter на деградировавший массив.
 
 <details><summary>Ответ</summary>
 
 ```bash
-sudo pvcreate /dev/vdb /dev/vdc && sudo vgcreate data /dev/vdb /dev/vdc
-sudo lvcreate -n app -L 3G data && sudo lvcreate -n logs -l 50%FREE data
-sudo mkfs.xfs /dev/data/app && sudo mkfs.ext4 /dev/data/logs
-sudo mkdir -p /srv/app /srv/logs
-echo "UUID=$(sudo blkid -s UUID -o value /dev/data/app)  /srv/app  xfs  defaults,noatime,nofail 0 0" | sudo tee -a /etc/fstab
-echo "UUID=$(sudo blkid -s UUID -o value /dev/data/logs) /srv/logs ext4 defaults,noatime,nofail 0 2" | sudo tee -a /etc/fstab
-sudo findmnt --verify && sudo systemctl daemon-reload && sudo mount -a
-sudo lvextend -r -L +1G data/app && sudo lvextend -r -L +1G data/logs && df -h /srv/app /srv/logs
-```text
-</details>
-
-**2.** Сохрани конфиг массива так, чтобы он собирался после перезагрузки. Перезагрузись, проверь.
-
-<details><summary>Ответ</summary>
-
-`sudo umount /srv/logs && sudo e2fsck -f /dev/data/logs && sudo lvreduce -r -L 1G data/logs
-&& sudo mount /srv/logs`. Если бы сначала урезали LV — конец ФС с данными оказался бы за
-границей тома: повреждение ФС. Для XFS — отказ: уменьшить нельзя, только новый LV меньшего
-размера, перенос данных и переключение (с окном или через репликацию на уровне приложения).
+sudo mdadm --create /dev/md0 --level=1 --raid-devices=2 /dev/vde /dev/vdf   # y
+sudo mkfs.ext4 /dev/md0 && sudo mkdir -p /srv/raid && sudo mount /dev/md0 /srv/raid
+sudo dd if=/dev/urandom of=/srv/raid/blob bs=1M count=300 status=none && sha256sum /srv/raid/blob
+sudo mdadm --detail --scan | sudo tee -a /etc/mdadm/mdadm.conf && sudo update-initramfs -u
+echo "UUID=$(sudo blkid -s UUID -o value /dev/md0) /srv/raid ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
+sudo reboot   # после: cat /proc/mdstat → md0 [UU], findmnt /srv/raid
+sudo mdadm /dev/md0 --fail /dev/vdf && sudo mdadm /dev/md0 --remove /dev/vdf && sudo mdadm /dev/md0 --add /dev/vdg
+watch -n1 cat /proc/mdstat   # до [UU]; затем sha256sum /srv/raid/blob — совпадает
+```
+Алерт: `node_md_disks{state="failed"} > 0 or (node_md_disks_required - node_md_disks{state="active"}) > 0`.
 
 </details>
 
-**3.** Проведи отказ `vdf`, замену на `vdg`, дождись окончания rebuild, сверь контрольную сумму.
-
-<details><summary>Ответ</summary>
-
-) Лестница: `lsblk` (диск) → раздел → `pvs` → `vgs`/`lvs` → `df -h`.
-
-</details>
-
-**4.** Напиши алерт для node_exporter на деградировавший массив.
-
-<details><summary>Ответ</summary>
-
-```bash
-echo "до ошибки" | sudo tee /srv/app/important.txt
-sudo lvcreate -s -n app_snap -L 500M data/app && sudo rm /srv/app/important.txt
-sudo mount -o ro,nouuid /dev/data/app_snap /mnt/snap && cat /mnt/snap/important.txt
-sudo umount /mnt/snap /srv/app && sudo lvconvert --merge data/app_snap
-sudo lvchange -an data/app && sudo lvchange -ay data/app && sudo mount /srv/app
-ls /srv/app/important.txt            # файл вернулся
-```text
-Переполненный снапшот на 100M: в `lvs` `Data%` = 100 и атрибут `I` (invalid) в `lv_attr`
-(`swi-I-s---`), в `dmesg` — сообщение device-mapper о том, что снапшот стал недействительным.
-
-</details>
-
-### C8. ZFS: снапшот и send/receive
+#### C8. ZFS: снапшот и send/receive
 После уборки mdadm (`--zero-superblock`) создай пул `tank` mirror из `vde`+`vdf`, dataset
 `tank/data` с lz4, сделай снапшоты `@s1` и `@s2` с изменениями между ними. Передай полный и
 инкрементальный поток в файл (`zfs send … > file`) и восстанови его в `tank/restore`. Что
 показывает `zpool status` после `zpool scrub`?
 
-### C9. Уборка стенда
+<details><summary>Ответ</summary>
+
+```bash
+sudo zpool create tank mirror /dev/disk/by-id/virtio-raid-a /dev/disk/by-id/virtio-raid-b
+sudo zfs create -o compression=lz4 tank/data
+echo one | sudo tee /tank/data/a && sudo zfs snapshot tank/data@s1
+echo two | sudo tee /tank/data/b && sudo zfs snapshot tank/data@s2
+sudo zfs send tank/data@s1 | sudo tee /root/full.zfs >/dev/null
+sudo zfs send -i tank/data@s1 tank/data@s2 | sudo tee /root/incr.zfs >/dev/null
+sudo zfs receive tank/restore < /root/full.zfs && sudo zfs receive tank/restore < /root/incr.zfs
+ls /tank/restore; sudo zpool scrub tank; zpool status tank   # scrub repaired 0B … with 0 errors
+```
+Инкремент применяется только поверх `@s1` в приёмнике; `zpool status` показывает результат
+scrub, ошибки READ/WRITE/CKSUM по дискам (все нули).
+
+</details>
+
+#### C9. Уборка стенда
 Верни `stor1` в исходное состояние без `snapshot restore`: размонтировать, убрать строки из
 fstab, удалить LV/VG/PV, остановить и затереть md, уничтожить ZFS-пул, очистить сигнатуры.
 Проверь, что после перезагрузки система грузится без ошибок.
 
+<details><summary>Ответ</summary>
+
+`umount` всех точек, удалить строки из fstab (`sudo sed -i '\|/srv/|d' /etc/fstab`,
+проверить глазами), `sudo lvremove -y data && sudo vgremove data && sudo pvremove /dev/vdX…`,
+`sudo mdadm --stop /dev/md0 && sudo mdadm --zero-superblock /dev/vd…`, убрать строку ARRAY из
+`mdadm.conf` + `update-initramfs -u`, `sudo zpool destroy tank`, `sudo wipefs -a /dev/vdb …/dev/vdg`
+(⚠️ только доп. диски), `findmnt --verify`, `sudo reboot` — загрузка без emergency mode.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Облачный диск расширили с 50 до 100 ГБ, `df -h /` показывает 50 ГБ. Сервер: раздел
 `vda3` → PV → `ubuntu-vg/ubuntu-lv` → ext4. Действия по шагам.
@@ -1117,13 +1008,12 @@ fstab (UUID + `nofail`), `findmnt --verify`, `systemctl daemon-reload`, пере
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Зачем нужен LVM? Что даёт по сравнению с обычными разделами?
 
 <details><summary>Ответ</summary>
 
 Гибкость: том из нескольких дисков, расширение онлайн, добавление и замена дисков без
-   простоя (`pvmove`), снапшоты, thin provisioning. Разделы так не умеют.
+простоя (`pvmove`), снапшоты, thin provisioning. Разделы так не умеют.
 
 </details>
 
@@ -1132,7 +1022,7 @@ fstab (UUID + `nofail`), `findmnt --verify`, `systemctl daemon-reload`, пере
 <details><summary>Ответ</summary>
 
 `lvextend -r -L +NG VG/LV` — LV и ФС онлайн; без LVM — растёт раздел (`growpart`) и ФС
-   (`resize2fs` для ext4, `xfs_growfs MOUNTPOINT` для XFS).
+(`resize2fs` для ext4, `xfs_growfs MOUNTPOINT` для XFS).
 
 </details>
 
@@ -1141,7 +1031,7 @@ fstab (UUID + `nofail`), `findmnt --verify`, `systemctl daemon-reload`, пере
 <details><summary>Ответ</summary>
 
 Нельзя. Новый LV меньшего размера, перенос данных (`rsync -aHAX`, `xfsdump/xfsrestore`),
-   переключение точки монтирования.
+переключение точки монтирования.
 
 </details>
 
@@ -1150,7 +1040,7 @@ fstab (UUID + `nofail`), `findmnt --verify`, `systemctl daemon-reload`, пере
 <details><summary>Ответ</summary>
 
 Проверяю слои снизу вверх: диск (`lsblk`, rescan) → раздел (`growpart`) → PV (`pvresize`)
-   → LV (`lvextend`) → ФС (`resize2fs`/`xfs_growfs` или `-r`). Всё онлайн.
+→ LV (`lvextend`) → ФС (`resize2fs`/`xfs_growfs` или `-r`). Всё онлайн.
 
 </details>
 
@@ -1159,8 +1049,8 @@ fstab (UUID + `nofail`), `findmnt --verify`, `systemctl daemon-reload`, пере
 <details><summary>Ответ</summary>
 
 COW-снимок тома в той же VG: хранит изменённые блоки, при переполнении становится invalid,
-   тормозит запись, умирает вместе с дисками. Это точка отката и источник для бэкапа, но
-   бэкап — копия на другом носителе.
+тормозит запись, умирает вместе с дисками. Это точка отката и источник для бэкапа, но
+бэкап — копия на другом носителе.
 
 </details>
 
@@ -1169,7 +1059,7 @@ COW-снимок тома в той же VG: хранит изменённые �
 <details><summary>Ответ</summary>
 
 Том получает место из пула по мере записи, можно выдать больше, чем есть. Опасность —
-   переполнение пула: I/O errors у всех томов. Нужны алерты, autoextend, fstrim.
+переполнение пула: I/O errors у всех томов. Нужны алерты, autoextend, fstrim.
 
 </details>
 
@@ -1178,8 +1068,8 @@ COW-снимок тома в той же VG: хранит изменённые �
 <details><summary>Ответ</summary>
 
 Обычно дефолт дистрибутива: ext4 универсальна и уменьшается offline, XFS лучше на больших
-   томах и параллельной записи, но не уменьшается. Под большие данные — XFS, если уменьшение
-   не понадобится.
+томах и параллельной записи, но не уменьшается. Под большие данные — XFS, если уменьшение
+не понадобится.
 
 </details>
 
@@ -1188,7 +1078,7 @@ COW-снимок тома в той же VG: хранит изменённые �
 <details><summary>Ответ</summary>
 
 С LVM: `vgextend` новым диском → `pvmove` со старого → `vgreduce` → `pvremove`. С RAID:
-   `--fail` → `--remove` → `--add` → rebuild.
+`--fail` → `--remove` → `--add` → rebuild.
 
 </details>
 
@@ -1197,8 +1087,8 @@ COW-снимок тома в той же VG: хранит изменённые �
 <details><summary>Ответ</summary>
 
 mdadm собирает массив из дисков, состояние в `/proc/mdstat` и `mdadm --detail`, конфиг — в
-   `mdadm.conf` + initramfs. Деградация — `[U_]`, `(F)`; ловят `mdmonitor` и алертом на
-   `node_md_disks{state="failed"}`.
+`mdadm.conf` + initramfs. Деградация — `[U_]`, `(F)`; ловят `mdmonitor` и алертом на
+`node_md_disks{state="failed"}`.
 
 </details>
 
@@ -1207,10 +1097,8 @@ mdadm собирает массив из дисков, состояние в `/p
 <details><summary>Ответ</summary>
 
 ФС + менеджер томов + RAID (mirror/raidz) в одном, контрольные суммы и scrub, CoW-снапшоты,
-    сжатие, `send/receive` для репликации и бэкапа; требует RAM (ARC), лицензия CDDL — модуль
-    вне основного ядра.
-
----
+сжатие, `send/receive` для репликации и бэкапа; требует RAM (ARC), лицензия CDDL — модуль
+вне основного ядра.
 
 </details>
 

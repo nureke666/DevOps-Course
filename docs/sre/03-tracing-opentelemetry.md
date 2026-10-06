@@ -1,13 +1,13 @@
 ---
 title: "03. Трейсинг и OpenTelemetry"
-description: "Блок → SRE и Observability → тема 03. Три сигнала введены в"
+description: "Span/trace, traceparent, sampling, OTel Collector, Tempo, exemplars"
 ---
 
 # 03. Трейсинг и OpenTelemetry
 
 > Блок → SRE и Observability → тема 03. Три сигнала введены в
-> [../Left/02_Monitoring/01_monitoring_concepts.md](/monitoring/01-monitoring-concepts),
-> `trace_id` в логах — в [../Left/03_Logging/03_loki_grafana.md](/logging/03-loki-grafana).
+> [Мониторинг: 01. Основы мониторинга](/monitoring/01-monitoring-concepts),
+> `trace_id` в логах — в [Логирование: 03. Loki + Grafana](/logging/03-loki-grafana).
 > Здесь — откуда берётся `trace_id`, как устроен трейс и как собрать всё в одну картину.
 >
 > **После темы ты умеешь:** объяснить trace, span, атрибуты и события; прочитать `traceparent`;
@@ -19,10 +19,10 @@ description: "Блок → SRE и Observability → тема 03. Три сигн
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  пользователь ─► shop-api ───────────────► payments ─────────► «БД»
                  span: GET /checkout        span: GET /pay       span: db.query
-                    │  HTTP-заголовок traceparent: 00-&lt;trace_id&gt;-&lt;span_id&gt;-01
+                    │  HTTP-заголовок traceparent: 00-<trace_id>-<span_id>-01
                     ▼
    OTel SDK в приложении ── OTLP ──► OTel Collector ──► Tempo       (трейсы)
    (авто + ручные спаны)             receivers →        Loki        (логи с trace_id)
@@ -30,17 +30,19 @@ description: "Блок → SRE и Observability → тема 03. Три сигн
                                      exporters
                                                    ▼
                           Grafana: метрика ⇄ трейс ⇄ лог — одним кликом
-```text
+```
+
 ---
 
 ## 1. Зачем трейсы, если есть метрики и логи
 
-```text
+```text:no-line-numbers
 Метрика:  p99 /checkout = 2 с (было 200 мс)              → ЧТО и КОГДА
 Логи:     5 сервисов пишут вперемешку, 40 тысяч строк    → ПОЧЕМУ (если найдёшь нужные)
 Трейс:    из 2 с — 1,8 с запрос ждал свободное           → ГДЕ именно
           соединение в пуле payments
-```text
+```
+
 Трейсы окупаются, когда запрос проходит через несколько сервисов, очередей и баз:
 без них «где тормозит» превращается в гадание по графикам соседних сервисов.
 Они **не заменяют** метрики (для алертов и SLO) и логи (для деталей), а связывают их.
@@ -49,7 +51,7 @@ description: "Блок → SRE и Observability → тема 03. Три сигн
 
 ## 2. Анатомия трейса
 
-```text
+```text:no-line-numbers
 trace_id = 4bf92f3577b34da6a3ce929d0e0e4736              0 мс ──────────────────── 180 мс
 GET /checkout        shop-api  SERVER    ████████████████████████████████████████  180 мс
  ├─ validate_cart    shop-api  INTERNAL  ██                                         12 мс
@@ -57,7 +59,8 @@ GET /checkout        shop-api  SERVER    █████████████
      └─ GET /pay     payments  SERVER       ████████████████████████████████████   155 мс
          ├─ db.pool.acquire    INTERNAL     ███████████████████████████            120 мс ← ждём пул!
          └─ db.query           INTERNAL                                ████████     35 мс
-```text
+```
+
 | Поле спана | Что это |
 |------------|---------|
 | `trace_id` | 16 байт (32 hex-символа), общий для всех спанов одного запроса |
@@ -86,13 +89,14 @@ GET /checkout        shop-api  SERVER    █████████████
 
 Сервисы передают контекст в заголовках по стандарту **W3C Trace Context**:
 
-```text
+```text:no-line-numbers
 traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
              │  │                                │                │
           версия  trace_id (16 байт)             span_id вызывающего  флаги: 01 = sampled
 tracestate:  vendor1=abc,vendor2=xyz     ← данные конкретных вендоров, необязательно
 baggage:     tenant=acme,plan=pro        ← ключи-значения, которые едут ВО ВСЕ сервисы ниже
-```text
+```
+
 - Пропагаторы задаются `OTEL_PROPAGATORS` (по умолчанию `tracecontext,baggage`);
   для старых систем на Zipkin — `b3`/`b3multi`.
 - ⚠️ `baggage` уходит во все нижестоящие вызовы, включая внешние API: никаких секретов
@@ -124,16 +128,18 @@ ctx = extract(message_headers)
 with tracer.start_as_current_span("process order", context=ctx,
                                   kind=trace.SpanKind.CONSUMER):
     handle(order)
-```text
+```
+
 ---
 
 ## 4. Sampling: что сохранять
 
 Хранить всё — дорого:
-```text
+```
 200 RPS × 20 спанов на запрос × ~700 байт ≈ 2,8 МБ/с ≈ 242 ГБ в сутки
 с сэмплингом 10%                                        ≈  24 ГБ в сутки
-```text
+```
+
 | | Head sampling | Tail sampling |
 |---|---------------|---------------|
 | Где решают | В SDK, при создании корневого спана | В Collector, когда трейс завершился |
@@ -142,16 +148,18 @@ with tracer.start_as_current_span("process order", context=ctx,
 | Риск | Редкие ошибки теряются с той же вероятностью, что и успешные | Все спаны трейса должны попасть в **один** экземпляр коллектора |
 | Настройка | `OTEL_TRACES_SAMPLER=parentbased_traceidratio`, `OTEL_TRACES_SAMPLER_ARG=0.1` | Процессор `tail_sampling` |
 
-```text
+```
 parentbased_*: если родитель сэмплирован (флаг 01 в traceparent) — сэмплируем и мы.
                Иначе трейс рвётся: один сервис записал спан, другой — нет.
-```text
+```
+
 Tail sampling в нескольких репликах коллектора — двухуровневая схема:
-```text
+```text:no-line-numbers
 SDK ──► коллекторы-агенты ──► load_balancing exporter ──► коллекторы с tail_sampling ──► Tempo
                               (routing_key: traceID —      (все спаны одного трейса
                                один трейс → один узел)      приходят в один узел)
-```text
+```
+
 > ⭐ Метрики из спанов (RPS, ошибки, латентность) считают **до** сэмплинга — иначе RPS
 > окажется в 10 раз меньше реального. И SLI никогда не считают по сэмплированным трейсам.
 
@@ -159,9 +167,10 @@ SDK ──► коллекторы-агенты ──► load_balancing exporte
 
 ## 5. OpenTelemetry: из чего состоит
 
-```text
+```text:no-line-numbers
 OpenTracing + OpenCensus ──(2019)──► OpenTelemetry (CNCF): единый стандарт телеметрии
-```text
+```
+
 | Часть | Роль |
 |-------|------|
 | **Specification** | Как должны работать API, SDK, протокол — одинаково для всех языков |
@@ -197,7 +206,7 @@ opentelemetry-bootstrap -a install     # доставит инструмента
 OTEL_SERVICE_NAME=shop-api \
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
 opentelemetry-instrument uvicorn app:app --host 0.0.0.0 --port 8000
-```text
+```
 ⚠️ С `uvicorn --reload` авто-инструментация не работает — только для разработки без трейсов.
 
 | Переменная | Зачем |
@@ -230,7 +239,7 @@ async def pay():
                 raise HTTPException(status_code=500, detail="db error")
     finally:
         POOL.release()
-```text
+```
 Исключение, вылетевшее из `with start_as_current_span(...)`, SDK сам запишет событием
 `exception` и поставит спану статус `ERROR`.
 
@@ -239,7 +248,8 @@ async def pay():
 ```python
 ctx = trace.get_current_span().get_span_context()
 trace_id = format(ctx.trace_id, "032x") if ctx.is_valid else None
-```text
+```
+
 > 💡 В Kubernetes авто-инструментацию подключает OpenTelemetry Operator: ресурс
 > `Instrumentation` плюс аннотация пода `instrumentation.opentelemetry.io/inject-python: "true"`.
 
@@ -256,18 +266,19 @@ trace_id = format(ctx.trace_id, "032x") if ctx.is_valid else None
 | **extensions** | Служебное | `health_check`, `zpages`, `pprof` |
 | **pipelines** | Связывают всё по сигналам | `traces`, `metrics`, `logs` |
 
-```text
+```text:no-line-numbers
    ПАТТЕРНЫ РАЗВЁРТЫВАНИЯ
    agent   — рядом с приложением (DaemonSet на ноде или sidecar): дешёвый сбор,
              k8s-метаданные, локальный буфер
    gateway — отдельный Deployment за балансировщиком: tail sampling, чистка PII,
              маршрутизация, ключи бэкендов в одном месте
    Типично: приложения → agent → gateway → Tempo/Loki/Prometheus
-```text
+```
+
 Дистрибутивы: core (`otel/opentelemetry-collector`), contrib
 (`otel/opentelemetry-collector-contrib` — почти все компоненты), k8s, свой через
 OpenTelemetry Collector Builder (`ocb`). Grafana Alloy — дистрибутив коллектора со своим
-языком конфигурации ([../Left/03_Logging/04_collectors.md](/logging/04-collectors)).
+языком конфигурации ([Логирование: 04. Сборщики логов](/logging/04-collectors)).
 
 «Боевой» конфиг gateway: фильтрация шума, чистка PII, span metrics **до** сэмплинга, tail sampling
 (проверен `otelcol-contrib validate`):
@@ -350,7 +361,8 @@ service:
       receivers: [span_metrics]
       processors: [batch]
       exporters: [prometheus]
-```text
+```
+
 > ⚠️ Имена компонентов переезжают на snake_case: `otlp` → `otlp_grpc`, `otlphttp` → `otlp_http`
 > (с v0.144), `spanmetrics` → `span_metrics`, `k8sattributes` → `k8s_attributes`. Старые
 > имена пока работают как устаревшие алиасы, но в статьях встретишь оба варианта.
@@ -377,14 +389,14 @@ service:
 | Особенности | metrics-generator: service graph и span metrics | Jaeger v2 построен на OTel Collector | Всё в одном |
 
 **TraceQL** — язык запросов Tempo (все примеры проверены на стенде):
-```text
+```
 { resource.service.name = "payments" && name = "db.query" && duration > 100ms }
 { status = error }
 { span.http.response.status_code >= 500 }
 { name = "db.pool.acquire" && duration > 500ms }
 { resource.service.name = "shop-api" } >> { resource.service.name = "payments" && status = error }
 { status = error } | select(span.http.response.status_code)
-```text
+```
 `resource.` — атрибуты сервиса, `span.` — атрибуты спана, `>>` — «потомок где-то ниже»,
 `select(...)` — показать атрибут в результатах.
 
@@ -392,12 +404,13 @@ service:
 
 ## 9. Связка метрики ↔ трейсы ↔ логи в Grafana
 
-```text
+```text:no-line-numbers
    Prometheus                      Tempo                         Loki
  p99 /checkout подскочил ──(1)──► трейс 4bf92f… ──(2)──►  строки лога этого trace_id
         ▲                          │     ▲                           │
         └──────────(4)─────────────┘     └───────────(3)─────────────┘
-```text
+```
+
 | # | Переход | Механизм | Что настроить |
 |---|---------|----------|---------------|
 | 1 | Метрика → трейс | **Exemplars**: к точке гистограммы приложение прикладывает `trace_id` | Приложение пишет exemplar, Prometheus с `--enable-feature=exemplar-storage`, в источнике `exemplarTraceIdDestinations` |
@@ -415,18 +428,19 @@ tracesToLogsV2:
   datasourceUid: loki
   tags: [{ key: "service.name", value: "service_name" }]
   customQuery: true
-  query: '{$${__tags&#125;&#125; | trace_id="$${__trace.traceId}"'   # $$ — экранирование в provisioning
+  query: '{$${__tags}} | trace_id="$${__trace.traceId}"'   # $$ — экранирование в provisioning
 # Loki → jsonData (trace_id лежит в structured metadata, поэтому matcherType: label):
 derivedFields:
   - { name: TraceID, matcherType: label, matcherRegex: trace_id, datasourceUid: tempo, url: "$${__value.raw}" }
-```text
+```
+
 Откуда `trace_id` в логах:
 - Логи уходят через OTel SDK → Collector → Loki (OTLP): `trace_id` и `span_id` попадают
   в **structured metadata** автоматически, `service.name` → лейбл `service_name`.
   Поиск: `{service_name="shop-api"} | trace_id="4bf92f…"`.
 - Логи в stdout (JSON) собирает агент: добавь поле `trace_id` в форматтер логов и
   **не делай его лейблом** — причина в
-  [../Left/03_Logging/03_loki_grafana.md](/logging/03-loki-grafana).
+  [Логирование: 03. Loki + Grafana](/logging/03-loki-grafana).
 
 ---
 
@@ -489,7 +503,7 @@ derivedFields:
 
 | Хочу | Как |
 |------|-----|
-| Авто-инструментация Python | `opentelemetry-bootstrap -a install` + `opentelemetry-instrument &lt;cmd&gt;` |
+| Авто-инструментация Python | `opentelemetry-bootstrap -a install` + `opentelemetry-instrument <cmd>` |
 | Имя сервиса | `OTEL_SERVICE_NAME=shop-api` |
 | Куда слать | `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317` |
 | Head sampling 10% | `OTEL_TRACES_SAMPLER=parentbased_traceidratio`, `OTEL_TRACES_SAMPLER_ARG=0.1` |
@@ -524,13 +538,16 @@ derivedFields:
 10. Высокая кардинальность допустима в атрибутах спанов, но не в именах спанов,
     span metrics и лейблах Loki/Prometheus.
 
-➡️ Дальше: [04_incident_management.md](/sre/04-incident-management) · задачи: 03_tracing_opentelemetry_tasks.md
+---
 
+## Задачи
+
+> Стенд: из [SRE](/sre/), файлы — в [07. Практика: 4 лабы по SRE и observability](/sre/07-practice-labs) (лаба 1).
+> Grafana → Explore → источник Tempo / Loki / Prometheus.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем трейс отличается от спана? Что общего у всех спанов одного трейса?
 
@@ -700,249 +717,119 @@ Tempo хранит трейсы в объектном хранилище поч�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```yaml
 B1.  # коллектор в Docker
-```text
-<details><summary>Ответ</summary>
+     receivers:
+       otlp:
+         protocols:
+           grpc: { endpoint: localhost:4317 }
 
-⚠️ Receiver слушает только loopback контейнера — приложения из других контейнеров
+B2.  service:
+       pipelines:
+         traces:
+           receivers: [otlp]
+           processors: [batch, memory_limiter]
+           exporters: [otlp_grpc/tempo]
+
+B3.  # во всех сервисах
+     OTEL_TRACES_SAMPLER=traceidratio
+     OTEL_TRACES_SAMPLER_ARG=0.1
+
+B4.  with tracer.start_as_current_span(f"GET /orders/{order_id}"): ...
+
+B5.  traces:
+       processors: [memory_limiter, tail_sampling, batch]
+       exporters: [span_metrics, otlp_grpc/tempo]
+
+B6.  # агент логов
+     labels: { app: shop-api, trace_id: "${TRACE_ID}" }
+
+B7.  baggage: user_token=eyJhbGciOiJIUzI1NiJ9...
+
+B8.  # две реплики коллектора с tail_sampling за обычным round-robin балансировщиком
+
+B9.  opentelemetry-instrument uvicorn app:app --reload
+
+B10. exporters:
+       loki:
+         endpoint: http://loki:3100/loki/api/v1/push
+
+B11. connectors:
+       span_metrics:
+         dimensions: [{ name: url.path }, { name: user.id }]
+
+B12. for item in items:                       # 10 000 элементов
+         with tracer.start_as_current_span(f"process item {item.id}"): ...
+
+B13. # TraceQL
+     { http.status_code = 500 }
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Receiver слушает только loopback контейнера — приложения из других контейнеров
 не достучатся. Нужно `0.0.0.0:4317`.
 
-</details>
+**B2.** ⚠️ `memory_limiter` должен быть первым: иначе батчи копятся в памяти до проверки лимита.
 
-```text:no-line-numbers
-     receivers:
-```text
-```text:no-line-numbers
-       otlp:
-```text
-```text:no-line-numbers
-         protocols:
-```text
-```text:no-line-numbers
-           grpc: { endpoint: localhost:4317 }
-```text
-```text:no-line-numbers
-B2.  service:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `memory_limiter` должен быть первым: иначе батчи копятся в памяти до проверки лимита.
-
-</details>
-
-```text:no-line-numbers
-       pipelines:
-```text
-```text:no-line-numbers
-         traces:
-```text
-```text:no-line-numbers
-           receivers: [otlp]
-```text
-```text:no-line-numbers
-           processors: [batch, memory_limiter]
-```text
-```text:no-line-numbers
-           exporters: [otlp_grpc/tempo]
-```text
-```text:no-line-numbers
-B3.  # во всех сервисах
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без `parentbased` каждый сервис решает сам: трейсы получаются дырявыми.
+**B3.** ⚠️ Без `parentbased` каждый сервис решает сам: трейсы получаются дырявыми.
 Нужно `parentbased_traceidratio`.
 
-</details>
-
-```text:no-line-numbers
-     OTEL_TRACES_SAMPLER=traceidratio
-```text
-```text:no-line-numbers
-     OTEL_TRACES_SAMPLER_ARG=0.1
-```text
-```text:no-line-numbers
-B4.  with tracer.start_as_current_span(f"GET /orders/{order_id}"): ...
-```text
-<details><summary>Ответ</summary>
-
-⚠️ ID в имени спана — неограниченное число имён: взрыв кардинальности span metrics
+**B4.** ⚠️ ID в имени спана — неограниченное число имён: взрыв кардинальности span metrics
 и мусор в UI. Имя — `GET /orders/{id}`, ID — в атрибут.
 
-</details>
-
-```text:no-line-numbers
-B5.  traces:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Процессоры пайплайна применяются до всех его экспортеров: span metrics считаются
+**B5.** ⚠️ Процессоры пайплайна применяются до всех его экспортеров: span metrics считаются
 по сэмплированным данным. Нужен отдельный пайплайн до `tail_sampling` (через `forward`).
 
-</details>
-
-```text:no-line-numbers
-       processors: [memory_limiter, tail_sampling, batch]
-```text
-```text:no-line-numbers
-       exporters: [span_metrics, otlp_grpc/tempo]
-```text
-```text:no-line-numbers
-B6.  # агент логов
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `trace_id` лейблом — миллионы потоков в Loki. Держать в теле строки или
+**B6.** ⚠️ `trace_id` лейблом — миллионы потоков в Loki. Держать в теле строки или
 structured metadata.
 
-</details>
-
-```text:no-line-numbers
-     labels: { app: shop-api, trace_id: "${TRACE_ID}" }
-```text
-```text:no-line-numbers
-B7.  baggage: user_token=eyJhbGciOiJIUzI1NiJ9...
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Токен в baggage уедет во все сервисы, логи и внешние API. Никогда не класть
+**B7.** ⚠️ Токен в baggage уедет во все сервисы, логи и внешние API. Никогда не класть
 секреты в baggage.
 
-</details>
-
-```text:no-line-numbers
-B8.  # две реплики коллектора с tail_sampling за обычным round-robin балансировщиком
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Спаны одного трейса разъедутся по разным репликам — решения по неполным трейсам.
+**B8.** ⚠️ Спаны одного трейса разъедутся по разным репликам — решения по неполным трейсам.
 Нужен уровень с `load_balancing` exporter и `routing_key: traceID`.
 
-</details>
+**B9.** ⚠️ С `--reload` авто-инструментация не работает — трейсов не будет.
 
-```text:no-line-numbers
-B9.  opentelemetry-instrument uvicorn app:app --reload
-```text
-<details><summary>Ответ</summary>
-
-⚠️ С `--reload` авто-инструментация не работает — трейсов не будет.
-
-</details>
-
-```text:no-line-numbers
-B10.  exporters:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Экспортера `loki` в contrib больше нет — коллектор не стартует. Логи — через
+**B10.** ⚠️ Экспортера `loki` в contrib больше нет — коллектор не стартует. Логи — через
 `otlp_http` на `http://loki:3100/otlp`.
 
-</details>
-
-```text:no-line-numbers
-       loki:
-```text
-```text:no-line-numbers
-         endpoint: http://loki:3100/loki/api/v1/push
-```text
-```text:no-line-numbers
-B11.  connectors:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `url.path` с ID и `user.id` — неограниченная кардинальность метрик.
+**B11.** ⚠️ `url.path` с ID и `user.id` — неограниченная кардинальность метрик.
 Измерения — только `http.route`, метод, код.
 
-</details>
-
-```text:no-line-numbers
-       span_metrics:
-```text
-```text:no-line-numbers
-         dimensions: [{ name: url.path }, { name: user.id }]
-```text
-```text:no-line-numbers
-B12.  for item in items:                       # 10 000 элементов
-```text
-<details><summary>Ответ</summary>
-
-⚠️ 10 000 спанов в одном трейсе с уникальными именами: тяжёлый трейс, переполнение
+**B12.** ⚠️ 10 000 спанов в одном трейсе с уникальными именами: тяжёлый трейс, переполнение
 очереди SDK, кардинальность. Один спан на пачку, счётчик — атрибутом или событием.
 
-</details>
-
-```text:no-line-numbers
-         with tracer.start_as_current_span(f"process item {item.id}"): ...
-```text
-```text:no-line-numbers
-B13.  # TraceQL
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Синтаксическая ошибка: атрибуту нужен скоуп — `span.`, `resource.` или `.`
+**B13.** ⚠️ Синтаксическая ошибка: атрибуту нужен скоуп — `span.`, `resource.` или `.`
 в начале. Плюс проверь semconv: при `OTEL_SEMCONV_STABILITY_OPT_IN=http` атрибут называется
 `http.response.status_code`.
 
 </details>
 
-```text:no-line-numbers
-     { http.status_code = 500 }
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Первый трейс
-**1.** Подними стенд, сделай 20 запросов: `for i in $(seq 20); do curl -s localhost:8080/checkout; done`.
-
-<details><summary>Ответ</summary>
-
-Авто: `GET /checkout` (SERVER), `GET` (CLIENT, httpx), `GET /pay` (SERVER), служебные
-`http send`. Ручные: `validate_cart`, `db.pool.acquire`, `db.query`. Граница сервисов —
-между CLIENT-спаном shop-api и SERVER-спаном payments.
-
-</details>
-
-**2.** Найди трейс в Grafana (Explore → Tempo → Search).
-
-<details><summary>Ответ</summary>
-
-Трейс сохранится с твоим trace_id, родителем `GET /checkout` станет span_id
-`b7ad6b7169203331` из заголовка. С флагом `00` сэмплер `parentbased_*` уважает решение
-вызывающего «не сэмплировать» — трейс не запишется.
-
-</details>
-
-**3.** Разбери waterfall: какие спаны создала авто-инструментация, какие — ручные
+#### C1. 🔑 Первый трейс
+1. Подними стенд, сделай 20 запросов: `for i in $(seq 20); do curl -s localhost:8080/checkout; done`.
+2. Найди трейс в Grafana (Explore → Tempo → Search).
+3. Разбери waterfall: какие спаны создала авто-инструментация, какие — ручные
    (`validate_cart`, `db.pool.acquire`, `db.query`)? Где граница сервисов?
 
 <details><summary>Ответ</summary>
 
-```text
-{ resource.service.name = "payments" && name = "db.query" && duration > 100ms }
-{ status = error }
-{ span.http.response.status_code >= 500 }
-{ resource.service.name = "shop-api" } >> { resource.service.name = "payments" && status = error }
-{ status = error } | select(span.http.response.status_code)
-```text
-</details>
-
-### C2. 🔑 traceparent руками
-**1.** Придумай trace_id из 32 hex-символов и отправь:
-   `curl -H "traceparent: 00-&lt;trace_id&gt;-b7ad6b7169203331-01" localhost:8080/checkout`.
-
-<details><summary>Ответ</summary>
-
 Авто: `GET /checkout` (SERVER), `GET` (CLIENT, httpx), `GET /pay` (SERVER), служебные
 `http send`. Ручные: `validate_cart`, `db.pool.acquire`, `db.query`. Граница сервисов —
 между CLIENT-спаном shop-api и SERVER-спаном payments.
 
 </details>
 
-**2.** Найди в Tempo трейс с этим ID. Кто родитель спана `GET /checkout`?
+#### C2. 🔑 traceparent руками
+1. Придумай trace_id из 32 hex-символов и отправь:
+   `curl -H "traceparent: 00-<trace_id>-b7ad6b7169203331-01" localhost:8080/checkout`.
+2. Найди в Tempo трейс с этим ID. Кто родитель спана `GET /checkout`?
+3. Повтори с флагом `00` вместо `01`. Что изменилось и почему?
 
 <details><summary>Ответ</summary>
 
@@ -952,141 +839,99 @@ B13.  # TraceQL
 
 </details>
 
-**3.** Повтори с флагом `00` вместо `01`. Что изменилось и почему?
-
-<details><summary>Ответ</summary>
-
-```text
-{ resource.service.name = "payments" && name = "db.query" && duration > 100ms }
-{ status = error }
-{ span.http.response.status_code >= 500 }
-{ resource.service.name = "shop-api" } >> { resource.service.name = "payments" && status = error }
-{ status = error } | select(span.http.response.status_code)
-```text
-</details>
-
-### C3. TraceQL
+#### C3. TraceQL
 Напиши и проверь пять запросов: медленный `db.query` (> 100 мс), все ошибки, ответы 5xx,
 «shop-api вызвал payments, и в payments ошибка», ошибки с выводом кода ответа (`select`).
 
-### C4. 🔑 Найти медленный спан
-**1.** `curl -X POST "localhost:8081/chaos?delay_ms=300"`, дай фоновый трафик.
-
 <details><summary>Ответ</summary>
 
-Авто: `GET /checkout` (SERVER), `GET` (CLIENT, httpx), `GET /pay` (SERVER), служебные
-`http send`. Ручные: `validate_cart`, `db.pool.acquire`, `db.query`. Граница сервисов —
-между CLIENT-спаном shop-api и SERVER-спаном payments.
-
-</details>
-
-**2.** Найди медленные трейсы TraceQL-запросом, определи спан-виновник.
-
-<details><summary>Ответ</summary>
-
-Трейс сохранится с твоим trace_id, родителем `GET /checkout` станет span_id
-`b7ad6b7169203331` из заголовка. С флагом `00` сэмплер `parentbased_*` уважает решение
-вызывающего «не сэмплировать» — трейс не запишется.
-
-</details>
-
-**3.** Сравни с графиком p99 `/checkout` в Prometheus. Верни `delay_ms=0`.
-
-<details><summary>Ответ</summary>
-
-```text
+```
 { resource.service.name = "payments" && name = "db.query" && duration > 100ms }
 { status = error }
 { span.http.response.status_code >= 500 }
 { resource.service.name = "shop-api" } >> { resource.service.name = "payments" && status = error }
 { status = error } | select(span.http.response.status_code)
-```text
+```
+
 </details>
 
-### C5. Exemplars
+#### C4. 🔑 Найти медленный спан
+1. `curl -X POST "localhost:8081/chaos?delay_ms=300"`, дай фоновый трафик.
+2. Найди медленные трейсы TraceQL-запросом, определи спан-виновник.
+3. Сравни с графиком p99 `/checkout` в Prometheus. Верни `delay_ms=0`.
+
+<details><summary>Ответ</summary>
+
+`{ name = "db.query" && duration > 300ms }` — виновник `db.query` в payments;
+p99 `/checkout` вырастет примерно на 300 мс.
+
+</details>
+
+#### C5. Exemplars
 Построй в Grafana `histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="shop-api"}[1m])))`,
 включи переключатель Exemplars, кликни по точке и перейди в трейс.
 
-### C6. Логи ↔ трейсы
-**1.** Включи ошибки (`error_rate=0.3`), найди в Loki `{service_name="shop-api"} |= "payments error"`.
+#### C6. Логи ↔ трейсы
+1. Включи ошибки (`error_rate=0.3`), найди в Loki `{service_name="shop-api"} |= "payments error"`.
+2. Из строки лога перейди в трейс (ссылка «Открыть трейс»).
+3. Из трейса открой «Logs for this span». Какой LogQL-запрос сгенерировала Grafana?
 
 <details><summary>Ответ</summary>
 
-Авто: `GET /checkout` (SERVER), `GET` (CLIENT, httpx), `GET /pay` (SERVER), служебные
-`http send`. Ручные: `validate_cart`, `db.pool.acquire`, `db.query`. Граница сервисов —
-между CLIENT-спаном shop-api и SERVER-спаном payments.
+Запрос вида `{service_name="shop-api"} | trace_id="<id>"` — из `customQuery`
+в `tracesToLogsV2`.
 
 </details>
 
-**2.** Из строки лога перейди в трейс (ссылка «Открыть трейс»).
-
-<details><summary>Ответ</summary>
-
-Трейс сохранится с твоим trace_id, родителем `GET /checkout` станет span_id
-`b7ad6b7169203331` из заголовка. С флагом `00` сэмплер `parentbased_*` уважает решение
-вызывающего «не сэмплировать» — трейс не запишется.
-
-</details>
-
-**3.** Из трейса открой «Logs for this span». Какой LogQL-запрос сгенерировала Grafana?
-
-<details><summary>Ответ</summary>
-
-```text
-{ resource.service.name = "payments" && name = "db.query" && duration > 100ms }
-{ status = error }
-{ span.http.response.status_code >= 500 }
-{ resource.service.name = "shop-api" } >> { resource.service.name = "payments" && status = error }
-{ status = error } | select(span.http.response.status_code)
-```text
-</details>
-
-### C7. Ручной спан
+#### C7. Ручной спан
 Добавь в `/checkout` спан `reserve_stock` с атрибутом `stock.warehouse` и событием
 `"stock reserved"`. Пересобери (`docker compose up -d --build shop-api`) и найди его в Tempo.
 
-### C8. Head sampling
+#### C8. Head sampling
 Выставь в `x-otel-env` `OTEL_TRACES_SAMPLER=parentbased_traceidratio` и `OTEL_TRACES_SAMPLER_ARG=0.1`.
 Сделай 200 запросов, посчитай трейсы в Tempo. Почему не бывает трейсов, где есть спаны
 shop-api, но нет спанов payments?
 
-### C9. Заглянуть внутрь коллектора
-**1.** Добавь экспортер `debug` c `verbosity: detailed` в пайплайн traces, посмотри
-   `docker compose logs otel-collector`.
-
 <details><summary>Ответ</summary>
 
-Авто: `GET /checkout` (SERVER), `GET` (CLIENT, httpx), `GET /pay` (SERVER), служебные
-`http send`. Ручные: `validate_cart`, `db.pool.acquire`, `db.query`. Граница сервисов —
-между CLIENT-спаном shop-api и SERVER-спаном payments.
+Решение принимает корневой спан в shop-api, а payments следует флагу из
+`traceparent` (`parentbased`) — трейс либо записан целиком, либо не записан вовсе.
 
 </details>
 
-**2.** Посмотри внутренние метрики коллектора: они слушают `localhost:8888` внутри контейнера
-   (`docker run --rm --network container:&lt;id коллектора&gt; curlimages/curl -s localhost:8888/metrics`).
+#### C9. Заглянуть внутрь коллектора
+1. Добавь экспортер `debug` c `verbosity: detailed` в пайплайн traces, посмотри
+   `docker compose logs otel-collector`.
+2. Посмотри внутренние метрики коллектора: они слушают `localhost:8888` внутри контейнера
+   (`docker run --rm --network container:<id коллектора> curlimages/curl -s localhost:8888/metrics`).
    Найди `otelcol_receiver_accepted_spans` и `otelcol_exporter_sent_spans`.
 
-<details><summary>Ответ</summary>
-
-Трейс сохранится с твоим trace_id, родителем `GET /checkout` станет span_id
-`b7ad6b7169203331` из заголовка. С флагом `00` сэмплер `parentbased_*` уважает решение
-вызывающего «не сэмплировать» — трейс не запишется.
-
-</details>
-
-### C10. Tail sampling
+#### C10. Tail sampling
 Замени `otelcol.yaml` на вариант с `tail_sampling` из конспекта (пайплайн `traces/in` →
 `traces/sampled`). Включи `error_rate=0.1`, дай трафик. Проверь: сохраняются все ошибочные
 трейсы и примерно 10% успешных. Проверь конфиг до запуска через `validate`.
 
-### C11. Service graph
+<details><summary>Ответ</summary>
+
+Все трейсы со статусом `ERROR` сохранены (политика `keep-errors`), успешные —
+~10% (`baseline-10pct`) плюс медленные > 500 мс.
+
+</details>
+
+#### C11. Service graph
 Открой в Grafana источник Tempo → вкладку Service Graph. Какие метрики metrics-generator
 записал в Prometheus (`traces_service_graph_*`, `traces_spanmetrics_*`)?
+
+<details><summary>Ответ</summary>
+
+`traces_service_graph_request_total`, `traces_service_graph_request_server_seconds_*`,
+`traces_spanmetrics_calls_total`, `traces_spanmetrics_latency_*`.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** В Tempo спаны shop-api и payments лежат в **разных** трейсах.
 
@@ -1180,13 +1025,12 @@ Span metrics считаются после сэмплинга. Вынести co
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое distributed tracing и зачем он нужен?
 
 <details><summary>Ответ</summary>
 
 Отслеживание пути одного запроса через все сервисы в виде дерева спанов с таймингами —
-   чтобы понять, где именно время и ошибки.
+чтобы понять, где именно время и ошибки.
 
 </details>
 
@@ -1203,7 +1047,7 @@ Span — одна операция; trace — все спаны одного з�
 <details><summary>Ответ</summary>
 
 Через заголовки (W3C `traceparent`, `tracestate`, `baggage`); в очередях — через заголовки
-   сообщений. Инструментация делает inject на клиенте и extract на сервере.
+сообщений. Инструментация делает inject на клиенте и extract на сервере.
 
 </details>
 
@@ -1212,7 +1056,7 @@ Span — одна операция; trace — все спаны одного з�
 <details><summary>Ответ</summary>
 
 Head — решение в начале, по trace_id, дёшево и слепо; tail — в коллекторе по целому
-   трейсу, дороже, но сохраняет все ошибки и медленные запросы.
+трейсу, дороже, но сохраняет все ошибки и медленные запросы.
 
 </details>
 
@@ -1221,7 +1065,7 @@ Head — решение в начале, по trace_id, дёшево и слеп
 <details><summary>Ответ</summary>
 
 Открытый стандарт и набор инструментов (API, SDK, инструментации, Collector, OTLP,
-   semconv) для трейсов, метрик и логов, не привязанный к вендору.
+semconv) для трейсов, метрик и логов, не привязанный к вендору.
 
 </details>
 
@@ -1230,7 +1074,7 @@ Head — решение в начале, по trace_id, дёшево и слеп
 <details><summary>Ответ</summary>
 
 Отвязывает приложения от бэкенда: батчинг и ретраи, tail sampling, чистка PII, обогащение
-   метаданными, смена бэкенда без передеплоя приложений, одно место для ключей доступа.
+метаданными, смена бэкенда без передеплоя приложений, одно место для ключей доступа.
 
 </details>
 
@@ -1239,7 +1083,7 @@ Head — решение в начале, по trace_id, дёшево и слеп
 <details><summary>Ответ</summary>
 
 Единые `service.name`/лейблы, `trace_id` в логах, exemplars в метриках, настройки
-   корреляции в Grafana (tracesToLogs, derived fields, exemplar destinations).
+корреляции в Grafana (tracesToLogs, derived fields, exemplar destinations).
 
 </details>
 
@@ -1248,7 +1092,7 @@ Head — решение в начале, по trace_id, дёшево и слеп
 <details><summary>Ответ</summary>
 
 Примеры конкретных измерений с `trace_id`, прикреплённые к точкам метрики, — переход
-   с графика p99 в конкретный медленный трейс.
+с графика p99 в конкретный медленный трейс.
 
 </details>
 
@@ -1257,7 +1101,7 @@ Head — решение в начале, по trace_id, дёшево и слеп
 <details><summary>Ответ</summary>
 
 Tempo — дешёвое хранение в S3 и родная связка с Grafana; Jaeger — свой UI и индексирующие
-   хранилища. При стеке Grafana обычно выбирают Tempo.
+хранилища. При стеке Grafana обычно выбирают Tempo.
 
 </details>
 
@@ -1266,9 +1110,7 @@ Tempo — дешёвое хранение в S3 и родная связка с 
 <details><summary>Ответ</summary>
 
 Сэмплинг (tail: ошибки и медленные — всё, остальное — процент), короткий retention,
-    фильтры шума, разумное число спанов, контроль кардинальности span metrics.
-
----
+фильтры шума, разумное число спанов, контроль кардинальности span metrics.
 
 </details>
 

@@ -1,6 +1,6 @@
 ---
 title: "09. Бэкапы и восстановление (DR)"
-description: "Цель этапа: связать три проекта в одну защиту данных: что и как бэкапить —"
+description: "бэкап вне кластера, учения, RPO/RTO"
 ---
 
 # 09. Бэкапы и восстановление (DR)
@@ -51,7 +51,7 @@ description: "Цель этапа: связать три проекта в од�
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
  kind-кластер                                        хост, вне кластера
  ┌──────────────────────────────────────┐          ┌──────────────────────────────┐
  │ CronJob backup (образ с tools/)      │  upload  │ MinIO (Terraform, 11)        │
@@ -65,7 +65,8 @@ description: "Цель этапа: связать три проекта в од�
  Prometheus: «бэкап старше N часов», «restore-test упал» ──► Telegram (этап 07)
 
  docs/dr.md — что бэкапится, RPO/RTO, итоги учений · runbooks/postgres-restore.md
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -75,7 +76,8 @@ description: "Цель этапа: связать три проекта в од�
 ```bash
 cd ~/Projects/devops/09-ledger && ./check.sh
 cd ~/Projects/devops/10-toolsmith && ./check.sh
-```text
+```
+
 ### 2. Что вообще бэкапится — таблица в `docs/dr.md`
 
 | Что | Бэкапим? | Как | Почему |
@@ -95,7 +97,7 @@ kind: пропал кластер — бэкапы на месте.
 
 Честная оговорка для README: хост тот же, поэтому это «вне кластера», но не «вне
 площадки». Настоящий off-site — облачный бакет, это расширение из
-[11_demo_and_next.md](/project/11-demo-and-next).
+[11. Финальный прогон, демо и развитие](/project/11-demo-and-next).
 
 ### 4. Бэкап в кластере (поверх проектов)
 
@@ -159,7 +161,8 @@ kind: пропал кластер — бэкапы на месте.
 
 ## 5. После
 Время начала и конца (фактический RTO), дата дампа (фактический RPO), причина, action items.
-```text
+```
+
 ### 8. Учения
 
 **Учение 1 — «испортили данные»** (prod, 15–30 минут): «ошибка оператора» в БД →
@@ -167,7 +170,7 @@ kind: пропал кластер — бэкапы на месте.
 
 **Учение 2 — «потеряли кластер целиком»** — самое сильное для собеса:
 
-```text
+```
 1. kind delete cluster                         засекаем время
 2. make cluster                                этап 04
 3. bootstrap Argo CD                           этап 06
@@ -175,7 +178,8 @@ kind: пропал кластер — бэкапы на месте.
 5. ждём Synced/Healthy: пустая БД, linkd готов
 6. восстановление данных по runbook'у          п.3–4
 7. проверка: ссылки на месте, алерты тихие     время остановлено = RTO «потеряли всё»
-```text
+```
+
 **Учение 3 — без подсказок:** инциденты PostgreSQL из 99-incidents, время записано.
 
 ### 9. RPO/RTO — заполни своими цифрами
@@ -211,7 +215,8 @@ kind: пропал кластер — бэкапы на месте.
 git -C ~/Projects/linkd-platform add docs runbooks observability infra README.md
 git -C ~/Projects/linkd-platform commit -m "dr: backups to MinIO, restore test, runbook, RPO/RTO"
 git -C ~/Projects/linkd-gitops add data && git -C ~/Projects/linkd-gitops commit -m "dr: backup and restore-test cronjobs"
-```text
+```
+
 ---
 
 ## ✅ Критерии приёмки
@@ -262,13 +267,13 @@ git -C ~/Projects/linkd-gitops add data && git -C ~/Projects/linkd-gitops commit
 
 ## 📚 Теория в волте
 
-- Бэкап и восстановление PostgreSQL, PITR, RPO/RTO: [../Left/01_Databases/05_backup_restore.md](/databases/05-backup-restore)
-- Репликация и фейловер: [../Left/01_Databases/06_replication.md](/databases/06-replication)
-- S3, версионирование, lifecycle: [../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage)
-- Job и CronJob: [../Kubernetes/07_job_cronjob.md](/kubernetes/07-job-cronjob)
-- PV/PVC и reclaim policy: [../Kubernetes/14_storage.md](/kubernetes/14-storage)
-- Бэкап etcd, операторы: [../Kubernetes/21_advanced_paths.md](/kubernetes/21-advanced-paths)
-- Утилиты на Python для инфраструктуры: [../Python/07_infra_libs.md](/python/07-infra-libs)
-- Постмортемы по итогам учений: [../SRE/05_postmortems.md](/sre/05-postmortems)
+- Бэкап и восстановление PostgreSQL, PITR, RPO/RTO: [Базы данных: 05. Бэкап и восстановление](/databases/05-backup-restore)
+- Репликация и фейловер: [Базы данных: 06. Репликация PostgreSQL](/databases/06-replication)
+- S3, версионирование, lifecycle: [Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage)
+- Job и CronJob: [Kubernetes: 07. Job и CronJob](/kubernetes/07-job-cronjob)
+- PV/PVC и reclaim policy: [Kubernetes: 14. Хранилище: PV, PVC, StorageClass](/kubernetes/14-storage)
+- Бэкап etcd, операторы: [Kubernetes: 21. Развилка: куда дальше](/kubernetes/21-advanced-paths)
+- Утилиты на Python для инфраструктуры: [Python: 07. Инфраструктурные библиотеки: SSH, Docker, Kubernetes, S3, Prometheus](/python/07-infra-libs)
+- Постмортемы по итогам учений: [SRE: 05. Постмортемы](/sre/05-postmortems)
 
-➡️ Следующий этап: [10_readme_resume.md](/project/10-readme-resume)
+➡️ Следующий этап: [10. Оформление: README, ADR, резюме, рассказ на собесе](/project/10-readme-resume)

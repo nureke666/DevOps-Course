@@ -1,6 +1,6 @@
 ---
 title: "01. Приложение: linkd 2.0 и контракт с платформой"
-description: "Цель этапа: положить в linkd-platform сервис linkd 2.0 и собственные утилиты вокруг"
+description: "контракт сервиса с платформой, свой код на Python"
 ---
 
 # 01. Приложение: linkd 2.0 и контракт с платформой
@@ -70,7 +70,7 @@ API: `POST /api/links`, `GET /api/links`, `GET /r/<code>` — редирект 3
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
 linkd-platform/
 ├── app/                     ← копия 09-ledger/app: linkd 2.0
 │   ├── linkd.py, requirements.txt, requirements-otel.txt
@@ -84,7 +84,8 @@ linkd-platform/
 │   └── postmortems/         ← POSTMORTEM.md из 02-nightshift
 ├── .gitignore
 └── README.md                ← пока: «Что это» и «Сервис»
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -94,7 +95,8 @@ linkd-platform/
 ```bash
 cd ~/Projects/devops && ./progress.sh
 cd ~/Projects/devops/10-toolsmith && ./check.sh
-```text
+```
+
 Приложение из 09-ledger брать можно и до окончания проекта — это просто код сервиса.
 
 ### 2. Заводишь репозитории
@@ -105,7 +107,8 @@ cd ~/Projects/devops/10-toolsmith && ./check.sh
 
 ```bash
 mkdir -p ~/Projects/linkd-platform && cd ~/Projects/linkd-platform && git init -b main
-```text
+```
+
 ### 3. Переносишь приложение
 
 Копия `09-ledger/app/` → `app/`: `linkd.py`, `requirements.txt` (драйвер PostgreSQL),
@@ -159,7 +162,8 @@ mkdir -p ~/Projects/linkd-platform && cd ~/Projects/linkd-platform && git init -
 - Как искалась причина: …   ← главное — шаги диагностики, а не только ответ
 - Причина: …
 - Решение и что вынесено: …
-```text
+```
+
 Сразу перенеси туда 2–3 истории из уже пройденных проектов и 99-incidents.
 
 ### 8. README: первые разделы
@@ -174,12 +178,14 @@ mkdir -p ~/Projects/linkd-platform && cd ~/Projects/linkd-platform && git init -
 ## Сервис
 linkd 2.0 — учебный сервис (Python, PostgreSQL). Не мой код: мой — всё вокруг
 и утилиты в tools/. Контракт с платформой — docs/app-contract.md.
-```text
+```
+
 ### 9. Коммит
 
 ```bash
 git add . && git commit -m "feat: linkd 2.0 app, own tools and service contract"
-```text
+```
+
 ---
 
 ## ✅ Критерии приёмки
@@ -234,19 +240,19 @@ git add . && git commit -m "feat: linkd 2.0 app, own tools and service contract"
 
 ## 📚 Теория в волте
 
-- Сигналы и корректное завершение: [../Linux/07_processes.md](/linux/07-processes),
-  [../Docker/06_containers_lifecycle.md](/docker/06-containers-lifecycle)
-- Probes: [../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources)
-- Метрики и их типы: [../Left/02_Monitoring/03_promql.md](/monitoring/03-promql),
-  свои метрики — [../Left/02_Monitoring/04_exporters.md](/monitoring/04-exporters)
-- RED/USE: [../Left/02_Monitoring/07_what_to_monitor.md](/monitoring/07-what-to-monitor)
-- Структурные логи: [../Left/03_Logging/01_logging_concepts.md](/logging/01-logging-concepts)
-- PostgreSQL глазами девопса: [../Left/01_Databases/01_db_for_devops.md](/databases/01-db-for-devops)
-- Утилиты на Python: [../Python/04_cli_logging_config.md](/python/04-cli-logging-config),
-  [../Python/05_http_api.md](/python/05-http-api),
-  [../Python/08_packaging_quality.md](/python/08-packaging-quality)
-- Постмортемы: [../SRE/05_postmortems.md](/sre/05-postmortems)
-- HTTP-коды и редиректы: [../Network/06_http.md](/network/06-http)
-- Коммиты и ветки: [../../IT/Git/02_basics_workflow.md](/git/02-basics-workflow)
+- Сигналы и корректное завершение: [Linux: 07. Processes](/linux/07-processes),
+  [Docker: 06. Жизненный цикл контейнера](/docker/06-containers-lifecycle)
+- Probes: [Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources)
+- Метрики и их типы: [Мониторинг: 03. Типы метрик и PromQL](/monitoring/03-promql),
+  свои метрики — [Мониторинг: 04. Exporter'ы](/monitoring/04-exporters)
+- RED/USE: [Мониторинг: 07. Что мониторить: 4 сигнала, USE, RED, SLO](/monitoring/07-what-to-monitor)
+- Структурные логи: [Логирование: 01. Основы логирования](/logging/01-logging-concepts)
+- PostgreSQL глазами девопса: [Базы данных: 01. База данных глазами DevOps](/databases/01-db-for-devops)
+- Утилиты на Python: [Python: 04. CLI, логирование и конфиги](/python/04-cli-logging-config),
+  [Python: 05. HTTP и API: requests, httpx, ретраи, пагинация](/python/05-http-api),
+  [Python: 08. Упаковка и качество: pyproject, ruff, pytest, Docker, CI](/python/08-packaging-quality)
+- Постмортемы: [SRE: 05. Постмортемы](/sre/05-postmortems)
+- HTTP-коды и редиректы: [Сети: 06. HTTP](/network/06-http)
+- Коммиты и ветки: [Git: 02. Три области и команды init/add/commit](/git/02-basics-workflow)
 
-➡️ Следующий этап: [02_docker.md](/project/02-docker)
+➡️ Следующий этап: [02. Контейнеризация: образ и локальный стенд](/project/02-docker)

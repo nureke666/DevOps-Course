@@ -1,6 +1,6 @@
 ---
 title: "04. LLM-шлюз, RAG и векторные базы"
-description: "Блок → AI/MLOps-инфраструктура → тема 04. Вопросы собеса: «Зачем вам LLM-шлюз, если"
+description: "Шлюз (LiteLLM и аналоги): ключи, лимиты, учёт токенов, fallback, кэш; наблюдаемость (OTel GenAI); pgvector и Qdrant; данные и закон РК"
 ---
 
 # 04. LLM-шлюз, RAG и векторные базы
@@ -9,7 +9,7 @@ description: "Блок → AI/MLOps-инфраструктура → тема 04
 > у провайдера есть SDK?»*, *«Счёт за LLM-API вырос — как найти, кто тратит?»*,
 > *«Как эксплуатировать pgvector?»*, *«Можно ли отправлять данные клиентов в OpenAI?»*
 > **После темы ты умеешь:** поднять LiteLLM proxy с локальной моделью из
-> [03_model_serving.md](/mlops/03-model-serving), раздать командам ключи с бюджетами и tpm/rpm,
+> [03. Сервинг моделей: vLLM, llama.cpp, Ollama, KServe, холодный старт, метрики, автоскейлинг](/mlops/03-model-serving), раздать командам ключи с бюджетами и tpm/rpm,
 > снять метрики токенов и денег; разложить RAG на инфраструктурные компоненты; эксплуатировать
 > pgvector и Qdrant; посчитать стоимость LLM-фичи и объяснить, какие данные не выпускать из РК.
 > Версии — «проверь, сентябрь 2026».
@@ -18,7 +18,7 @@ description: "Блок → AI/MLOps-инфраструктура → тема 04
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  команды / сервисы                     LLM-ШЛЮЗ (LiteLLM proxy, :4000)
  ─────────────────                     ──────────────────────────────────────────────
  support-bot ── key sk-sup… ──┐        1. аутентификация по виртуальному ключу
@@ -34,7 +34,8 @@ description: "Блок → AI/MLOps-инфраструктура → тема 04
 
  RAG:  документы ─► ingestion Job ─► чанки ─► embeddings ─► векторная БД (pgvector / Qdrant)
        вопрос ─► embedding ─► top-k похожих чанков ─► (rerank) ─► промпт + контекст ─► LLM
-```text
+```
+
 ---
 
 ## 1. Зачем компании один шлюз к LLM
@@ -54,7 +55,7 @@ description: "Блок → AI/MLOps-инфраструктура → тема 04
 | Смена провайдера = правка кода во всех сервисах | Единый OpenAI-совместимый API: меняется конфиг шлюза, а не код |
 
 > 💡 Шлюз — L7-прокси, который понимает токены и деньги: таймауты, ретраи, лимиты, TLS, HA — как у любого
-> прокси ([../Network/18_modern_proxies.md](/network/18-modern-proxies)); новое — единица учёта **токен**.
+> прокси ([Сети: 18. Современные прокси](/network/18-modern-proxies)); новое — единица учёта **токен**.
 
 ---
 
@@ -63,7 +64,7 @@ description: "Блок → AI/MLOps-инфраструктура → тема 04
 | Шлюз | Что это | Лицензия и статус | Когда смотреть |
 |------|---------|-------------------|----------------|
 | **LiteLLM proxy** | Python-прокси с OpenAI-совместимым API к 100+ провайдерам; ключи, бюджеты, лимиты, кэш, fallback, Prometheus | MIT (кроме каталога enterprise; SSO и аудит-логи — платно). Стабильные релизы еженедельно, последняя стабильная — **v1.102.1** (23.09.2026). Нужен PostgreSQL | ⭐ Стандартный self-hosted старт — на нём лабы блока |
-| **Agent Router** (бывший **Envoy AI Gateway**) | Контроллер поверх Envoy Gateway: CRD `AIGatewayRoute`, `AIServiceBackend`, лимиты по токенам, fallback, MCP-шлюз, OTel GenAI | v1.0.0 — 23.06.2026, **v1.1.0** — 21.08.2026; 10.09.2026 переименован и ушёл в Agentic AI Foundation («same code, same APIs») | Уже есть Envoy Gateway ([../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §7), хочется k8s-native и CRD в GitOps |
+| **Agent Router** (бывший **Envoy AI Gateway**) | Контроллер поверх Envoy Gateway: CRD `AIGatewayRoute`, `AIServiceBackend`, лимиты по токенам, fallback, MCP-шлюз, OTel GenAI | v1.0.0 — 23.06.2026, **v1.1.0** — 21.08.2026; 10.09.2026 переименован и ушёл в Agentic AI Foundation («same code, same APIs») | Уже есть Envoy Gateway ([Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §7), хочется k8s-native и CRD в GitOps |
 | **Kong AI Gateway** | Набор AI-плагинов к Kong: AI Proxy, семантический кэш, prompt guard | Лимиты по токенам (**AI Rate Limiting Advanced**) — только в Enterprise | Компания уже живёт на Kong |
 | **Portkey gateway** | TypeScript-шлюз: маршрутизация, ретраи, fallback, кэш, guardrails | Шлюз MIT; компанию купила Palo Alto Networks (сделка закрыта 29.05.2026) | Нужен лёгкий шлюз без БД; следи за дорожной картой после покупки |
 
@@ -74,23 +75,24 @@ SaaS за рубежом, §10); **где состояние** (ключи и у
 40 минут содержали бэкдор (кража кредов, попытки двигаться по Kubernetes-кластеру) — токены
 публикации утекли через скомпрометированный Trivy в CI проекта. Вывод для любого шлюза: он
 держит ключи ко всем провайдерам, поэтому образ — по тегу **и digest**, обновления через
-staging, сканирование и подпись ([../Security/04_vuln_management.md](/security/04-vuln-management)).
+staging, сканирование и подпись ([Безопасность: 04. Управление уязвимостями](/security/04-vuln-management)).
 
 ---
 
 ## 3. LiteLLM proxy: как устроен и как настроить
 
-```text
+```text:no-line-numbers
  клиенты ──► litellm (stateless, N реплик) ──► провайдеры / локальные модели
              ├─► PostgreSQL: ключи, команды, бюджеты, spend
              └─► Redis: общий счётчик tpm/rpm и кэш (нужен при >1 реплике)
-```text
+```
+
 - **PostgreSQL обязателен** для виртуальных ключей, команд и учёта денег (`DATABASE_URL`);
   без БД остаётся один мастер-ключ — это уже не шлюз, а прокси.
 - `LITELLM_MASTER_KEY` (начинается с `sk-`) — админский ключ: создаёт команды и ключи.
 - `LITELLM_SALT_KEY` — шифрует креды провайдеров, сохранённые в БД. ⚠️ Задаётся **один раз**:
   сменишь — сохранённые креды не расшифруются. Оба ключа — в Vault/ESO
-  ([../Left/08_Vault/05_vault_integrations.md](/vault/05-vault-integrations) §2).
+  ([Vault: 05. Интеграции и динамические секреты](/vault/05-vault-integrations) §2).
 - Порт 4000, пробы: `/health/liveliness` (процесс жив) и `/health/readiness` (есть связь с БД).
 - Helm-чарт: `oci://ghcr.io/berriai/litellm-helm` (проверь values перед установкой).
 
@@ -115,7 +117,7 @@ model_list:
       api_base: http://ollama:11434
 
   # внешний провайдер — ТОЛЬКО если есть ключ и разрешение на данные (§10):
-  # - { model_name: external-chat, litellm_params: { model: "openai/&lt;модель&gt;",
+  # - { model_name: external-chat, litellm_params: { model: "openai/<модель>",
   #     api_key: os.environ/OPENAI_API_KEY, rpm: 60 } }   # ⭐ секрет из env; rpm — квота деплоя
 
 litellm_settings:
@@ -137,7 +139,8 @@ general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
   store_prompts_in_spend_logs: false            # не хранить промпты в БД учёта
-```text
+```
+
 `os.environ/NAME` — ссылка на переменную окружения: секрет не попадает в ConfigMap и git.
 
 ---
@@ -158,15 +161,16 @@ curl -s $GW/team/new -H "Authorization: Bearer $MK" -H 'Content-Type: applicatio
 
 # ключ сервиса внутри команды — ещё строже
 curl -s $GW/key/generate -H "Authorization: Bearer $MK" -H 'Content-Type: application/json' \
-  -d '{"team_id":"&lt;team_id&gt;","key_alias":"support-bot-prod","models":["local-chat"],
+  -d '{"team_id":"<team_id>","key_alias":"support-bot-prod","models":["local-chat"],
        "max_budget":5,"budget_duration":"7d","rpm_limit":10,
-       "metadata":{"owner":"support","env":"prod"&#125;&#125;'
+       "metadata":{"owner":"support","env":"prod"}}'
 # → {"key":"sk-…"}  ⭐ показывается один раз — сразу в Vault
 
 # сколько потрачено
 curl -s "$GW/key/info?key=sk-…"          -H "Authorization: Bearer $MK"
-curl -s "$GW/team/info?team_id=&lt;team_id&gt;" -H "Authorization: Bearer $MK"
-```text
+curl -s "$GW/team/info?team_id=<team_id>" -H "Authorization: Bearer $MK"
+```
+
 | Ситуация | Ответ шлюза (проверь на своей версии) |
 |----------|---------------------------------------|
 | Превышен `rpm_limit` / `tpm_limit` | `429`, в v1.102.1 `"type": "throttling_error"`, заголовок `retry-after: 60` (проверено на живом шлюзе) |
@@ -180,7 +184,7 @@ curl -s "$GW/team/info?team_id=&lt;team_id&gt;" -H "Authorization: Bearer $MK"
 **Ретраи и fallback.** `num_retries` — повтор на тот же деплой (ставь в `router_settings`: на живом стенде ретраи из `litellm_settings` после 36 с простоя бэкенда вернули ответ только через 142 с, а роутерные — через 4 с после его готовности); `fallbacks` — другая модель,
 когда деплой не отвечает или упёрся в 429; `context_window_fallbacks` — модель с большим
 окном, когда промпт не влез. Деплой, который падает, уходит в cooldown (`allowed_fails`,
-`cooldown_time`). Правила ретраев — как в [../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns):
+`cooldown_time`). Правила ретраев — как в [SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns):
 ретраить только временные ошибки и в пределах общего таймаута.
 
 > ⚠️ Fallback «внешний → локальный» безопасен, «локальный → внешний» может **вывести наружу
@@ -219,14 +223,15 @@ sum by (team) (increase(litellm_spend_metric_total[24h]))
 histogram_quantile(0.95, sum by (le, model) (rate(litellm_request_total_latency_metric_bucket[5m])))
 # алерт: у команды осталось меньше $2 бюджета
 litellm_remaining_team_budget_metric < 2
-```text
+```
+
 > ⚠️ `/metrics` не публикуй наружу через HTTPRoute — только ServiceMonitor изнутри кластера
-> ([../Left/02_Monitoring/11_long_term_and_operator.md](/monitoring/11-long-term-and-operator)).
+> ([Мониторинг: 11. Долгое хранение и Operator](/monitoring/11-long-term-and-operator)).
 
 ### OpenTelemetry GenAI semantic conventions
 
 Единый словарь атрибутов для трейсов LLM-вызовов — чтобы спаны из шлюза, SDK и фреймворков
-выглядели одинаково ([../SRE/03_tracing_opentelemetry.md](/sre/03-tracing-opentelemetry)).
+выглядели одинаково ([SRE: 03. Трейсинг и OpenTelemetry](/sre/03-tracing-opentelemetry)).
 
 | Факт (проверь, сентябрь 2026) | |
 |-------------------------------|---|
@@ -262,7 +267,7 @@ litellm_remaining_team_budget_metric < 2
 
 **Langfuse** — open-source трейсинг и оценка LLM-приложений: MIT (кроме каталогов `ee/`),
 self-hosted = web + worker + PostgreSQL + **ClickHouse** + Redis/Valkey + S3 (подойдёт MinIO-форк
-из [../Storage/03_nfs_minio.md](/storage/03-nfs-minio)). Актуальна **v4** (август 2026),
+из [Хранилища: 03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio)). Актуальна **v4** (август 2026),
 v3 — security-патчи до января 2027; с января 2026 проект принадлежит ClickHouse. Для девопса это
 ещё одна stateful-система — оцени стоимость эксплуатации до того, как пообещать её ML-команде.
 
@@ -273,7 +278,7 @@ v3 — security-патчи до января 2027; с января 2026 прое
 RAG (retrieval-augmented generation): модель отвечает по найденным фрагментам твоих документов,
 а не «из головы». Для девопса это **пайплайн данных + база + сервис**.
 
-```text
+```text:no-line-numbers
  ИНДЕКСАЦИЯ (Job / CronJob)                     ЗАПРОС (онлайн-сервис)
  ──────────────────────────                     ─────────────────────────────────────
  источник (git, wiki, S3)                       вопрос пользователя
@@ -283,7 +288,8 @@ RAG (retrieval-augmented generation): модель отвечает по най�
    → upsert в векторную БД                         → (rerank: точнее переупорядочить k)
      + метаданные: путь, заголовок,               → промпт: инструкция + чанки + вопрос
        версия, права доступа, хеш                  → LLM через шлюз → ответ со ссылками
-```text
+```
+
 | Компонент | Что решает девопс |
 |-----------|-------------------|
 | **Ingestion** | Job/CronJob или событие (push в git, объект в S3); идемпотентность по хешу чанка; удаление чанков удалённых документов; метрики: сколько документов, лаг индексации, ошибки |
@@ -318,7 +324,8 @@ CREATE INDEX CONCURRENTLY chunks_embedding_hnsw
 SET hnsw.ef_search = 40;                        -- по умолчанию 40: больше — точнее и медленнее
 SELECT doc_path, heading, 1 - (embedding <=> $1) AS similarity
 FROM chunks ORDER BY embedding <=> $1 LIMIT 5;
-```text
+```
+
 ⚠️ Оператор в запросе должен совпадать с классом индекса (`vector_cosine_ops` ↔ `<=>`),
 иначе индекс не используется и идёт полный перебор — проверяй `EXPLAIN`.
 
@@ -333,7 +340,7 @@ FROM chunks ORDER BY embedding <=> $1 LIMIT 5;
 
 **Память и размер.** `vector(1024)` — 4 байта × 1024 ≈ **4 КБ на строку**; 1 млн чанков ≈ 4 ГБ
 данных + индекс HNSW сопоставимого размера. Индекс должен жить в RAM (`shared_buffers` +
-page cache, [../Left/01_Databases/04_postgresql_conf.md](/databases/04-postgresql-conf) §2),
+page cache, [Базы данных: 04. postgresql.conf — основные параметры](/databases/04-postgresql-conf) §2),
 иначе поиск упирается в диск. `halfvec` (2 байта на число) вдвое меньше; для индекса
 `vector` — до 2000 измерений, `halfvec` — до 4000. Сообщение «hnsw graph no longer fits into
 maintenance_work_mem» при построении — сигнал поднять память, иначе сборка сильно замедлится.
@@ -342,12 +349,12 @@ maintenance_work_mem» при построении — сигнал поднят
 меньше 5 строк: индекс нашёл ближайших, фильтр их отсеял. С 0.8 есть итеративный поиск
 `SET hnsw.iterative_scan = relaxed_order` (лимит — `hnsw.max_scan_tuples`, по умолчанию 20 000).
 
-**Бэкапы.** Всё из [../Left/01_Databases/05_backup_restore.md](/databases/05-backup-restore)
+**Бэкапы.** Всё из [Базы данных: 05. Бэкап и восстановление](/databases/05-backup-restore)
 работает, но `pg_dump` хранит только **определение** индекса: при восстановлении HNSW на
 миллионах строк строится **часами** — это входит в RTO. Для больших баз — физический бэкап
 и PITR (WAL-G, pgBackRest); «пересчитать эмбеддинги из исходников» тоже стоит денег и времени.
 Обновление: новый образ → `ALTER EXTENSION vector UPDATE;` на каждой базе. Мониторинг — как
-у любой базы ([../Left/01_Databases/07_db_monitoring.md](/databases/07-db-monitoring)) +
+у любой базы ([Базы данных: 07. Мониторинг баз данных](/databases/07-db-monitoring)) +
 размер индекса и длительность индексации.
 
 ---
@@ -366,7 +373,8 @@ curl http://qdrant:6333/collections/docs/snapshots               # список
 curl -X PUT http://qdrant:6333/collections/docs/snapshots/recover \
   -H 'Content-Type: application/json' \
   -d '{"location":"http://backup-host/docs-2026-09-28.snapshot","priority":"snapshot"}'
-```text
+```
+
 - ⚠️ В кластере снапшот делается **на каждой ноде** отдельно; файлы уносит в S3 твоя CronJob.
 - Кластер (Raft для метаданных): `shard_number`, `replication_factor` (копий шарда),
   `write_consistency_factor` (сколько реплик подтверждают запись; живых меньше — запись падает).
@@ -384,7 +392,7 @@ curl -X PUT http://qdrant:6333/collections/docs/snapshots/recover \
 
 Каждый запрос во внешний LLM-API — это **передача данных провайдеру** за рубеж. Требования
 закона РК о ПДн (локализация баз с ПДн, меры защиты, уведомление об утечке за один рабочий
-день) — в [../Security/07_security_incidents_compliance.md](/security/07-security-incidents-compliance) §7.
+день) — в [Безопасность: 07. Инциденты безопасности и compliance](/security/07-security-incidents-compliance) §7.
 Считается ли конкретный сценарий трансграничной передачей, нужна ли отдельная правовая
 основа, согласие или договор — **уточни у юриста**. Задача девопса — сделать так, чтобы
 решение юриста исполнялось технически.
@@ -412,10 +420,11 @@ curl -X PUT http://qdrant:6333/collections/docs/snapshots/recover \
 
 ## 11. Сколько это стоит
 
-```text
+```text:no-line-numbers
  стоимость = Σ (входные токены × цена входа + выходные токены × цена выхода)
  с кэшем:  стоимость × (1 − cache hit rate)            ← попадание не идёт к провайдеру
-```text
+```
+
 Пример (цены условные, для расчёта: **$0,50 за 1M входных, $2 за 1M выходных**; реальные —
 в прайсе провайдера, проверь):
 
@@ -424,17 +433,17 @@ curl -X PUT http://qdrant:6333/collections/docs/snapshots/recover \
 | Бот поддержки: 20 000 запросов/день, 1 500 входных (вопрос + 4 чанка RAG) и 300 выходных | вход 30M × $0,50 = $15; выход 6M × $2 = $12 | **$27/день ≈ $810/мес** |
 | RAG берёт 10 чанков по ~300 токенов вместо 4 | вход 3 300 токенов → 66M × $0,50 = $33 + $12 | $45/день — ⭐ **+67%** от одной настройки top-k |
 | Кэш FAQ, hit rate 30% (исходный вариант) | $810 × 0,7 | ≈ $567/мес |
-| Своя модель на GPU-ноде $2/час круглосуточно | 2 × 730 | $1 460/мес при **любой** нагрузке ([02_gpu_kubernetes.md](/mlops/02-gpu-kubernetes)) |
+| Своя модель на GPU-ноде $2/час круглосуточно | 2 × 730 | $1 460/мес при **любой** нагрузке ([02. GPU в Kubernetes: драйвер, device plugin, GPU Operator, разделение, DRA, метрики, деньги](/mlops/02-gpu-kubernetes)) |
 
 Выводы: главный рычаг — **входные токены** (контекст RAG, история, системный промпт), а не число
 запросов; своя модель выгодна при высокой ровной загрузке или когда данные нельзя выпускать;
-бюджеты и алерт на остаток — обязательны. Методика — [../FinOps/00_INDEX.md](/finops/).
+бюджеты и алерт на остаток — обязательны. Методика — [FinOps](/finops/).
 
 ---
 
 ## 🧪 Мини-лаба: LiteLLM + Ollama в compose, ключ с лимитом
 
-Полная версия в kind с двумя командами и Grafana — лаба 3 в [07_practice_labs.md](/mlops/07-practice-labs).
+Полная версия в kind с двумя командами и Grafana — лаба 3 в [07. Практика: шесть лаб без GPU](/mlops/07-practice-labs).
 
 ```yaml
 # ~/labs/mlops/gw/docker-compose.yml — образы проверь, сентябрь 2026
@@ -454,7 +463,8 @@ services:
     volumes: ["./litellm-config.yaml:/app/config.yaml:ro"]
     depends_on: [db, ollama]
 volumes: { ollama: {} }
-```text
+```
+
 ```bash
 cd ~/labs/mlops/gw   # рядом — litellm-config.yaml из §3 (cache: type: local)
 docker compose up -d && docker compose exec ollama ollama pull qwen2.5:0.5b
@@ -474,7 +484,8 @@ done                                                           # 200 200 200 429
 curl -s localhost:4000/v1/embeddings -H "Authorization: Bearer $KEY" \
   -H 'Content-Type: application/json' -d '{"model":"local-embed","input":"тест"}'   # отказ: модели нет в ключе
 curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" localhost:4000/metrics/ | grep -E '^litellm_(total_tokens|spend)' | head
-```text
+```
+
 **Проверь себя:** почему четвёртый запрос — 429, а эмбеддинг отклонён другой ошибкой? Откуда
 шлюз взял цену локальной модели (`/key/info`)? Что будет с лимитом при двух контейнерах litellm
 без Redis? Уборка: `docker compose down -v`.
@@ -515,7 +526,7 @@ curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" localhost:4000/metrics/ |
 | Хочу | Как |
 |------|-----|
 | Поднять шлюз | LiteLLM + PostgreSQL, `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, `--config` |
-| Подключить локальную модель | `model: ollama_chat/&lt;модель&gt;`, `api_base: http://ollama:11434` |
+| Подключить локальную модель | `model: ollama_chat/<модель>`, `api_base: http://ollama:11434` |
 | Цена для локальной модели | `model_info.input_cost_per_token` / `output_cost_per_token` |
 | Команда с бюджетом | `POST /team/new` с `models`, `max_budget`, `budget_duration`, `tpm_limit`, `rpm_limit` |
 | Ключ сервиса | `POST /key/generate` с `team_id`, `models`, лимитами, `metadata` |
@@ -524,7 +535,7 @@ curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" localhost:4000/metrics/ |
 | Не логировать промпты | `turn_off_message_logging: true`, `store_prompts_in_spend_logs: false` |
 | Метрики и трейсы | `callbacks: ["prometheus"]` → `/metrics`; атрибуты `gen_ai.provider.name`, `gen_ai.usage.*` |
 | Векторы и индекс | `CREATE EXTENSION vector`; `vector(1024)`; `USING hnsw (embedding vector_cosine_ops)` + `maintenance_work_mem` |
-| Бэкап Qdrant | `POST /collections/&lt;c&gt;/snapshots` на каждой ноде → S3 |
+| Бэкап Qdrant | `POST /collections/<c>/snapshots` на каждой ноде → S3 |
 
 ---
 
@@ -552,13 +563,17 @@ curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" localhost:4000/metrics/ |
 10. Стоимость = токены × цена; главный рычаг — входные токены (контекст RAG), кэш снижает
     счёт на долю попаданий, своя GPU-модель стоит денег и без нагрузки.
 
-➡️ Дальше: [05_ml_pipelines.md](/mlops/05-ml-pipelines) · Лабы 3–4: [07_practice_labs.md](/mlops/07-practice-labs) · Задачи: 04_llm_gateway_rag_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«Зачем LLM-шлюз?»*, *«Как посчитать и ограничить траты на LLM?»*,
+> *«Как эксплуатировать векторную базу?»*, *«Какие данные можно отправлять во внешний API?»* —
+> важно назвать не только инструмент, но и **данные, деньги и отказ**.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Перечисли, что даёт компании единый шлюз к LLM. Какие три пункта ты назовёшь первыми?
 
@@ -836,192 +851,224 @@ HNSW — граф: лучше соотношение скорость/точно
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```yaml
 # B1 — два пода litellm за Service, Redis не настроен
-```text
-```text:no-line-numbers
 # ключ: rpm_limit: 10; клиент шлёт 18 запросов в минуту
-```text
+```
 Вопрос: сколько запросов пройдёт?
 
-```text:no-line-numbers
+```yaml
 # B2
-```text
-```text:no-line-numbers
 model_list:
-```text
-```text:no-line-numbers
   - model_name: chat
-```text
-```text:no-line-numbers
     litellm_params: { model: ollama_chat/qwen2.5:0.5b, api_base: http://ollama:11434 }
-```text
-```text:no-line-numbers
   - model_name: chat-external
-```text
-```text:no-line-numbers
-    litellm_params: { model: openai/&lt;модель&gt;, api_key: os.environ/OPENAI_API_KEY }
-```text
-```text:no-line-numbers
+    litellm_params: { model: openai/<модель>, api_key: os.environ/OPENAI_API_KEY }
 litellm_settings:
-```text
-```text:no-line-numbers
   fallbacks: [{"chat": ["chat-external"]}]
-```text
-```text:no-line-numbers
 # команда support шлёт в "chat" обращения клиентов с ИИН; под ollama упал
-```text
+```
 Вопрос: что произойдёт с данными?
 
-```text:no-line-numbers
+```bash
 # B3 — ключ создан так:
-```text
-```text:no-line-numbers
 {"models": ["local-chat"], "max_budget": 5}
-```text
-```text:no-line-numbers
 # сервис вызывает model: "local-embed"
-```text
+```
 Вопрос: что ответит шлюз?
 
-```text:no-line-numbers
+```yaml
 # B4
-```text
-```text:no-line-numbers
 litellm_settings:
-```text
-```text:no-line-numbers
   cache: true
-```text
-```text:no-line-numbers
   cache_params: { type: redis-semantic, similarity_threshold: 0.8 }
-```text
-```text:no-line-numbers
 # бот отвечает клиентам про статус ИХ заказов
-```text
+```
 Вопрос: что может пойти не так?
 
-```text:no-line-numbers
+```sql
 -- B5
-```text
-```text:no-line-numbers
 CREATE INDEX ON chunks USING hnsw (embedding vector_l2_ops);
-```text
-```text:no-line-numbers
 SELECT * FROM chunks ORDER BY embedding <=> $1 LIMIT 5;
-```text
+```
 Вопрос: будет ли использован индекс?
 
-```text:no-line-numbers
+```sql
 -- B6 — таблица пустая, данных ещё нет
-```text
-```text:no-line-numbers
 CREATE INDEX ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-```text
-```text:no-line-numbers
 -- потом загрузили 200 000 чанков
-```text
+```
 Вопрос: что с качеством поиска и как правильно?
 
-```text:no-line-numbers
+```sql
 -- B7 — HNSW, 50 000 чанков, из них у команды support 300
-```text
-```text:no-line-numbers
 SELECT * FROM chunks WHERE team = 'support' ORDER BY embedding <=> $1 LIMIT 10;
-```text
+```
 Вопрос: сколько строк вернётся и что настроить?
 
-```text:no-line-numbers
-B8 — индексация шла на bge-m3 (1024), вопрос эмбеддят nomic-embed-text (768)
 ```text
+B8 — индексация шла на bge-m3 (1024), вопрос эмбеддят nomic-embed-text (768)
+```
 Вопрос: что произойдёт?
 
-```text:no-line-numbers
+```text
 B9 — pgvector: 3 млн чанков, HNSW; база упала, восстанавливают из pg_dump
-```text
-```text:no-line-numbers
 RTO по договорённости — 1 час
-```text
+```
 Вопрос: уложатся ли?
 
-```text:no-line-numbers
+```text
 B10 — Qdrant, 3 ноды, replication_factor: 2, write_consistency_factor: 2
-```text
-```text:no-line-numbers
 одна нода упала; на ней была одна из двух реплик шарда 4
-```text
+```
 Вопрос: что будет с записью в шард 4?
 
-```text:no-line-numbers
+```yaml
 # B11 — OTel-инструментация приложения
-```text
-```text:no-line-numbers
 env:
-```text
-```text:no-line-numbers
   - { name: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, value: "true" }
-```text
-```text:no-line-numbers
 # трейсы уходят в Tempo с retention 30 дней
-```text
+```
 Вопрос: чем это опасно и что сделать? (Имя переменной у каждой инструментации своё — проверь.)
+
+<details><summary>Ответы</summary>
+
+**B1.** Без общего Redis у каждой реплики свой счётчик: при равномерной балансировке пройдут
+все 18 (по 9 на под, лимит 10 у каждого). Реальный лимит ≈ 20 rpm.
+
+**B2.** Запросы с ИИН уйдут во внешний API — данные, которые должны были остаться локально,
+окажутся у провайдера. Для такой команды — ключ только с локальными моделями, без fallback наружу,
+а надёжность — через реплики локальной модели.
+
+**B3.** Отказ авторизации: модель не входит в список `models` ключа.
+
+**B4.** Похожие вопросы разных клиентов («где мой заказ?») получат один и тот же сохранённый ответ —
+чужой статус, утечка данных. Для персональных ответов кэш выключают.
+
+**B5.** Нет: индекс построен для L2 (`vector_l2_ops`, оператор `<->`), а запрос использует
+косинусное `<=>`. Будет полный перебор; `EXPLAIN` покажет Seq Scan.
+
+**B6.** Центры кластеров посчитаны по пустой таблице — точность поиска будет плохой. Удалить
+и построить IVFFlat после загрузки (`lists` ≈ 200 для 200 000 строк) или взять HNSW.
+
+**B7.** Может вернуться меньше 10 строк: HNSW выдаёт ближайших кандидатов (`ef_search` = 40),
+фильтр оставляет только строки support. Включить `hnsw.iterative_scan = relaxed_order`,
+увеличить `hnsw.ef_search`, либо отдельная таблица/партиция на команду.
+
+**B8.** Запрос упадёт на несовпадении размерности (1024 vs 768); если бы размерность совпала —
+тихо возвращался бы мусор. Модель — одна; её имя хранить в метаданных и проверять.
+
+**B9.** Вряд ли: восстановление данных — минуты, но HNSW на 3 млн векторов строится часами.
+Нужен физический бэкап/PITR или реплика, которую можно повысить.
+
+**B10.** Жива одна реплика из двух, а для записи нужно подтверждение двух — запись в шард 4 будет
+падать, пока реплика не восстановится (или не снизят фактор). Чтение продолжит работать.
+
+**B11.** В трейсы попадут тексты промптов и ответов с ПДн — на 30 дней, с доступом у всех, кто
+видит трейсы. Выключить захват содержимого, удалять атрибуты в коллекторе; если тексты нужны —
+отдельное хранилище с доступом по ролям и коротким retention.
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Шлюз в compose
+#### C1. 🔑 Шлюз в compose
 Пройди мини-лабу конспекта: PostgreSQL + Ollama + LiteLLM `v1.102.1` (проверь версию).
 Проверь `/health/readiness`, вызови `local-chat` мастер-ключом и запиши TTFT и полное время ответа.
 
-### C2. 🔑 Команды и ключи
+#### C2. 🔑 Команды и ключи
 Создай команды `support` (только `local-chat`, $1 на 7 дней, `rpm_limit: 5`) и `search`
 (`local-chat` и `local-embed`, `tpm_limit: 2000`). Выпусти по ключу. Докажи тремя curl:
 лимит rpm срабатывает, чужая модель запрещена, `/team/info` показывает расход.
 
-### C3. Бюджет кончился
+<details><summary>Ответ</summary>
+
+Ожидаемо: шестой запрос за минуту по ключу support — 429; вызов `local-embed` ключом
+support — отказ; `/team/info` показывает `spend` больше нуля.
+
+</details>
+
+#### C3. Бюджет кончился
 Поставь ключу `max_budget: 0.0001` и цену локальной модели из конспекта. Сколько запросов
 пройдёт до `budget_exceeded`? Посчитай заранее по токенам из ответа (`usage`) и сравни с фактом.
 
-### C4. Метрики
+<details><summary>Ответ</summary>
+
+Стоимость запроса = input × 1e-7 + output × 4e-7. Например, 30 входных и 60 выходных
+токенов ≈ 2,7e-5 $, бюджет 0,0001 $ — около 3–4 запросов. Бюджет проверяется до запроса,
+поэтому последний может немного «перелететь» лимит.
+
+</details>
+
+#### C4. Метрики
 Открой `/metrics`, найди счётчики токенов и денег. Напиши PromQL: токены в минуту по командам,
 деньги за час по ключам, p95 задержки. Объясни, откуда берётся разница между
 `litellm_request_total_latency_metric` и `litellm_llm_api_latency_metric`.
 
-### C5. 🔑 Промпты не в логах
-Включи колбэк OTel на Collector из [../SRE/03_tracing_opentelemetry.md](/sre/03-tracing-opentelemetry)
+<details><summary>Ответ</summary>
+
+Разница — накладные шлюза: аутентификация, проверка лимитов и бюджета, запись в БД,
+колбэки. Если она растёт — смотри БД и Redis шлюза.
+
+</details>
+
+#### C5. 🔑 Промпты не в логах
+Включи колбэк OTel на Collector из [SRE: 03. Трейсинг и OpenTelemetry](/sre/03-tracing-opentelemetry)
 с экспортером `debug`. Сравни спан с `turn_off_message_logging: false` и `true`: какие атрибуты
 `gen_ai.*` есть, есть ли текст сообщения? Добавь в коллектор процессор, удаляющий
 `gen_ai.input.messages` и `gen_ai.output.messages`.
 
-### C6. 🔑 pgvector руками
+#### C6. 🔑 pgvector руками
 Подними `pgvector/pgvector:0.8.6-pg17` (проверь тег), создай таблицу из конспекта, загрузи
-**10.** 000 случайных векторов (`SELECT array_agg(random())::vector(1024) …` в `generate_series`).
+10 000 случайных векторов (`SELECT array_agg(random())::vector(1024) …` в `generate_series`).
 Построй HNSW с `maintenance_work_mem = 64MB`, потом с `1GB` — сравни время и сообщения.
 Проверь `EXPLAIN ANALYZE` запроса с правильным и неправильным оператором.
-### C7. HNSW против IVFFlat
+
+<details><summary>Ответ</summary>
+
+При маленьком `maintenance_work_mem` появится сообщение о том, что граф не помещается
+в память, и построение будет заметно медленнее. С неправильным оператором — Seq Scan.
+
+</details>
+
+#### C7. HNSW против IVFFlat
 На тех же данных построй IVFFlat (`lists` по правилу из конспекта). Сравни время построения,
 размер индекса (`pg_relation_size`) и время запроса при `ivfflat.probes` 1 и 10.
 
-### C8. Qdrant и снапшот
+<details><summary>Ответ</summary>
+
+`lists` = 10 000 / 1000 = 10. IVFFlat строится быстрее и занимает меньше места; при
+`probes = 1` быстрее, но пропускает соседей, при 10 точнее и медленнее.
+
+</details>
+
+#### C8. Qdrant и снапшот
 Подними `qdrant/qdrant:v1.19.1`, создай коллекцию на 1024 измерения, залей 1 000 точек,
 сделай снапшот, удали коллекцию и восстанови из снапшота. Запиши команды в runbook.
 
-### C9. Расчёт стоимости
+#### C9. Расчёт стоимости
 Сервис: 5 000 запросов/день, системный промпт 400 токенов, история диалога 800, RAG 5 чанков
 по 250, ответ 200. Цены условные: $0,50 и $2 за 1M. Посчитай месяц. Потом: история
 ограничена 300 токенами, hit rate кэша 20%. Во сколько раз изменился счёт?
 
-### C10. Политика данных
+<details><summary>Ответ</summary>
+
+Вход: 400 + 800 + 5 × 250 = 2 450 токенов; 5 000 × 2 450 = 12,25M × $0,50 = $6,13/день.
+Выход: 5 000 × 200 = 1M × $2 = $2/день. Итого $8,13/день ≈ $244/мес. После: вход 400 + 300 + 1 250 =
+1 950 → 9,75M × $0,50 = $4,88 + $2 = $6,88/день; × 0,8 (кэш) = $5,50/день ≈ $165/мес —
+в ≈ 1,5 раза дешевле.
+
+</details>
+
+#### C10. Политика данных
 Составь таблицу классов данных своей (или вымышленной) компании и для каждого — какие модели
 разрешены, какой ключ выдаётся, какой fallback допустим. Отметь пункты «уточнить у юриста».
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Счёт провайдера за неделю вырос втрое. В шлюзе все ходят через виртуальные ключи.
 Как найти виновника и остановить рост за 15 минут?
@@ -1082,7 +1129,7 @@ Readiness проверяет связь с БД: PostgreSQL недоступен
 Логирование сообщений в шлюзе, захват контента в OTel-инструментации, debug-логи приложения,
 `store_prompts_in_spend_logs`. Выключить источник, удалить данные из Loki (или сократить retention),
 оценить масштаб; это возможный инцидент с ПДн — подключить безопасность и юриста
-([../Security/07_security_incidents_compliance.md](/security/07-security-incidents-compliance)).
+([Безопасность: 07. Инциденты безопасности и compliance](/security/07-security-incidents-compliance)).
 
 </details>
 
@@ -1129,13 +1176,12 @@ Readiness проверяет связь с БД: PostgreSQL недоступен
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Зачем компании LLM-шлюз? Что вы бы в него положили?
 
 <details><summary>Ответ</summary>
 
 Один ключ провайдера и виртуальные ключи командам, бюджеты и tpm/rpm, учёт денег, fallback,
-   кэш, журнал и контроль того, какие данные уходят наружу.
+кэш, журнал и контроль того, какие данные уходят наружу.
 
 </details>
 
@@ -1144,7 +1190,7 @@ Readiness проверяет связь с БД: PostgreSQL недоступен
 <details><summary>Ответ</summary>
 
 Все вызовы через шлюз; `team` и ключ в метриках; бюджеты с периодом, алерт на остаток
-   и на аномальный рост; «внутренняя цена» для локальных моделей.
+и на аномальный рост; «внутренняя цена» для локальных моделей.
 
 </details>
 
@@ -1153,7 +1199,7 @@ Readiness проверяет связь с БД: PostgreSQL недоступен
 <details><summary>Ответ</summary>
 
 `fallbacks` в шлюзе по ошибкам и 429, cooldown для падающих деплоев; риски — другой получатель
-   данных, другое качество ответов, каскадная нагрузка на запасной вариант.
+данных, другое качество ответов, каскадная нагрузка на запасной вариант.
 
 </details>
 
@@ -1162,7 +1208,7 @@ Readiness проверяет связь с БД: PostgreSQL недоступен
 <details><summary>Ответ</summary>
 
 Метрики шлюза (токены, деньги, задержка, TTFT, ошибки по командам и моделям), трейсы
-   с атрибутами `gen_ai.*`, без текстов промптов по умолчанию.
+с атрибутами `gen_ai.*`, без текстов промптов по умолчанию.
 
 </details>
 
@@ -1171,7 +1217,7 @@ Readiness проверяет связь с БД: PostgreSQL недоступен
 <details><summary>Ответ</summary>
 
 Словарь OTel для LLM-вызовов: `gen_ai.operation.name`, `provider.name`, `usage.*`; статус
-   Development — версии фиксируем.
+Development — версии фиксируем.
 
 </details>
 
@@ -1180,7 +1226,7 @@ Readiness проверяет связь с БД: PostgreSQL недоступен
 <details><summary>Ответ</summary>
 
 Ingestion job → чанки → эмбеддинги → векторная БД; запрос → эмбеддинг → top-k с фильтром прав
-   → rerank → промпт → LLM через шлюз.
+→ rerank → промпт → LLM через шлюз.
 
 </details>
 
@@ -1189,7 +1235,7 @@ Ingestion job → чанки → эмбеддинги → векторная Б�
 <details><summary>Ответ</summary>
 
 pgvector — пока хватает одной ноды Postgres и команда умеет его эксплуатировать; отдельная
-   база — при десятках миллионов векторов и требованиях к задержке и шардированию.
+база — при десятках миллионов векторов и требованиях к задержке и шардированию.
 
 </details>
 
@@ -1198,7 +1244,7 @@ pgvector — пока хватает одной ноды Postgres и коман�
 <details><summary>Ответ</summary>
 
 HNSW по умолчанию, оператор = класс индекса, индекс в RAM, `maintenance_work_mem` при построении,
-   физические бэкапы для больших баз, мониторинг размера индекса и задержки поиска.
+физические бэкапы для больших баз, мониторинг размера индекса и задержки поиска.
 
 </details>
 
@@ -1207,8 +1253,8 @@ HNSW по умолчанию, оператор = класс индекса, ин
 <details><summary>Ответ</summary>
 
 По классам данных: публичное — можно, ПДн — по умолчанию нет, только по решению юриста
-   и после обезличивания; секреты — никогда. Техника — ключи с разрешёнными моделями и egress
-   через шлюз.
+и после обезличивания; секреты — никогда. Техника — ключи с разрешёнными моделями и egress
+через шлюз.
 
 </details>
 
@@ -1217,9 +1263,7 @@ HNSW по умолчанию, оператор = класс индекса, ин
 <details><summary>Ответ</summary>
 
 Токены на запрос (вход и выход) × запросы × цены, отдельно контекст RAG и история;
-    кэш и лимиты истории; сравнить с локальной моделью по стоимости GPU-часа.
-
----
+кэш и лимиты истории; сравнить с локальной моделью по стоимости GPU-часа.
 
 </details>
 

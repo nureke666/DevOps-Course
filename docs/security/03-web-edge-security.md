@@ -1,15 +1,15 @@
 ---
 title: "03. Безопасность веба и периметра (edge)"
-description: "Блок → Безопасность → тема 03. Опирается на"
+description: "OWASP Top 10:2025 глазами инфры, заголовки, rate limit, WAF + CRS, DDoS, testssl.sh"
 ---
 
 # 03. Безопасность веба и периметра (edge)
 
 > Блок → Безопасность → тема 03. Опирается на
-> [../Network/12_nginx.md](/network/12-nginx) (nginx, базовые заголовки, `limit_req`) ·
-> [../Network/07_tls.md](/network/07-tls) (TLS, сертификаты, `openssl s_client`) ·
-> [../Network/06_http.md](/network/06-http) (HTTP, заголовки, CORS). Принципы — в
-> [01_security_mindset.md](/security/01-security-mindset).
+> [Сети: 12. Nginx](/network/12-nginx) (nginx, базовые заголовки, `limit_req`) ·
+> [Сети: 07. TLS/SSL](/network/07-tls) (TLS, сертификаты, `openssl s_client`) ·
+> [Сети: 06. HTTP](/network/06-http) (HTTP, заголовки, CORS). Принципы — в
+> [01. Security mindset: как думать о безопасности](/security/01-security-mindset).
 >
 > **После темы ты умеешь:** разложить OWASP Top 10:2025 на «что может инфраструктура» и
 > «что только код»; настроить в nginx HSTS, CSP и остальные заголовки без ловушки наследования;
@@ -21,7 +21,7 @@ description: "Блок → Безопасность → тема 03. Опира�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  клиент / бот / атакующий
         │
         ▼  L3/4  провайдер, anycast, scrubbing      ← объёмный DDoS, SYN flood  (гасит не nginx)
@@ -35,7 +35,8 @@ description: "Блок → Безопасность → тема 03. Опира�
       app  ← authz, валидация ввода, параметризованные запросы — это уже код (OWASP A01, A05…)
         │
  проверка снаружи: testssl.sh · SSL Labs · curl -I · nmap (⚠️ только свои хосты)
-```text
+```
+
 ---
 
 ## 1. OWASP Top 10:2025 глазами девопса
@@ -70,7 +71,7 @@ Conditions** (A10); A07 и A09 переименованы.
 
 ## 2. Заголовки безопасности в nginx
 
-Базовые заголовки есть в [../Network/12_nginx.md](/network/12-nginx) (раздел 7). Полный
+Базовые заголовки есть в [Сети: 12. Nginx](/network/12-nginx) (раздел 7). Полный
 набор и зачем каждый:
 
 | Заголовок | Значение (пример) | От чего защищает |
@@ -92,7 +93,7 @@ add_header X-Content-Type-Options "nosniff" always;
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 add_header X-Frame-Options "DENY" always;
-```text
+```
 - `always` — заголовок добавляется и к ответам 4xx/5xx (по умолчанию только к 2xx/3xx).
 - ⚠️ **Ловушка наследования:** если в `location` есть хотя бы один свой `add_header`, все
   `add_header` уровня `server` там **пропадают**. Лечится: `include` сниппета в каждом таком
@@ -113,12 +114,13 @@ CDN, аналитика). Порядок: `Content-Security-Policy-Report-Only` 
 
 ```bash
 curl -skI https://app.lab.local:8443/ | grep -iE 'strict-transport|content-security|x-content-type|referrer|permissions|x-frame|server:'
-```text
+```
+
 ---
 
 ## 3. TLS-конфигурация
 
-Как работает TLS и как читать сертификат — в [../Network/07_tls.md](/network/07-tls).
+Как работает TLS и как читать сертификат — в [Сети: 07. TLS/SSL](/network/07-tls).
 Для nginx основа — генератор Mozilla (ssl-config.mozilla.org), профиль **intermediate**:
 
 ```nginx
@@ -128,7 +130,8 @@ ssl_prefer_server_ciphers off;      # все шифры в списке силь
 ssl_session_cache shared:TLS:10m;
 ssl_session_timeout 1d;
 ssl_session_tickets off;            # тикеты с долгоживущим ключом ослабляют forward secrecy
-```text
+```
+
 | Решение | Почему |
 |---------|--------|
 | Только TLS 1.2 и 1.3 | TLS 1.0/1.1 устарели (RFC 8996); в OpenSSL 3.x они работают только на security level 0 |
@@ -138,13 +141,13 @@ ssl_session_tickets off;            # тикеты с долгоживущим �
 | OCSP stapling | Let's Encrypt **выключил OCSP 6 августа 2025** и перешёл на CRL — для его сертификатов `ssl_stapling` бесполезен; у коммерческих CA проверь, есть ли OCSP |
 
 > 💡 Самая частая TLS-авария — не слабый шифр, а истёкший сертификат. Мониторинг срока —
-> в [../Network/07_tls.md](/network/07-tls) («Как это в DevOps»).
+> в [Сети: 07. TLS/SSL](/network/07-tls) («Как это в DevOps»).
 
 ---
 
 ## 4. Rate limiting, который работает
 
-Синтаксис `limit_req` — в [../Network/12_nginx.md](/network/12-nginx). Там в комментарии
+Синтаксис `limit_req` — в [Сети: 12. Nginx](/network/12-nginx). Там в комментарии
 написано «429 при превышении» — это неточно: **по умолчанию nginx отвечает `503`**, и клиенты,
 мониторинг и SLO-метрики примут это за падение сервера. Нужна директива `limit_req_status 429`.
 
@@ -166,7 +169,8 @@ location = /login {
     limit_req zone=login burst=3 nodelay;
     proxy_pass http://app:8080;
 }
-```text
+```
+
 | Вариант | Поведение при всплеске |
 |---------|------------------------|
 | `burst=20` (без `nodelay`) | Лишние запросы встают в очередь и **задерживаются** до темпа `rate` — пользователь видит тормоза |
@@ -182,14 +186,16 @@ real_ip_header   X-Forwarded-For;
 real_ip_recursive on;
 # ❌ set_real_ip_from 0.0.0.0/0;  → любой клиент пришлёт «X-Forwarded-For: 1.2.3.4»
 #    и обойдёт rate limit, allowlist по IP и испортит логи
-```text
+```
+
 Лимиты ставят не «на глаз»: смотри реальный профиль в access-логах (p99 запросов на IP в
 секунду), бери запас в 2–3 раза, включай через `dry_run`, следи за долей `429`. От слабых
 L7-атак вроде slowloris помогают короткие таймауты:
 ```nginx
 client_header_timeout 10s;  client_body_timeout 10s;  send_timeout 10s;
 keepalive_timeout 30s;      client_max_body_size 10m;
-```text
+```
+
 ---
 
 ## 5. WAF: ModSecurity / Coraza + OWASP CRS
@@ -208,14 +214,15 @@ keepalive_timeout 30s;      client_max_body_size 10m;
 (critical = 5). Если сумма за запрос ≥ порога (`ANOMALY_INBOUND`, по умолчанию 5) — блок.
 **Paranoia level** 1–4: чем выше, тем больше правил и ложных срабатываний. Начинают с PL1.
 
-Внедрение — как любой gate ([../CICD/13_quality_security.md](/cicd/13-quality-security), раздел 8):
-```text
+Внедрение — как любой gate ([CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security), раздел 8):
+```text:no-line-numbers
 1. DetectionOnly: только логируем, ничего не режем (1–2 недели на реальном трафике)
 2. Разбор срабатываний: атаки → ок; ложные → исключения (rule exclusion) по конкретному
    правилу/параметру/пути, а не «выключить CRS»
 3. On с высоким порогом (например, ANOMALY_INBOUND=10) → постепенно снижаем до 5
 4. PL2 — для чувствительных частей (админка, платежи)
-```text
+```
+
 На стенде WAF — отдельный контейнер `waf` (образ `owasp/modsecurity-crs:nginx`, профиль compose `waf`):
 ```bash
 cd ~/labs/security/edge && docker compose --profile waf up -d waf
@@ -223,7 +230,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:8081/?id=1'%20OR%20'1
 docker compose logs waf | grep -o '"ruleId":"[0-9]*"' | sort | uniq -c                   # какие правила сработали
 # переключить на блокировку: MODSEC_RULE_ENGINE=On → docker compose --profile waf up -d waf
 curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:8081/?id=1'%20OR%20'1'='1"   # → 403
-```text
+```
 Аудит-лог образа по умолчанию пишется в stdout в JSON (`MODSEC_AUDIT_LOG=/dev/stdout`) —
 его видно в `docker compose logs waf` и забирает любой сборщик логов.
 
@@ -256,7 +263,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:8081/?id=1'%20OR%20'1
 
 ## 7. Итоговый конфиг edge-стенда
 
-«После» для стартового конфига из [00_INDEX.md](/security/) (лаба 4 ведёт от одного к другому):
+«После» для стартового конфига из [Безопасность](/security/) (лаба 4 ведёт от одного к другому):
 ```nginx
 # ~/labs/security/edge/nginx/conf.d/app.conf — hardened
 server_tokens off;
@@ -314,10 +321,10 @@ server {
         proxy_pass http://app:8080;
     }
 }
-```text
+```
 ```bash
 docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload
-```text
+```
 > ⚠️ `location = /login` задаёт `limit_req`, но не `add_header` — поэтому заголовки уровня
 > `server` там сохраняются. Добавишь в него свой `add_header` — повтори весь набор (или
 > `add_header_inherit merge;`).
@@ -337,7 +344,8 @@ docker run --rm -t --network host -v ~/labs/security/edge/certs:/certs:ro \
 #   -p протоколы · -S данные сертификата · -h HTTP-заголовки (HSTS и др.) · -U уязвимости
 #   --ip — куда реально подключаться (в контейнере нет твоего /etc/hosts)
 #   --jsonfile out.json / --htmlfile out.html — отчёт; --severity HIGH — фильтр для файлов
-```text
+```
+
 **SSL Labs** (ssllabs.com/ssltest) — оценка A…F для **публичных** хостов; для стенда не подходит.
 
 **curl** — заголовки, редиректы, коды:
@@ -346,13 +354,15 @@ curl -sI http://app.lab.local:8080/ | grep -i location              # 301 на h
 curl -skI https://app.lab.local:8443/ | grep -iE 'server|strict|content-security'
 for i in $(seq 40); do curl -sk -o /dev/null -w '%{http_code}\n' https://app.lab.local:8443/; done | sort | uniq -c
 curl -sk -H 'X-Forwarded-For: 1.2.3.4' https://app.lab.local:8443/ | grep -i x-real-ip   # IP не подменяется
-```text
+```
+
 **nmap** — что вообще открыто и какие шифры:
 ```bash
 nmap -sV -p- 127.0.0.1                                    # все порты и версии сервисов
 nmap -p 8443 --script ssl-enum-ciphers 127.0.0.1          # протоколы и шифры с оценкой
 nmap -sV -p 22 192.168.56.30                              # как sec01 видно из админской сети
-```text
+```
+
 | Находка | Исправление |
 |---------|-------------|
 | TLS 1.0/1.1 или CBC-шифры | `ssl_protocols TLSv1.2 TLSv1.3`, ECDHE+AEAD |
@@ -408,7 +418,7 @@ nmap -sV -p 22 192.168.56.30                              # как sec01 вид�
 | Спрятать версию nginx | `server_tokens off;` |
 | Rate limit с 429 | `limit_req zone=… burst=N nodelay;` + `limit_req_status 429;` |
 | Проверить новый лимит без вреда | `limit_req_dry_run on;` |
-| Реальный IP за LB | `set_real_ip_from &lt;свои прокси&gt;; real_ip_header X-Forwarded-For; real_ip_recursive on;` |
+| Реальный IP за LB | `set_real_ip_from <свои прокси>; real_ip_header X-Forwarded-For; real_ip_recursive on;` |
 | Против slowloris | `client_header_timeout 10s; client_body_timeout 10s;` |
 | Современный TLS | `ssl_protocols TLSv1.2 TLSv1.3;` + ECDHE/AEAD, генератор Mozilla |
 | WAF без риска | CRS в `DetectionOnly`, разбор логов, исключения, потом `On` |
@@ -431,13 +441,17 @@ nmap -sV -p 22 192.168.56.30                              # как sec01 вид�
 9. DDoS L3/4 гасит провайдер/CDN, L7 — edge, WAF, кэш и лимиты; origin IP не светить.
 10. Периметр проверяют снаружи (testssl.sh, curl, nmap) — и только свои хосты.
 
-➡️ Дальше: [04_vuln_management.md](/security/04-vuln-management) · задачи: 03_web_edge_security_tasks.md
+---
 
+## Задачи
+
+> Стенд: edge из [Безопасность](/security/) — `~/labs/security/edge`: nginx на
+> `127.0.0.1:8080/8443` → `app` (whoami), WAF на `127.0.0.1:8081` (`--profile waf`),
+> `app.lab.local` → 127.0.0.1. ⚠️ Все сканы — только по своему стенду.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Что такое OWASP Top 10 и какая редакция актуальна? Что изменилось по сравнению с 2021?
 
@@ -490,6 +504,9 @@ HSTS — только HTTPS, нет SSL stripping; CSP — откуда груз
 <details><summary>Ответ</summary>
 
 `always` добавляет заголовок к любым ответам, включая 4xx/5xx (без него — только к
+2xx/3xx). Ловушка: если в `location` есть хоть один свой `add_header`, заголовки уровня
+`server`/`http` там не наследуются. Обход: `include` сниппета в каждый такой location или
+`add_header_inherit merge;` (nginx 1.29.3+).
 
 </details>
 
@@ -554,7 +571,7 @@ TLS 1.2 и 1.3; для 1.2 — ECDHE с AEAD (AES-GCM, ChaCha20-Poly1305), бе�
 
 <details><summary>Ответ</summary>
 
-Модуль realip: `set_real_ip_from &lt;адреса своих LB/CDN&gt;`, `real_ip_header X-Forwarded-For`,
+Модуль realip: `set_real_ip_from <адреса своих LB/CDN>`, `real_ip_header X-Forwarded-For`,
 `real_ip_recursive on`. Ловушка — доверять всем (`0.0.0.0/0`): любой клиент подделает заголовок,
 обойдёт лимиты и allowlist, испортит логи.
 
@@ -604,241 +621,218 @@ SSL Labs — внешний сервис для публичных адресо�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```nginx
 B1.  server {
-```text
-<details><summary>Ответ</summary>
+         add_header Strict-Transport-Security "max-age=31536000" always;
+         add_header X-Content-Type-Options nosniff always;
+         location /api/ {
+             add_header Cache-Control "no-store";
+             proxy_pass http://app:8080;
+         }
+     }
 
-⚠️ В `/api/` свой `add_header` — HSTS и nosniff там пропали. Повторить сниппет в
+B2.  limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+     location /api/ { limit_req zone=api burst=20 nodelay; proxy_pass http://app:8080; }
+     # Grafana: «доля 5xx на edge выросла в 5 раз»
+
+B3.  set_real_ip_from 0.0.0.0/0;
+     real_ip_header X-Forwarded-For;
+     location /admin/ { allow 10.10.0.0/16; deny all; proxy_pass http://app:8080; }
+
+B4.  add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+     # домен компании; на old.company.kz — внутренняя вики только по HTTP
+
+B5.  add_header Content-Security-Policy "default-src 'self'" always;
+     # фронтенд использует инлайн-скрипты и аналитику с внешнего CDN; включили в пятницу
+
+B6.  ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+     ssl_ciphers HIGH:!aNULL:!MD5;
+
+B7.  add_header Strict-Transport-Security "max-age=31536000";      # в server на порту 80
+
+B8.  # WAF на проде включён сразу так:
+     MODSEC_RULE_ENGINE=On  BLOCKING_PARANOIA=4
+
+B9.  limit_req_zone $binary_remote_addr zone=all:10m rate=1r/s;
+     # B2B-сервис, клиенты — офисы по 300 человек за одним NAT
+
+B10. # Сайт за CDN с защитой от DDoS. DNS старого поддомена direct.company.kz указывает
+     # прямо на origin, security group origin открыта 0.0.0.0/0 на 443.
+
+B11. error_page 500 502 503 504 /50x.html;
+     # proxy_intercept_errors не включён; приложение на ошибке отдаёт HTML со стек-трейсом
+
+B12. ssl_stapling on;
+     ssl_stapling_verify on;
+     # сертификат от Let's Encrypt, в error.log: "no OCSP responder URL in the certificate"
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ В `/api/` свой `add_header` — HSTS и nosniff там пропали. Повторить сниппет в
 location или `add_header_inherit merge;`.
 
-</details>
-
-```text:no-line-numbers
-         add_header Strict-Transport-Security "max-age=31536000" always;
-```text
-```text:no-line-numbers
-         add_header X-Content-Type-Options nosniff always;
-```text
-```text:no-line-numbers
-         location /api/ {
-```text
-```text:no-line-numbers
-             add_header Cache-Control "no-store";
-```text
-```text:no-line-numbers
-             proxy_pass http://app:8080;
-```text
-```text:no-line-numbers
-         }
-```text
-```text:no-line-numbers
-     }
-```text
-```text:no-line-numbers
-B2.  limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Лимит отвечает `503`: графики «5xx выросли» — на самом деле это отказы лимита.
+**B2.** ⚠️ Лимит отвечает `503`: графики «5xx выросли» — на самом деле это отказы лимита.
 Добавить `limit_req_status 429;`, разделить метрики 429 и 5xx.
 
-</details>
-
-```text:no-line-numbers
-     location /api/ { limit_req zone=api burst=20 nodelay; proxy_pass http://app:8080; }
-```text
-```text:no-line-numbers
-     # Grafana: «доля 5xx на edge выросла в 5 раз»
-```text
-```text:no-line-numbers
-B3.  set_real_ip_from 0.0.0.0/0;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Доверие всем прокси: атакующий шлёт `X-Forwarded-For: 10.10.0.5` и проходит
+**B3.** ⚠️ Доверие всем прокси: атакующий шлёт `X-Forwarded-For: 10.10.0.5` и проходит
 allowlist `/admin/`. Указать только адреса своих балансировщиков.
 
-</details>
-
-```text:no-line-numbers
-     real_ip_header X-Forwarded-For;
-```text
-```text:no-line-numbers
-     location /admin/ { allow 10.10.0.0/16; deny all; proxy_pass http://app:8080; }
-```text
-```text:no-line-numbers
-B4.  add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `includeSubDomains` сломает HTTP-вики, а `preload` вшьёт это в браузеры на месяцы.
+**B4.** ⚠️ `includeSubDomains` сломает HTTP-вики, а `preload` вшьёт это в браузеры на месяцы.
 Сначала перевести все поддомены на HTTPS, короткий `max-age`, preload — только осознанно.
 
-</details>
-
-```text:no-line-numbers
-     # домен компании; на old.company.kz — внутренняя вики только по HTTP
-```text
-```text:no-line-numbers
-B5.  add_header Content-Security-Policy "default-src 'self'" always;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Инлайн-скрипты и внешний CDN заблокированы — фронт сломан в пятницу. Report-Only,
+**B5.** ⚠️ Инлайн-скрипты и внешний CDN заблокированы — фронт сломан в пятницу. Report-Only,
 разбор, политика с нужными источниками (nonce/hash для инлайна), потом enforce.
 
-</details>
-
-```text:no-line-numbers
-     # фронтенд использует инлайн-скрипты и аналитику с внешнего CDN; включили в пятницу
-```text
-```text:no-line-numbers
-B6.  ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ TLS 1.0/1.1 устарели (RFC 8996); `HIGH` включает CBC-шифры и шифры без forward
+**B6.** ⚠️ TLS 1.0/1.1 устарели (RFC 8996); `HIGH` включает CBC-шифры и шифры без forward
 secrecy. `ssl_protocols TLSv1.2 TLSv1.3` и явный список ECDHE+AEAD.
 
-</details>
+**B7.** ⚠️ HSTS по HTTP браузер игнорирует. На 80 — `return 301 https://…`, HSTS — на HTTPS-ответе.
 
-```text:no-line-numbers
-     ssl_ciphers HIGH:!aNULL:!MD5;
-```text
-```text:no-line-numbers
-B7.  add_header Strict-Transport-Security "max-age=31536000";      # в server на порту 80
-```text
-<details><summary>Ответ</summary>
-
-⚠️ HSTS по HTTP браузер игнорирует. На 80 — `return 301 https://…`, HSTS — на HTTPS-ответе.
-
-</details>
-
-```text:no-line-numbers
-B8.  # WAF на проде включён сразу так:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Сразу блокировка и максимальная паранойя: лавина ложных срабатываний, WAF выключат.
+**B8.** ⚠️ Сразу блокировка и максимальная паранойя: лавина ложных срабатываний, WAF выключат.
 DetectionOnly, PL1, исключения, потом On.
 
-</details>
-
-```text:no-line-numbers
-     MODSEC_RULE_ENGINE=On  BLOCKING_PARANOIA=4
-```text
-```text:no-line-numbers
-B9.  limit_req_zone $binary_remote_addr zone=all:10m rate=1r/s;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ 300 человек за одним IP делят 1 запрос в секунду — сервис недоступен. Лимиты по
+**B9.** ⚠️ 300 человек за одним IP делят 1 запрос в секунду — сервис недоступен. Лимиты по
 реальному профилю (access-логи), по API-ключу/аккаунту вместо IP, запас 2–3×, `dry_run`.
 
-</details>
-
-```text:no-line-numbers
-     # B2B-сервис, клиенты — офисы по 300 человек за одним NAT
-```text
-```text:no-line-numbers
-B10.  # Сайт за CDN с защитой от DDoS. DNS старого поддомена direct.company.kz указывает
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Origin доступен напрямую — DDoS пойдёт мимо CDN. Убрать DNS-запись, пропускать
+**B10.** ⚠️ Origin доступен напрямую — DDoS пойдёт мимо CDN. Убрать DNS-запись, пропускать
 на origin только адреса CDN, при необходимости сменить IP origin.
 
-</details>
-
-```text:no-line-numbers
-     # прямо на origin, security group origin открыта 0.0.0.0/0 на 443.
-```text
-```text:no-line-numbers
-B11.  error_page 500 502 503 504 /50x.html;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без `proxy_intercept_errors on` `error_page` не перехватывает ошибки бэкенда —
+**B11.** ⚠️ Без `proxy_intercept_errors on` `error_page` не перехватывает ошибки бэкенда —
 клиент видит стек-трейс (A10, утечка информации). Включить и отдавать свою страницу.
 
-</details>
-
-```text:no-line-numbers
-     # proxy_intercept_errors не включён; приложение на ошибке отдаёт HTML со стек-трейсом
-```text
-```text:no-line-numbers
-B12.  ssl_stapling on;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ У Let's Encrypt с августа 2025 нет OCSP — stapling бесполезен и засоряет лог.
+**B12.** ⚠️ У Let's Encrypt с августа 2025 нет OCSP — stapling бесполезен и засоряет лог.
 Убрать для LE-сертификатов.
 
 </details>
 
-```text:no-line-numbers
-     ssl_stapling_verify on;
-```text
-```text:no-line-numbers
-     # сертификат от Let's Encrypt, в error.log: "no OCSP responder URL in the certificate"
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Заголовки безопасности
+#### C1. 🔑 Заголовки безопасности
 Создай сниппет `security-headers.conf` (смонтируй в контейнер nginx), подключи в `server`
 на 443. Проверь `curl -skI`. Добавь в `location /` свой `add_header X-Test 1` — убедись, что
 заголовки безопасности пропали, и почини двумя способами: `include` в location и
 `add_header_inherit merge;` (nginx 1.30 это умеет).
 
-### C2. 🔑 Rate limit с 429 и dry run
+<details><summary>Ответ</summary>
+
+В compose добавить том `./nginx/snippets:/etc/nginx/snippets:ro`, в server —
+`include /etc/nginx/snippets/security-headers.conf;`. После `add_header X-Test 1` в location
+`curl -skI` покажет только `X-Test`. Починка: `include` сниппета внутри location, либо
+`add_header_inherit merge;` в `server` — тогда видны оба набора.
+
+</details>
+
+#### C2. 🔑 Rate limit с 429 и dry run
 Включи `limit_req` на `location /` сначала с `limit_req_dry_run on` и посмотри записи в
 error log при нагрузке, потом по-настоящему. Проверь распределение кодов циклом из 40 запросов
 до и после `limit_req_status 429`. Добавь отдельный лимит `5r/m` на `/login`.
 
-### C3. Ловушка реального IP
+<details><summary>Ответ</summary>
+
+В dry run в error log — строки `limiting requests, dry run, excess: … by zone "perip"`,
+все ответы 200. После включения без `limit_req_status` — часть `503`, с ним — `429`.
+Цикл: `for i in $(seq 40); do curl -sk -o /dev/null -w '%{http_code}\n' https://app.lab.local:8443/; done | sort | uniq -c`.
+
+</details>
+
+#### C3. Ловушка реального IP
 Поставь `set_real_ip_from 0.0.0.0/0; real_ip_header X-Forwarded-For;` и докажи, что лимит
 обходится: запросы с разными `X-Forwarded-For` не получают 429. Исправь на подсеть docker-сети
 (или вообще убери realip, т.к. перед nginx на стенде прокси нет) и повтори.
 
-### C4. 🔑 testssl.sh до и после
+<details><summary>Ответ</summary>
+
+`for i in $(seq 40); do curl -sk -H "X-Forwarded-For: 10.0.0.$i" -o /dev/null -w '%{http_code}\n' https://app.lab.local:8443/; done | sort | uniq -c`
+→ все 200 при `0.0.0.0/0` (каждый запрос — «новый IP»). whoami в ответе покажет подменённый
+`X-Real-Ip`. После исправления — снова 429 сверх burst.
+
+</details>
+
+#### C4. 🔑 testssl.sh до и после
 Прогони testssl.sh по стартовому конфигу, сохрани `--jsonfile` и список предупреждений.
 Примени TLS-часть итогового конфига (раздел 7), прогони снова и сравни: протоколы, шифры,
 HSTS, `Server`, серверные предпочтения.
 
-### C5. 🔑 WAF: DetectionOnly → On
+<details><summary>Ответ</summary>
+
+В стартовом конфиге testssl обычно покажет: нет HSTS, `Server` с версией, шифры и
+протоколы по умолчанию, нет редиректа (проверяется отдельно curl). После: только TLS 1.2/1.3,
+ECDHE+AEAD, HSTS есть, версия скрыта. Отчёты — `--jsonfile before.json` / `after.json`.
+
+</details>
+
+#### C5. 🔑 WAF: DetectionOnly → On
 Подними `waf`. Отправь 3 атаки: SQLi (`?id=1' OR '1'='1`), path traversal (`?file=../../etc/passwd`),
 RCE-подобную (`?cmd=;cat /etc/passwd`). В DetectionOnly — какие коды и какие `ruleId` в логе?
 Переключи на `On`, повтори. Потом отправь легитимный запрос, который выглядит подозрительно
 (например, поиск текста `select * from` в параметре `q`), и напиши rule exclusion для него.
 
-### C6. CSP Report-Only
+<details><summary>Ответ</summary>
+
+DetectionOnly: все запросы 200, в `docker compose logs waf` — срабатывания правил
+(для SQLi — семейство 942xxx, итоговое 949110 «Inbound Anomaly Score Exceeded»; traversal — 930xxx;
+RCE — 932xxx). On: те же запросы — 403. Исключение для ложного срабатывания — точечно, например
+через `ctl:ruleRemoveTargetById=942100;ARGS:q` для конкретного пути (правило-исключение перед CRS),
+а не отключение всего CRS. Проверить, что атака в другом параметре всё ещё блокируется.
+
+</details>
+
+#### C6. CSP Report-Only
 Добавь `Content-Security-Policy-Report-Only` со строгой политикой и `report-uri /csp-report`.
 Открой страницу в браузере с DevTools — какие нарушения видно в консоли? Чем Report-Only
 отличается от enforce при реальной атаке?
 
-### C7. Редирект, версия и страницы ошибок
+<details><summary>Ответ</summary>
+
+В консоли браузера — `[Report Only] Refused to load …` / `violates the following
+Content Security Policy directive`, но ресурс загружается. При атаке Report-Only только сообщит
+о внедрённом скрипте, а enforce его заблокирует.
+
+</details>
+
+#### C7. Редирект, версия и страницы ошибок
 Сделай `301` с 80 на 443, `server_tokens off`, свои error pages с `proxy_intercept_errors on`.
 Останови `app` (`docker compose stop app`) и проверь, что клиент видит твою страницу 502,
 а не дефолтную с версией.
 
-### C8. nmap своего стенда
+<details><summary>Ответ</summary>
+
+`curl -sI http://app.lab.local:8080/` → `301` и `Location: https://app.lab.local:8443/`.
+После `docker compose stop app` — `502` с твоей страницей, без `nginx/1.30.5` в теле и заголовке.
+
+</details>
+
+#### C8. nmap своего стенда
 `nmap -sV -p- 127.0.0.1` и `nmap -p 8443 --script ssl-enum-ciphers 127.0.0.1`. Что видно из
 того, что не должно быть видно? Сравни с тем, что `ss -tulpn` показывает на хосте. Проверь с
-`sec01` (`nmap -sV &lt;IP хоста в 192.168.56.0/24&gt;`), видны ли порты edge.
+`sec01` (`nmap -sV <IP хоста в 192.168.56.0/24>`), видны ли порты edge.
 
-### C9. Матрица OWASP для своего сервиса
+<details><summary>Ответ</summary>
+
+Ожидаемо на хосте: 8080, 8443, 8081 на 127.0.0.1 (порты стенда), плюс всё, что слушает
+сам хост (SSH, другие сервисы). С `sec01` порты edge не видны, потому что опубликованы на
+127.0.0.1 — это и есть смысл привязки. Лишнее на хосте — закрыть/привязать к 127.0.0.1.
+
+</details>
+
+#### C9. Матрица OWASP для своего сервиса
 Для своего проекта (linkd или любого) заполни таблицу 10 категорий 2025: что уже закрыто
 инфраструктурой, что закрывает код, что не закрыто никем, кто владелец.
+
+<details><summary>Ответ</summary>
+
+Честная таблица обычно показывает: A02, A04, A09 частично закрыты инфрой; A05, A07, A10
+требуют кода; A03 закрыт сканами (тема 04); A01/SSRF — дыра без egress-ограничений. Каждой
+незакрытой строке — владелец и задача.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После выката нового конфига nginx мобильное приложение массово получает ошибки,
 а в Grafana растёт доля 503. Бэкенды здоровы, CPU низкий.
@@ -932,14 +926,13 @@ HSTS с `includeSubDomains` заставляет браузер ходить н�
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое OWASP Top 10? Что девопс может сделать против injection и SSRF?
 
 <details><summary>Ответ</summary>
 
 Рейтинг рисков веб-приложений, актуальный — 2025. Против injection: WAF+CRS как компенсация,
-   least privilege учётки БД, но фикс — параметризованные запросы. Против SSRF: IMDSv2, egress-
-   политики, запрет metadata, минимальные права роли; фикс — allowlist URL в коде.
+least privilege учётки БД, но фикс — параметризованные запросы. Против SSRF: IMDSv2, egress-
+политики, запрет metadata, минимальные права роли; фикс — allowlist URL в коде.
 
 </details>
 
@@ -948,7 +941,7 @@ HSTS с `includeSubDomains` заставляет браузер ходить н�
 <details><summary>Ответ</summary>
 
 HSTS, CSP (с `frame-ancestors`), X-Content-Type-Options, Referrer-Policy, Permissions-Policy,
-   иногда X-Frame-Options; `server_tokens off`; всё с `always` и с учётом наследования `add_header`.
+иногда X-Frame-Options; `server_tokens off`; всё с `always` и с учётом наследования `add_header`.
 
 </details>
 
@@ -957,7 +950,7 @@ HSTS, CSP (с `frame-ancestors`), X-Content-Type-Options, Referrer-Policy, Permi
 <details><summary>Ответ</summary>
 
 Заставляет браузер ходить только по HTTPS на `max-age`. Опасен тем, что ошибку не откатить:
-   `includeSubDomains` ломает HTTP-поддомены, `preload` вшивает домен в браузеры надолго.
+`includeSubDomains` ломает HTTP-поддомены, `preload` вшивает домен в браузеры надолго.
 
 </details>
 
@@ -966,7 +959,7 @@ HSTS, CSP (с `frame-ancestors`), X-Content-Type-Options, Referrer-Policy, Permi
 <details><summary>Ответ</summary>
 
 TLS 1.2/1.3, ECDHE+AEAD, полная цепочка, профиль Mozilla intermediate, автообновление
-   сертификатов и мониторинг срока; проверка — testssl.sh, SSL Labs, `openssl s_client`.
+сертификатов и мониторинг срока; проверка — testssl.sh, SSL Labs, `openssl s_client`.
 
 </details>
 
@@ -975,8 +968,8 @@ TLS 1.2/1.3, ECDHE+AEAD, полная цепочка, профиль Mozilla int
 <details><summary>Ответ</summary>
 
 `limit_req_zone` + `limit_req` с `burst`/`nodelay`, `limit_conn`; камни: 503 по умолчанию
-   (нужен `limit_req_status 429`), реальный IP за LB и подделка XFF, NAT, лимиты на глаз —
-   включать через `dry_run`.
+(нужен `limit_req_status 429`), реальный IP за LB и подделка XFF, NAT, лимиты на глаз —
+включать через `dry_run`.
 
 </details>
 
@@ -985,7 +978,7 @@ TLS 1.2/1.3, ECDHE+AEAD, полная цепочка, профиль Mozilla int
 <details><summary>Ответ</summary>
 
 Фильтр HTTP по правилам (ModSecurity/Coraza + OWASP CRS или облачный). Внедрение: DetectionOnly →
-   разбор → исключения → On с высоким порогом → снижение; WAF — компенсирующий контроль.
+разбор → исключения → On с высоким порогом → снижение; WAF — компенсирующий контроль.
 
 </details>
 
@@ -994,7 +987,7 @@ TLS 1.2/1.3, ECDHE+AEAD, полная цепочка, профиль Mozilla int
 <details><summary>Ответ</summary>
 
 L3/4 забивает канал — защита у провайдера/CDN, скрытый origin; L7 — лимиты, таймауты, кэш,
-   WAF/анти-бот, автоскейлинг; runbook и контакты провайдера заранее.
+WAF/анти-бот, автоскейлинг; runbook и контакты провайдера заранее.
 
 </details>
 
@@ -1003,7 +996,7 @@ L3/4 забивает канал — защита у провайдера/CDN, �
 <details><summary>Ответ</summary>
 
 realip: `set_real_ip_from` только адреса своих прокси, `real_ip_header X-Forwarded-For`,
-   `real_ip_recursive on`; никогда `0.0.0.0/0`.
+`real_ip_recursive on`; никогда `0.0.0.0/0`.
 
 </details>
 
@@ -1012,7 +1005,7 @@ realip: `set_real_ip_from` только адреса своих прокси, `r
 <details><summary>Ответ</summary>
 
 Снаружи: nmap (порты, версии), testssl.sh/SSL Labs (TLS), curl (заголовки, редиректы), регулярно
-   и по расписанию; внутри — ревью конфигов в git и мониторинг 4xx/5xx/429. Только свои хосты.
+и по расписанию; внутри — ревью конфигов в git и мониторинг 4xx/5xx/429. Только свои хосты.
 
 </details>
 
@@ -1021,9 +1014,7 @@ realip: `set_real_ip_from` только адреса своих прокси, `r
 <details><summary>Ответ</summary>
 
 Политика источников контента: защищает от XSS и clickjacking. Строгая CSP ломает фронтенд,
-    поэтому сначала Report-Only собирает нарушения, после правок — enforce.
-
----
+поэтому сначала Report-Only собирает нарушения, после правок — enforce.
 
 </details>
 

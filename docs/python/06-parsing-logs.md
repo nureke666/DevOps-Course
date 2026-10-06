@@ -1,12 +1,12 @@
 ---
 title: "06. Разбор логов и отчёты"
-description: "Блок → Python для DevOps → тема 6 из 8."
+description: "regex, nginx access.log, Counter, генераторы, перцентили"
 ---
 
 # 06. Разбор логов и отчёты
 
 > Блок → **Python для DevOps** → тема 6 из 8.
-> Аналог в bash: `grep | awk | sort | uniq -c | sort -rn` из [04_advanced_text_fu.md](/linux/04-advanced-text-fu).
+> Аналог в bash: `grep | awk | sort | uniq -c | sort -rn` из [Linux: 04. Advanced Text-Fu](/linux/04-advanced-text-fu).
 > Пока задача укладывается в одну строку — бери awk. Когда нужны перцентили, группировки
 > по нескольким полям, JSON-вывод и тесты — Python.
 >
@@ -19,15 +19,16 @@ description: "Блок → Python для DevOps → тема 6 из 8."
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  ИСТОЧНИКИ                   РАЗБОР                  АГРЕГАЦИЯ                 ВЫВОД
  ─────────                   ──────                  ─────────                 ─────
- access.log, *.gz ──┐        re + (?P&lt;name&gt;...)      Counter → топ IP/URL      таблица (f-строки)
+ access.log, *.gz ──┐        re + (?P<name>...)      Counter → топ IP/URL      таблица (f-строки)
  journalctl -o json ┼─► генератор ──► dict ──►       defaultdict → по часам ─► JSON (для машин)
  app.jsonl          │   строк         или None       statistics → p50/p95/p99  CSV (в таблицы)
  export.csv ────────┘   (O(1) памяти) json.loads     фильтр по времени         код выхода (алерт)
                                       csv.DictReader
-```text
+```
+
 ---
 
 ## 1. Регулярные выражения в Python
@@ -35,12 +36,13 @@ description: "Блок → Python для DevOps → тема 6 из 8."
 ```python
 import re
 
-DURATION_RE = re.compile(r"took (?P&lt;ms&gt;\d+)ms")        # ⭐ компилировать один раз, вне цикла
+DURATION_RE = re.compile(r"took (?P<ms>\d+)ms")        # ⭐ компилировать один раз, вне цикла
 
 m = DURATION_RE.search("GET /api/users took 153ms")
 if m:                                                  # нет совпадения → None
     ms = int(m.group("ms"))                            # или m["ms"], m.groupdict()
-```text
+```
+
 | Метод | Что делает |
 |-------|-----------|
 | `p.search(s)` | Первое совпадение **где угодно** в строке |
@@ -60,20 +62,21 @@ if m:                                                  # нет совпаден
 
 Формат `combined` (плюс частое дополнение `$request_time` в конце):
 
-```text
+```
 $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" $request_time
 10.0.0.7 - - [27/Sep/2026:10:15:32 +0300] "GET /api/users/42?x=1 HTTP/1.1" 200 512 "-" "curl/8.5.0" 0.153
-```text
+```
+
 ```python
 import re
 from datetime import datetime
 
 LINE_RE = re.compile(
-    r'(?P&lt;ip&gt;\S+) \S+ (?P&lt;user&gt;\S+) \[(?P&lt;time&gt;[^\]]+)\] '
-    r'"(?P&lt;method&gt;[A-Z]+) (?P&lt;path&gt;\S+) [^"]*" '
-    r'(?P&lt;status&gt;\d{3}) (?P&lt;size&gt;\d+|-) '
-    r'"(?P&lt;referer&gt;[^"]*)" "(?P&lt;ua&gt;[^"]*)"'
-    r'(?: (?P&lt;rt&gt;\d+(?:\.\d+)?))?'                 # $request_time — если есть
+    r'(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] '
+    r'"(?P<method>[A-Z]+) (?P<path>\S+) [^"]*" '
+    r'(?P<status>\d{3}) (?P<size>\d+|-) '
+    r'"(?P<referer>[^"]*)" "(?P<ua>[^"]*)"'
+    r'(?: (?P<rt>\d+(?:\.\d+)?))?'                 # $request_time — если есть
 )
 
 def parse_line(line: str) -> dict | None:
@@ -91,7 +94,7 @@ def parse_line(line: str) -> dict | None:
         "ua": d["ua"],
         "rt": float(d["rt"]) if d["rt"] else None,
     }
-```text
+```
 Строки вида `"\x16\x03\x01..."` (TLS-рукопожатие на HTTP-порт) или `"-" 400` не совпадут — их считают
 отдельным счётчиком «нераспознано», а не роняют скрипт.
 
@@ -101,7 +104,8 @@ def parse_line(line: str) -> dict | None:
 log_format json escape=json '{"time":"$time_iso8601","ip":"$remote_addr","method":"$request_method",'
                             '"uri":"$uri","status":$status,"bytes":$body_bytes_sent,"rt":$request_time}';
 access_log /var/log/nginx/access.json.log json;
-```text
+```
+
 ---
 
 ## 3. Генераторы: файл любого размера, `.gz` и stdin
@@ -120,11 +124,11 @@ records = (r for r in map(parse_line, lines) if r)           # конвейер 
 errors = (r for r in records if r["status"] >= 500)
 for r in errors:                                             # память O(1) на любом объёме
     ...
-```text
+```
 ```bash
 zcat /var/log/nginx/access.log.*.gz | ./top_nginx.py          # stdin
 ./top_nginx.py /var/log/nginx/access.log*                     # файлы, включая .gz
-```text
+```
 ⚠️ `f.read()` и `f.readlines()` на 5 ГБ логе — 5+ ГБ в памяти и OOM-kill.
 ⚠️ Без `errors="replace"` первая же строка с битыми байтами уронит разбор с `UnicodeDecodeError`.
 
@@ -154,7 +158,8 @@ for r in records:
 
 ips.most_common(10)                                     # [('10.0.0.7', 5123), ...]
 sum(statuses.values())                                  # всего запросов
-```text
+```
+
 **Перцентили:**
 
 ```python
@@ -167,11 +172,11 @@ def percentile(values: list[float], p: float) -> float:
 
 q = statistics.quantiles(values, n=100, method="inclusive")   # 99 точек, нужно >= 2 значений
 p50, p95, p99 = q[49], q[94], q[98]                           # интерполяция между точками
-```text
+```
 Для десятков миллионов строк не храни все значения — считай корзины, как histogram в Prometheus:
 `buckets[bisect.bisect_left(BOUNDS, rt)] += 1`.
 
-⚠️ Нормализация путей обязательна: без неё «топ URL» — это миллион уникальных `/users/&lt;id&gt;`.
+⚠️ Нормализация путей обязательна: без неё «топ URL» — это миллион уникальных `/users/<id>`.
 
 ---
 
@@ -187,7 +192,7 @@ with open("export.csv", newline="", encoding="utf-8") as f:      # ⭐ newline="
 writer = csv.DictWriter(sys.stdout, fieldnames=["path", "count", "p95"])
 writer.writeheader()
 writer.writerow({"path": "/api/users/{id}", "count": 5123, "p95": 0.412})
-```text
+```
 Excel в русской локали ждёт разделитель `;` — `csv.writer(f, delimiter=";")`.
 
 ---
@@ -208,11 +213,12 @@ def read_jsonl(lines):
             yield json.loads(line)
         except json.JSONDecodeError:
             log.warning("строка %d: не JSON: %.80s", n, line)
-```text
+```
+
 | Источник | Как получить | Полезные поля |
 |----------|--------------|---------------|
 | journald | `journalctl -u nginx -o json --since "1 hour ago"` | `MESSAGE`, `PRIORITY` (0-7), `_SYSTEMD_UNIT`, `__REALTIME_TIMESTAMP` (мкс) |
-| Docker json-file | `/var/lib/docker/containers/&lt;id&gt;/&lt;id&gt;-json.log` | `log`, `stream`, `time` |
+| Docker json-file | `/var/lib/docker/containers/<id>/<id>-json.log` | `log`, `stream`, `time` |
 | Приложение | свой JSON-логгер (тема 04) | `level`, `msg`, `ts`, контекст |
 | nginx | `log_format ... escape=json` | всё, что задано в формате |
 
@@ -220,7 +226,7 @@ def read_jsonl(lines):
 r = subprocess.run(["journalctl", "-u", "nginx", "--since", "1 hour ago", "-o", "json", "--no-pager"],
                    capture_output=True, text=True, check=True, timeout=60)
 errors = [e for e in read_jsonl(r.stdout.splitlines()) if int(e.get("PRIORITY", 6)) <= 3]
-```text
+```
 ⚠️ `MESSAGE` бывает не строкой, а массивом чисел — так journald кодирует сообщения с не-UTF-8 байтами.
 
 ---
@@ -232,7 +238,7 @@ from datetime import datetime, timedelta, timezone
 
 since = datetime.now(timezone.utc) - timedelta(minutes=15)
 recent = (r for r in records if r["time"] >= since)      # aware vs aware — зоны учтутся сами
-```text
+```
 nginx пишет локальное время со смещением (`+0300`), `%z` делает дату aware — сравнение с UTC
 корректно. ⚠️ Если в логе нет зоны, а сравниваешь с `datetime.now(timezone.utc)` — `TypeError`
 или (хуже) тихий сдвиг на несколько часов при ручном `replace(tzinfo=...)`.
@@ -247,7 +253,6 @@ nginx пишет локальное время со смещением (`+0300`)
 import argparse, json, sys
 from collections import Counter, defaultdict
 # LINE_RE, parse_line, read_lines, percentile, NUM_RE — из разделов выше
-
 
 def analyze(lines) -> dict:
     total = bad = 0
@@ -279,19 +284,17 @@ def analyze(lines) -> dict:
                                 key=lambda x: x[1], reverse=True)[:5],
     }
 
-
 def print_text(rep: dict) -> None:
     print(f"Запросов: {rep['total']:,} (нераспознано: {rep['unparsed']}), 5xx: {rep['error_rate']:.2%}")
     print("Коды:", "  ".join(f"{c}={n}" for c, n in rep["statuses"].items()))
     print("\nТоп IP:")
     for ip, n in rep["top_ips"]:
-        print(f"  {ip:&lt;18}{n:&gt;10,}")
+        print(f"  {ip:<18}{n:>10,}")
     print("\nТоп URL:")
     for path, n in rep["top_paths"]:
-        print(f"  {path:&lt;45}{n:&gt;10,}")
+        print(f"  {path:<45}{n:>10,}")
     if rep["latency"]:
         print("\nВремя ответа:", "  ".join(f"{k}={v * 1000:.0f}ms" for k, v in rep["latency"].items()))
-
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
@@ -308,15 +311,15 @@ def main(argv: list[str] | None = None) -> int:
         print_text(rep)
     return 1 if rep["error_rate"] > args.max_error_rate else 0
 
-
 if __name__ == "__main__":
     sys.exit(main())
-```text
+```
 ```bash
 ./top_nginx.py /var/log/nginx/access.log*
 ./top_nginx.py --json access.log | jq '.latency'
 zcat access.log.*.gz | ./top_nginx.py --max-error-rate 0.01 || echo "много 5xx!"
-```text
+```
+
 ---
 
 ## 9. Производительность
@@ -368,8 +371,8 @@ zcat access.log.*.gz | ./top_nginx.py --max-error-rate 0.01 || echo "много 
 | Хочу | Python |
 |------|--------|
 | Regex один раз | `RE = re.compile(r"...")` |
-| Именованная группа | `(?P&lt;name&gt;...)` → `m["name"]` / `m.groupdict()` |
-| Поле в кавычках | `"(?P&lt;ua&gt;[^"]*)"` |
+| Именованная группа | `(?P<name>...)` → `m["name"]` / `m.groupdict()` |
+| Поле в кавычках | `"(?P<ua>[^"]*)"` |
 | Нормализовать путь | `re.sub(r"/\d+", "/{id}", path.split("?", 1)[0])` |
 | Дата nginx | `datetime.strptime(s, "%d/%b/%Y:%H:%M:%S %z")` |
 | Файлы + .gz + stdin | `fileinput.input(files or ["-"], openhook=fileinput.hook_compressed, encoding="utf-8", errors="replace")` |
@@ -398,13 +401,29 @@ zcat access.log.*.gz | ./top_nginx.py --max-error-rate 0.01 || echo "много 
 9. Отчёт: человеку — таблица, машине — JSON в stdout, алерту — код выхода.
 10. Разбор логов — CPU-задача: для ускорения процессы, а не потоки; а лучше — JSON-логи и Loki.
 
-➡️ Дальше: [07_infra_libs.md](/python/07-infra-libs) · Задачи: 06_parsing_logs_tasks.md
+---
 
+## Задачи
+
+> Стенд: `python3` 3.12+. Нужен лог nginx — живой (`docker run -d -p 8081:80 --name web nginx:alpine`,
+> затем `docker logs web`) или синтетический:
+> ```python
+> # gen_log.py — python3 gen_log.py 200000 > access.log
+> import random, sys
+> from datetime import datetime, timedelta, timezone
+> n = int(sys.argv[1]); t = datetime.now(timezone(timedelta(hours=3))) - timedelta(seconds=n // 50)
+> paths = ["/api/users/{}", "/api/orders?page={}", "/health", "/static/app.js", "/login"]
+> for i in range(n):
+>     t += timedelta(milliseconds=20)
+>     st = random.choices([200, 301, 404, 500, 502, 503], [85, 3, 5, 4, 2, 1])[0]
+>     path = random.choice(paths).format(random.randint(1, 999))
+>     print(f'10.0.{random.randint(0, 3)}.{random.randint(1, 60)} - - [{t:%d/%b/%Y:%H:%M:%S %z}] '
+>           f'"GET {path} HTTP/1.1" {st} {random.randint(0, 9000)} "-" "curl/8.5.0" {random.expovariate(8):.3f}')
+> ```
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем `re.match`, `re.search` и `re.fullmatch` отличаются? Приведи пример, где путают.
 
@@ -428,7 +447,7 @@ zcat access.log.*.gz | ./top_nginx.py --max-error-rate 0.01 || echo "много 
 
 <details><summary>Ответ</summary>
 
-`(?P&lt;name&gt;...)` — обращение по имени (`m["status"]`), `groupdict()` сразу даёт dict,
+`(?P<name>...)` — обращение по имени (`m["status"]`), `groupdict()` сразу даёт dict,
 выражение читается и не ломается при добавлении новых групп.
 
 </details>
@@ -542,153 +561,132 @@ aware-даты сравниваются с учётом зон.
 
 ### Блок B. «Что выведет / что тут не так»
 
-
-```text:no-line-numbers
+```python
 # B1.
-```text
-```text:no-line-numbers
 import re
-```text
-```text:no-line-numbers
 print(re.match(r"\d+", "code 500"), re.search(r"\d+", "code 500").group())
-```text
-```text:no-line-numbers
+```
+```python
 # B2.
-```text
-```text:no-line-numbers
 line = '1.2.3.4 - - [...] "GET / HTTP/1.1" 200 5 "-" "curl/8" "extra"'
-```text
-```text:no-line-numbers
 print(re.search(r'"(.*)"', line).group(1))
-```text
-```text:no-line-numbers
+```
+```python
 # B3.
-```text
-```text:no-line-numbers
 m = LINE_RE.match(line)
-```text
-```text:no-line-numbers
 status = int(m.group("status"))           # на строке с мусором
-```text
-```text:no-line-numbers
+```
+```python
 # B4.
-```text
-```text:no-line-numbers
 print(re.findall(r"(\w+)=(\d+)", "a=1 b=2 c=x"))
-```text
-```text:no-line-numbers
+```
+```python
 # B5.
-```text
-```text:no-line-numbers
 from collections import Counter
-```text
-```text:no-line-numbers
 c = Counter(["200", "500", "200", "404", "200"])
-```text
-```text:no-line-numbers
 print(c.most_common(2), c["302"])
-```text
-```text:no-line-numbers
+```
+```python
 # B6.
-```text
-```text:no-line-numbers
 from collections import defaultdict
-```text
-```text:no-line-numbers
 d = defaultdict(list)
-```text
-```text:no-line-numbers
 d["/api"].append(0.1)
-```text
-```text:no-line-numbers
 print(d["/health"], len(d))
-```text
-```text:no-line-numbers
+```
+```python
 # B7.
-```text
-```text:no-line-numbers
 with open("/var/log/nginx/access.log") as f:
-```text
-```text:no-line-numbers
     lines = f.readlines()                 # файл 6 ГБ
-```text
-```text:no-line-numbers
+```
+```python
 # B8.
-```text
-```text:no-line-numbers
 import statistics
-```text
-```text:no-line-numbers
 print(statistics.mean([0.05] * 99 + [10.0]))
-```text
-```text:no-line-numbers
+```
+```python
 # B9.
-```text
-```text:no-line-numbers
 p95_total = (p95_web1 + p95_web2 + p95_web3) / 3
-```text
-```text:no-line-numbers
+```
+```python
 # B10.
-```text
-```text:no-line-numbers
 since = datetime.now() - timedelta(minutes=15)
-```text
-```text:no-line-numbers
 recent = [r for r in records if r["time"] >= since]    # r["time"] получен через %z
-```text
-```text:no-line-numbers
+```
+```python
 # B11.
-```text
-```text:no-line-numbers
 for line in gzip.open("access.log.2.gz"):
-```text
-```text:no-line-numbers
     if "500" in line:
-```text
-```text:no-line-numbers
         print(line)
-```text
-```text:no-line-numbers
+```
+```python
 # B12.
-```text
-```text:no-line-numbers
 paths = Counter(r["path"] for r in records)     # path = "/api/users/8812?token=abc"
-```text
-```text:no-line-numbers
 print(paths.most_common(5))
-```text
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** `None 500` — `match` ищет с начала строки.
+
+**B2.** `GET / HTTP/1.1" 200 5 "-" "curl/8" "extra` — жадный `.*` от первой до последней кавычки.
+
+**B3.** ⚠️ На мусорной строке `m is None` → `AttributeError`. Проверять `if not m`.
+
+**B4.** `[('a', '1'), ('b', '2')]` — с группами `findall` возвращает кортежи, `c=x` не подходит.
+
+**B5.** `[('200', 3), ('500', 1)] 0` — для отсутствующего ключа `Counter` возвращает 0.
+(Второе место — `'500'`, так как при равенстве сохраняется порядок первого появления.)
+
+**B6.** `[] 2` — обращение к `d["/health"]` создало ключ.
+
+**B7.** ⚠️ 6 ГБ строк в памяти → OOM. Итерироваться по `f`.
+
+**B8.** `0.1495` — среднее «≈150 мс» при том, что один запрос шёл 10 секунд.
+
+**B9.** ⚠️ Среднее перцентилей бессмысленно. Считать p95 по объединённым данным (или по объединённым корзинам).
+
+**B10.** ⚠️ `TypeError: can't compare offset-naive and offset-aware datetimes`. `datetime.now(timezone.utc)`.
+
+**B11.** ⚠️ `gzip.open` по умолчанию в режиме `"rb"`: строки — `bytes`, `"500" in line` → `TypeError`.
+`gzip.open(p, "rt", encoding="utf-8", errors="replace")`.
+
+**B12.** ⚠️ Путь с query и id — топ из единичных значений (и токены в отчёте!). Нормализовать и отрезать `?...`.
+
+</details>
+
 ---
 
 ### Блок C. Практика
 
-
-### C1. Регулярки-разминка
+#### C1. Регулярки-разминка
 Из строк вида `2026-09-27 10:15:32 INFO req_id=ab12 GET /api/users took 153ms` вытащи:
 дату-время, уровень, `req_id`, метод, путь, длительность (int). Сделай одним `re.compile` с именованными группами.
-
-### C2. 🔑 Парсер строки nginx
-Напиши `LINE_RE` и `parse_line(line) -> dict | None` для формата `combined` + `$request_time`.
-Проверь на пяти строках: нормальная, без `request_time`, с `-` вместо размера, с запросом `"\x16\x03\x01"`,
-полный мусор. Две последние должны давать `None`.
-
-### C3. 🔑 Топы
-По логу на 200 тыс. строк выведи:
-**1.** Топ-10 IP.
 
 <details><summary>Ответ</summary>
 
 ```python
 APP_RE = re.compile(
-    r"(?P&lt;ts&gt;\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (?P&lt;level&gt;[A-Z]+) req_id=(?P&lt;req&gt;\w+) "
-    r"(?P&lt;method&gt;[A-Z]+) (?P&lt;path&gt;\S+) took (?P&lt;ms&gt;\d+)ms"
+    r"(?P<ts>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (?P<level>[A-Z]+) req_id=(?P<req>\w+) "
+    r"(?P<method>[A-Z]+) (?P<path>\S+) took (?P<ms>\d+)ms"
 )
 m = APP_RE.search(line)
 rec = {**m.groupdict(), "ms": int(m["ms"])} if m else None
-```text
+```
+
 </details>
 
-**2.** Топ-10 путей с нормализацией (`/{id}`, без query).
-**3.** Распределение кодов ответа и долю 5xx.
+#### C2. 🔑 Парсер строки nginx
+Напиши `LINE_RE` и `parse_line(line) -> dict | None` для формата `combined` + `$request_time`.
+Проверь на пяти строках: нормальная, без `request_time`, с `-` вместо размера, с запросом `"\x16\x03\x01"`,
+полный мусор. Две последние должны давать `None`.
+
+#### C3. 🔑 Топы
+По логу на 200 тыс. строк выведи:
+1. Топ-10 IP.
+2. Топ-10 путей с нормализацией (`/{id}`, без query).
+3. Распределение кодов ответа и долю 5xx.
+4. Число 5xx по минутам, минуту-рекордсмен.
+Сравни результат п.1 с `awk '{print $1}' access.log | sort | uniq -c | sort -rn | head`.
 
 <details><summary>Ответ</summary>
 
@@ -696,8 +694,10 @@ rec = {**m.groupdict(), "ms": int(m["ms"])} if m else None
 
 </details>
 
-**4.** Число 5xx по минутам, минуту-рекордсмен.
-Сравни результат п.1 с `awk '{print $1}' access.log | sort | uniq -c | sort -rn | head`.
+#### C4. Перцентили
+1. Посчитай среднее, p50, p95, p99 времени ответа по всему логу.
+2. То же по каждому нормализованному пути (только пути с ≥ 20 запросами).
+3. Объясни разницу между средним и p99 на своих цифрах.
 
 <details><summary>Ответ</summary>
 
@@ -705,31 +705,7 @@ rec = {**m.groupdict(), "ms": int(m["ms"])} if m else None
 
 </details>
 
-### C4. Перцентили
-**1.** Посчитай среднее, p50, p95, p99 времени ответа по всему логу.
-
-<details><summary>Ответ</summary>
-
-```python
-APP_RE = re.compile(
-    r"(?P&lt;ts&gt;\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (?P&lt;level&gt;[A-Z]+) req_id=(?P&lt;req&gt;\w+) "
-    r"(?P&lt;method&gt;[A-Z]+) (?P&lt;path&gt;\S+) took (?P&lt;ms&gt;\d+)ms"
-)
-m = APP_RE.search(line)
-rec = {**m.groupdict(), "ms": int(m["ms"])} if m else None
-```text
-</details>
-
-**2.** То же по каждому нормализованному пути (только пути с ≥ 20 запросами).
-**3.** Объясни разницу между средним и p99 на своих цифрах.
-
-<details><summary>Ответ</summary>
-
-Минута-рекордсмен: `errors_per_min.most_common(1)`. Результат п.1 совпадает с awk-конвейером.
-
-</details>
-
-### C5. 🔑 Анализатор целиком
+#### C5. 🔑 Анализатор целиком
 Собери `top_nginx.py` из конспекта:
 - файлы (включая `.gz`) или stdin;
 - `--json` — отчёт в stdout, логи — в stderr;
@@ -737,74 +713,88 @@ rec = {**m.groupdict(), "ms": int(m["ms"])} if m else None
 - `--since 15m` — только записи за последние N минут/часов (разбор `15m`, `2h`).
 Проверь: `zcat access.log.gz | ./top_nginx.py --json | jq .error_rate`.
 
-### C6. journald
+<details><summary>Ответ</summary>
+
+Разбор `--since`:
+```python
+def parse_since(s: str) -> timedelta:
+    m = re.fullmatch(r"(\d+)([smhd])", s)
+    if not m:
+        raise argparse.ArgumentTypeError("формат: 15m, 2h, 1d")
+    units = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
+    return timedelta(**{units[m[2]]: int(m[1])})
+# p.add_argument("--since", type=parse_since)
+```
+
+</details>
+
+#### C6. journald
 Выведи топ-5 systemd-юнитов по числу сообщений уровня `err` и выше за последние сутки:
 `journalctl -p err --since "24 hours ago" -o json` → группировка по `_SYSTEMD_UNIT`
 (у части записей его нет — считай их как `kernel/other`).
 
-### C7. CSV
-**1.** Сохрани «топ путей с count, p50, p95» в `report.csv` через `DictWriter`.
-
 <details><summary>Ответ</summary>
 
 ```python
-APP_RE = re.compile(
-    r"(?P&lt;ts&gt;\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (?P&lt;level&gt;[A-Z]+) req_id=(?P&lt;req&gt;\w+) "
-    r"(?P&lt;method&gt;[A-Z]+) (?P&lt;path&gt;\S+) took (?P&lt;ms&gt;\d+)ms"
-)
-m = APP_RE.search(line)
-rec = {**m.groupdict(), "ms": int(m["ms"])} if m else None
-```text
-</details>
-
-**2.** Сделай версию с `delimiter=";"` и открой в LibreOffice/Excel.
-**3.** Прочитай файл обратно через `DictReader` и выведи пути с p95 > 300 мс.
-
-<details><summary>Ответ</summary>
-
-Минута-рекордсмен: `errors_per_min.most_common(1)`. Результат п.1 совпадает с awk-конвейером.
+r = subprocess.run(["journalctl", "-p", "err", "--since", "24 hours ago", "-o", "json", "--no-pager"],
+                   capture_output=True, text=True, check=True, timeout=120)
+units = Counter(e.get("_SYSTEMD_UNIT", "kernel/other") for e in read_jsonl(r.stdout.splitlines()))
+for unit, n in units.most_common(5):
+    print(f"{n:>6}  {unit}")
+```
 
 </details>
 
-### C8. Логи Docker
+#### C7. CSV
+1. Сохрани «топ путей с count, p50, p95» в `report.csv` через `DictWriter`.
+2. Сделай версию с `delimiter=";"` и открой в LibreOffice/Excel.
+3. Прочитай файл обратно через `DictReader` и выведи пути с p95 > 300 мс.
+
+#### C8. Логи Docker
 Запусти контейнер, который пишет в stdout и stderr
 (`docker run -d --name noisy alpine sh -c 'while true; do echo ok; echo fail >&2; sleep 1; done'`).
-Найди его json-файл лога (`docker inspect -f '&#123;&#123;.LogPath&#125;&#125;' noisy`, нужен `sudo`) и посчитай строки
+Найди его json-файл лога (<code v-pre>docker inspect -f '{{.LogPath}}' noisy</code>, нужен `sudo`) и посчитай строки
 по `stream`, выведи последние 5 записей stderr с временем.
-
-### C9. Скорость
-**1.** Сгенерируй 2 млн строк, замерь время анализатора (`time`).
 
 <details><summary>Ответ</summary>
 
 ```python
-APP_RE = re.compile(
-    r"(?P&lt;ts&gt;\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (?P&lt;level&gt;[A-Z]+) req_id=(?P&lt;req&gt;\w+) "
-    r"(?P&lt;method&gt;[A-Z]+) (?P&lt;path&gt;\S+) took (?P&lt;ms&gt;\d+)ms"
-)
-m = APP_RE.search(line)
-rec = {**m.groupdict(), "ms": int(m["ms"])} if m else None
-```text
+streams, last_err = Counter(), []
+with open(log_path, encoding="utf-8") as f:
+    for rec in read_jsonl(f):
+        streams[rec["stream"]] += 1
+        if rec["stream"] == "stderr":
+            last_err = (last_err + [(rec["time"], rec["log"].rstrip())])[-5:]
+```
+
 </details>
 
-**2.** Добавь предфильтр подстрокой для режима «только 5xx» и замерь снова.
-**3.** Разрежь лог на 4 файла (`split -n l/4`), обработай через `ProcessPoolExecutor` (по процессу на файл),
+#### C9. Скорость
+1. Сгенерируй 2 млн строк, замерь время анализатора (`time`).
+2. Добавь предфильтр подстрокой для режима «только 5xx» и замерь снова.
+3. Разрежь лог на 4 файла (`split -n l/4`), обработай через `ProcessPoolExecutor` (по процессу на файл),
    сложи `Counter`'ы. Сравни время.
 
 <details><summary>Ответ</summary>
 
-Минута-рекордсмен: `errors_per_min.most_common(1)`. Результат п.1 совпадает с awk-конвейером.
+Предфильтр даёт кратный выигрыш при редких совпадениях; 4 процесса — близко к ×3-4 на 4 ядрах.
+```python
+def count_file(path: str) -> Counter:
+    return Counter(r["status"] for r in map(parse_line, read_lines([path])) if r)
+
+with ProcessPoolExecutor() as pool:
+    total = sum(pool.map(count_file, parts), Counter())
+```
 
 </details>
 
-### C10. Окно по времени
+#### C10. Окно по времени
 Сгенерируй лог с текущими датами (генератор из шапки) и посчитай долю 5xx только за последние 5 минут.
 Убедись, что сравнение идёт aware-датами и не ломается, если часовой пояс машины — UTC, а в логе `+0300`.
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Анализатор месяц работал, а сегодня упал на строке 1 234 567: `AttributeError: 'NoneType' object has no attribute 'group'`. Что случилось и как сделать устойчиво?
 
@@ -881,7 +871,6 @@ rec = {**m.groupdict(), "ms": int(m["ms"])} if m else None
 ---
 
 ### Блок E. Вопросы с собеседования
-
 
 **1.** Как найти топ-10 IP по access.log (bash и Python)?
 
@@ -960,9 +949,7 @@ bash: `awk '{print $1}' access.log | sort | uniq -c | sort -rn | head`; Python: 
 <details><summary>Ответ</summary>
 
 awk/grep — разовые однострочники и простые подсчёты; Python — перцентили, группировки по нескольким
-    полям, JSON-вывод, повторное использование и тесты.
-
----
+полям, JSON-вывод, повторное использование и тесты.
 
 </details>
 

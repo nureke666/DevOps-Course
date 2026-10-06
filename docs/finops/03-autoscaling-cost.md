@@ -1,15 +1,15 @@
 ---
 title: "03. Автоскейлинг как инструмент экономии: HPA, KEDA, ноды, spot, расписания"
-description: "Блок → FinOps → тема 03. Опирается на"
+description: "Пол и цель HPA, KEDA и scale to zero, CA vs Karpenter, spot, non-prod по расписанию, размер нод"
 ---
 
 # 03. Автоскейлинг как инструмент экономии: HPA, KEDA, ноды, spot, расписания
 
 > Блок → FinOps → тема 03. Опирается на
-> [../Kubernetes/18_hpa_autoscaling.md](/kubernetes/18-hpa-autoscaling) (формула HPA,
+> [Kubernetes: 18. HPA и автоскейлинг](/kubernetes/18-hpa-autoscaling) (формула HPA,
 > `behavior`, VPA, Cluster Autoscaler — базу не повторяем),
-> [../Kubernetes/19_scheduling.md](/kubernetes/19-scheduling) (taints, topology spread, PDB)
-> и тему [02_k8s_rightsizing.md](/finops/02-k8s-rightsizing) (requests).
+> [Kubernetes: 19. Планирование подов](/kubernetes/19-scheduling) (taints, topology spread, PDB)
+> и тему [02. Rightsizing в Kubernetes: requests, limits и реальное потребление](/finops/02-k8s-rightsizing) (requests).
 >
 > **После темы ты умеешь:** настраивать HPA с оглядкой на деньги (пол, цель, стабилизация),
 > избегать конфликтов VPA и HPA, скейлить по очереди и до нуля через KEDA, объяснить
@@ -20,7 +20,7 @@ description: "Блок → FinOps → тема 03. Опирается на"
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  ЧТО СКЕЙЛИМ           ЧЕМ                              ГДЕ ДЕНЬГИ
  ─────────────────     ───────────────────────────      ─────────────────────────────────
  реплики подов         HPA (CPU/RPS), KEDA (очереди,    пол (minReplicas), цель утилизации,
@@ -32,26 +32,29 @@ description: "Блок → FinOps → тема 03. Опирается на"
 
  ⭐ Цепочка экономии: поды уменьшились → ноды опустели → автоскейлер нод их удалил.
     Любое звено сломано — экономии нет.
-```text
+```
+
 ---
 
 ## 1. HPA как инструмент экономии
 
-Формула и `behavior` — в [../Kubernetes/18_hpa_autoscaling.md](/kubernetes/18-hpa-autoscaling).
+Формула и `behavior` — в [Kubernetes: 18. HPA и автоскейлинг](/kubernetes/18-hpa-autoscaling).
 Здесь — три рычага стоимости.
 
 **1) Пол (`minReplicas`).** Платишь за него 24/7, даже ночью без трафика.
-```text
+```
 minReplicas: 3 × request 500m = 1,5 vCPU ≈ $45/мес на сервис
 20 сервисов в stage с тем же полом ≈ $900/мес — за окружение, которое ночью никто не открывает
 Правило: prod — ≥ 2 (отказоустойчивость, PDB), stage/dev — 1 или 0 через KEDA
-```text
+```
+
 **2) Цель утилизации.** Для сервиса под HPA стоимость ≈ потребление / цель.
-```text
+```text:no-line-numbers
 потребление 6 ядер:  target 50% → 12 ядер requests;  70% → ~8,6;  80% → 7,5
 выше цель — дешевле, но меньше запаса на всплеск, пока HPA и ноды догоняют
 ⭐ разумно 60–75% для веба; выше — если быстро скейлишься и есть запас по нодам
-```text
+```
+
 **3) Скорость уменьшения.** Длинное окно стабилизации держит лишние поды после пика,
 короткое — «пилит» (поды создаются и удаляются, ноды не успевают консолидироваться).
 ```yaml
@@ -60,7 +63,8 @@ behavior:
     stabilizationWindowSeconds: 300      # дефолт; для «пилящего» трафика — 600–900
     policies:
       - { type: Percent, value: 25, periodSeconds: 60 }   # плавно, по четверти в минуту
-```text
+```
+
 > 💡 Главная статья экономии у HPA — не `behavior`, а пол и цель. Окно стабилизации —
 > про стабильность, его цена обычно копеечная по сравнению с `minReplicas`.
 
@@ -74,7 +78,7 @@ behavior:
 | HPA по CPU + VPA только на память (`controlledResources: [memory]`) | ✅ | Разные ресурсы |
 | HPA по прикладной метрике (RPS, очередь) + VPA на CPU и память | ✅ (осторожно) | HPA не смотрит на requests |
 | HPA любой + VPA `Off` | ✅ | Только рекомендации |
-| KEDA + VPA | Те же правила | KEDA сама создаёт HPA (`keda-hpa-&lt;имя&gt;`) |
+| KEDA + VPA | Те же правила | KEDA сама создаёт HPA (`keda-hpa-<имя>`) |
 
 ---
 
@@ -82,19 +86,21 @@ behavior:
 
 KEDA (CNCF graduated) добавляет в кластер оператор и metrics adapter. Ты описываешь
 `ScaledObject`, KEDA создаёт и ведёт HPA, а переходы **0 ↔ 1** делает сама — HPA этого не умеет.
-Актуальная линия — **KEDA 2.21** (23.09.2026, закрывает критическую CVE; поддерживает k8s 1.34–1.36), 70+ скейлеров. Подробно — [../Kubernetes/25_ecosystem.md](/kubernetes/25-ecosystem).
+Актуальная линия — **KEDA 2.21** (23.09.2026, закрывает критическую CVE; поддерживает k8s 1.34–1.36), 70+ скейлеров. Подробно — [Kubernetes: 25. Экосистема вокруг кластера](/kubernetes/25-ecosystem).
 
-```text
+```text:no-line-numbers
  источник (Prometheus, RabbitMQ, Kafka, SQS, cron, …) ──► KEDA operator
                                                              │ 0 ↔ 1: сама
-                                                             │ 1 ↔ N: через HPA keda-hpa-&lt;имя&gt;
+                                                             │ 1 ↔ N: через HPA keda-hpa-<имя>
                                                              ▼
                                                         Deployment / StatefulSet / Job
-```text
+```
+
 ```bash
 helm repo add kedacore https://kedacore.github.io/charts
 helm install keda kedacore/keda -n keda --create-namespace
-```text
+```
+
 ### Скейлинг по метрике Prometheus
 
 ```yaml
@@ -116,7 +122,8 @@ spec:
         serverAddress: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
         query: sum(rate(http_requests_total{namespace="shop", job="shop-api"}[2m]))
         threshold: "50"                        # ⭐ целевое значение НА ОДНУ реплику: 400 RPS → 8 реплик
-```text
+```
+
 ### Очередь и scale to zero
 
 ```yaml
@@ -143,7 +150,8 @@ spec:
         value: "20"                           # 20 сообщений в очереди на реплику
         activationValue: "0"                  # > 0 сообщений → просыпаемся с нуля
       authenticationRef: { name: rabbitmq-auth }
-```text
+```
+
 | Параметр | Что делает | Нюанс |
 |----------|-----------|-------|
 | `minReplicaCount: 0` | Разрешает ноль | Первый запрос/сообщение ждёт холодного старта |
@@ -219,7 +227,8 @@ spec:
   amiSelectorTerms: [{ alias: al2023@latest }]
   subnetSelectorTerms:        [{ tags: { karpenter.sh/discovery: "${CLUSTER_NAME}" } }]
   securityGroupSelectorTerms: [{ tags: { karpenter.sh/discovery: "${CLUSTER_NAME}" } }]
-```text
+```
+
 | Понятие Karpenter | Смысл |
 |-------------------|-------|
 | **NodePool** | Какие ноды можно создавать (типы, зоны, spot/on-demand, taints), лимиты и правила disruption |
@@ -264,7 +273,7 @@ spec:
 | Dev/stage целиком | Ingress-контроллеры — часть реплик на on-demand | Control plane, единственные экземпляры |
 
 **Как переживать прерывания:**
-1. **Несколько реплик и PDB** ([../Kubernetes/19_scheduling.md](/kubernetes/19-scheduling)) —
+1. **Несколько реплик и PDB** ([Kubernetes: 19. Планирование подов](/kubernetes/19-scheduling)) —
    PDB защищает от добровольных выселений (consolidation, drain), от прерывания spot —
    только запас реплик.
 2. **Разнести реплики по типу капасити и зонам.** С Karpenter — 50/50 spot/on-demand:
@@ -278,7 +287,7 @@ topologySpreadConstraints:
     topologyKey: topology.kubernetes.io/zone
     whenUnsatisfiable: ScheduleAnyway
     labelSelector: { matchLabels: { app: shop-api } }
-```text
+```
 3. **Graceful shutdown короче предупреждения:** `terminationGracePeriodSeconds` ≤ 30–90 с,
    readiness падает сразу по SIGTERM, `preStop` даёт балансировщику убрать под.
 4. **Обработка сигнала прерывания:** Karpenter — через SQS-очередь (`--interruption-queue`)
@@ -296,16 +305,18 @@ affinity:
       - weight: 80
         preference:
           matchExpressions: [{ key: node-pool, operator: In, values: [spot] }]
-```text
+```
+
 ---
 
 ## 6. Non-prod по расписанию: выключить на ночь и выходные
 
-```text
+```text:no-line-numbers
 неделя = 168 ч;  рабочее время пн–пт 09:00–20:00 = 55 ч  → 33% времени
 dev/stage, выключенные вне рабочих часов, стоят ~1/3 от круглосуточных: экономия ~67% compute
 ⚠️ только если вместе с подами уходят НОДЫ (CA/Karpenter/node pool с min 0)
-```text
+```
+
 **Способ 1 — KEDA cron** (на каждый Deployment):
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -322,7 +333,7 @@ spec:
         start: 0 9 * * 1-5
         end: 0 20 * * 1-5
         desiredReplicas: "2"          # ⚠️ не ставь 0 — ноль даёт minReplicaCount
-```text
+```
 Ноль наступает через `cooldownPeriod` (дефолт 5 минут) после `end`. Можно добавить второй
 триггер (например, Prometheus по RPS), чтобы dev просыпался и вне окна при реальной работе.
 
@@ -335,7 +346,8 @@ helm install go-kube-downscaler caas-team/go-kube-downscaler -n kube-downscaler 
 kubectl annotate namespace dev downscaler/uptime="Mon-Fri 09:00-20:00 Asia/Almaty"
 kubectl annotate deploy postgres -n dev downscaler/exclude="true"        # не трогать
 kubectl annotate namespace dev downscaler/exclude-until="2026-10-01T18:00:00Z"   # релиз, не гасить
-```text
+```
+
 **Способ 3 — CronJob с `kubectl scale`**: работает, но хрупко (RBAC, забытые новые сервисы,
 нет исключений). Годится для 2–3 объектов.
 
@@ -351,12 +363,13 @@ kubectl annotate namespace dev downscaler/exclude-until="2026-10-01T18:00:00Z"  
 
 ## 7. Размер нод: несколько больших или много маленьких
 
-```text
+```text:no-line-numbers
 DaemonSet'ы на каждой ноде (node-exporter, лог-агент, CNI, kube-proxy, CSI) ≈ 0,4 vCPU / 0,8 GiB
 12 нод × 2 vCPU = 24 vCPU → накладные 12 × 0,4 = 4,8 vCPU = 20%
  3 ноды × 8 vCPU = 24 vCPU → накладные  3 × 0,4 = 1,2 vCPU =  5%
 + kube-reserved на больших нодах в процентах меньше
-```text
+```
+
 | | Много маленьких | Несколько больших |
 |---|-----------------|-------------------|
 | Накладные DaemonSet/reserved | ⚠️ Высокие | ✅ Низкие |
@@ -438,13 +451,17 @@ DaemonSet'ы на каждой ноде (node-exporter, лог-агент, CNI, 
 9. PDB защищает от consolidation и drain, но не от прерывания spot.
 10. ⭐ Non-prod по расписанию — самая быстрая победа: ~67% экономии compute окружения.
 
-➡️ Дальше: [04_kubecost_opencost.md](/finops/04-kubecost-opencost) · Задачи: 03_autoscaling_cost_tasks.md
+---
 
+## Задачи
+
+> Стенд: kind + kube-prometheus-stack из [FinOps](/finops/), KEDA
+> (`helm install keda kedacore/keda -n keda --create-namespace`), namespace `demo` из лабы 1.
+> Karpenter и spot — на бумаге: облако не требуется. ⚠️ Цены иллюстративные.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Опиши цепочку, через которую автоскейлинг экономит деньги. Где она обычно рвётся?
 
@@ -490,7 +507,7 @@ HPA по прикладной метрике + VPA на CPU/память; люб
 <details><summary>Ответ</summary>
 
 Сама: активация 0 → 1 и деактивация 1 → 0, опрос источников, адаптер метрик.
-Скейлинг 1 ↔ N — через созданный ею HPA `keda-hpa-&lt;имя&gt;`.
+Скейлинг 1 ↔ N — через созданный ею HPA `keda-hpa-<имя>`.
 
 </details>
 
@@ -570,6 +587,7 @@ NodePool (`karpenter.sh/v1`) — какие ноды можно создават
 <details><summary>Ответ</summary>
 
 AWS — 2 минуты (плюс более ранний rebalance recommendation), GCP и Azure — около
+30 секунд. Прерываемые ВМ Yandex Cloud живут не больше 24 часов и могут быть остановлены раньше.
 
 </details>
 
@@ -617,247 +635,136 @@ spot — недобровольное; от него защищают запас
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```
 B1.  # для Deployment shop-api в namespace shop есть:
-```text
-<details><summary>Ответ</summary>
+     kind: HorizontalPodAutoscaler   (CPU 70%)
+     kind: ScaledObject              (prometheus, RPS)
 
-⚠️ KEDA создаёт свой HPA — на Deployment два HPA, они перетягивают `replicas`
+B2.  # хотим ноль реплик ночью
+     triggers:
+       - type: cron
+         metadata: { timezone: Asia/Almaty, start: 0 20 * * *, end: 0 9 * * *, desiredReplicas: "0" }
+
+B3.  # Karpenter NodePool
+     disruption:
+       consolidationPolicy: WhenEmptyOrUnderutilized
+       budgets: [{ nodes: "0", schedule: "0 9 * * mon-fri", duration: 11h }]   # «рабочие часы Алматы»
+     # limits не заданы
+
+B4.  # stage
+     HPA: minReplicas: 5, maxReplicas: 6, target CPU 50%
+
+B5.  # prod, Karpenter consolidation включена
+     PodDisruptionBudget: minAvailable: 3   # у Deployment ровно 3 реплики
+
+B6.  # воркер обрабатывает задачу 10 минут; KEDA ScaledObject minReplicaCount: 0, cooldownPeriod: 60
+
+B7.  # spot-ноды с taint spot=true:NoSchedule; Deployment с toleration на spot,
+     # но без nodeAffinity. «Почему поды всё равно на on-demand?»
+
+B8.  # поды на AWS spot
+     terminationGracePeriodSeconds: 300
+
+B9.  # в общем Helm-шаблоне компании у всех подов
+     annotations: { cluster-autoscaler.kubernetes.io/safe-to-evict: "false" }
+
+B10. # KEDA prometheus-триггер без fallback; Prometheus лёг на 40 минут
+
+B11. # dev-namespace погашен kube-downscaler'ом в 20:00, но нод в группе всё ещё 3 — min size = 3
+
+B12. # «для надёжности» HPA target CPU 30%
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ KEDA создаёт свой HPA — на Deployment два HPA, они перетягивают `replicas`
 (вебхук KEDA такой ScaledObject отклонит). Удалить ручной HPA, CPU добавить вторым
 триггером (`type: cpu`) в ScaledObject.
 
-</details>
-
-```text:no-line-numbers
-     kind: HorizontalPodAutoscaler   (CPU 70%)
-```text
-```text:no-line-numbers
-     kind: ScaledObject              (prometheus, RPS)
-```text
-```text:no-line-numbers
-B2.  # хотим ноль реплик ночью
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `desiredReplicas: "0"` — «почти всегда ошибка» по документации KEDA, а окно
+**B2.** ⚠️ `desiredReplicas: "0"` — «почти всегда ошибка» по документации KEDA, а окно
 «через полночь» с `start > end` запутывает логику. Правильно: окно рабочего времени
 `start: 0 9 * * 1-5`, `end: 0 20 * * 1-5`, `desiredReplicas: "2"`, `minReplicaCount: 0`.
 
-</details>
-
-```text:no-line-numbers
-     triggers:
-```text
-```text:no-line-numbers
-       - type: cron
-```text
-```text:no-line-numbers
-         metadata: { timezone: Asia/Almaty, start: 0 20 * * *, end: 0 9 * * *, desiredReplicas: "0" }
-```text
-```text:no-line-numbers
-B3.  # Karpenter NodePool
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `schedule` в UTC: `0 9` — это 14:00 по Алматы (UTC+5), защита сработает не в те часы;
+**B3.** ⚠️ `schedule` в UTC: `0 9` — это 14:00 по Алматы (UTC+5), защита сработает не в те часы;
 нужно `0 4 * * mon-fri`. Без `limits` любой баг (зацикленный HPA, огромный request) закажет
 сотни нод. Budget без `reasons` блокирует и удаление пустых нод — лучше `reasons: [Underutilized]`.
 
-</details>
-
-```text:no-line-numbers
-     disruption:
-```text
-```text:no-line-numbers
-       consolidationPolicy: WhenEmptyOrUnderutilized
-```text
-```text:no-line-numbers
-       budgets: [{ nodes: "0", schedule: "0 9 * * mon-fri", duration: 11h }]   # «рабочие часы Алматы»
-```text
-```text:no-line-numbers
-     # limits не заданы
-```text
-```text:no-line-numbers
-B4.  # stage
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Пол 5 реплик в stage 24/7 и потолок 6 — HPA почти ничего не решает, а платишь за 5
+**B4.** ⚠️ Пол 5 реплик в stage 24/7 и потолок 6 — HPA почти ничего не решает, а платишь за 5
 круглосуточно. Stage: `minReplicas: 1`, ночью — 0.
 
-</details>
-
-```text:no-line-numbers
-     HPA: minReplicas: 5, maxReplicas: 6, target CPU 50%
-```text
-```text:no-line-numbers
-B5.  # prod, Karpenter consolidation включена
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `minAvailable` = числу реплик → `ALLOWED DISRUPTIONS: 0`: consolidation и drain
+**B5.** ⚠️ `minAvailable` = числу реплик → `ALLOWED DISRUPTIONS: 0`: consolidation и drain
 никогда не смогут выселить эти поды — ноды не консолидируются, обновления нод зависнут.
 `maxUnavailable: 1`.
 
-</details>
-
-```text:no-line-numbers
-     PodDisruptionBudget: minAvailable: 3   # у Deployment ровно 3 реплики
-```text
-```text:no-line-numbers
-B6.  # воркер обрабатывает задачу 10 минут; KEDA ScaledObject minReplicaCount: 0, cooldownPeriod: 60
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Когда очередь опустеет, KEDA через 60 с уберёт поды посреди 10-минутных задач
+**B6.** ⚠️ Когда очередь опустеет, KEDA через 60 с уберёт поды посреди 10-минутных задач
 (scale down в HPA тоже не знает о задачах). Нужен `ScaledJob` (Job на сообщение/пачку) или
 длинный graceful shutdown с завершением задачи, ack после обработки и идемпотентность.
 
-</details>
-
-```text:no-line-numbers
-B7.  # spot-ноды с taint spot=true:NoSchedule; Deployment с toleration на spot,
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Toleration только разрешает попасть на ноду с taint, но не притягивает. Нужна
+**B7.** ⚠️ Toleration только разрешает попасть на ноду с taint, но не притягивает. Нужна
 nodeAffinity (preferred/required) к spot-пулу.
 
-</details>
-
-```text:no-line-numbers
-     # но без nodeAffinity. «Почему поды всё равно на on-demand?»
-```text
-```text:no-line-numbers
-B8.  # поды на AWS spot
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Предупреждение AWS — 2 минуты: через 120 с инстанс выключат, и 300 с grace никто
+**B8.** ⚠️ Предупреждение AWS — 2 минуты: через 120 с инстанс выключат, и 300 с grace никто
 не дождётся — процесс убьют посреди работы. Grace ≤ 60–90 с, быстрый выход по SIGTERM.
 
-</details>
-
-```text:no-line-numbers
-     terminationGracePeriodSeconds: 300
-```text
-```text:no-line-numbers
-B9.  # в общем Helm-шаблоне компании у всех подов
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Autoscaler не может удалить ни одну ноду с такими подами — scale down фактически
+**B9.** ⚠️ Autoscaler не может удалить ни одну ноду с такими подами — scale down фактически
 выключен для всего кластера. Аннотацию ставят точечно (например, долгий Job).
 
-</details>
-
-```text:no-line-numbers
-     annotations: { cluster-autoscaler.kubernetes.io/safe-to-evict: "false" }
-```text
-```text:no-line-numbers
-B10.  # KEDA prometheus-триггер без fallback; Prometheus лёг на 40 минут
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без `fallback` при ошибке источника скейлинг замирает на текущем числе реплик
+**B10.** ⚠️ Без `fallback` при ошибке источника скейлинг замирает на текущем числе реплик
 (или — у скейлеров при нуле — не будет активации). Задать `fallback: {failureThreshold: 3,
 replicas: N}` и алерт на доступность Prometheus.
 
-</details>
-
-```text:no-line-numbers
-B11.  # dev-namespace погашен kube-downscaler'ом в 20:00, но нод в группе всё ещё 3 — min size = 3
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Поды ушли, но min size группы держит 3 ноды — экономии почти нет. Min size 0–1
+**B11.** ⚠️ Поды ушли, но min size группы держит 3 ноды — экономии почти нет. Min size 0–1
 для dev-группы (или Karpenter), базы — в отдельной маленькой группе.
 
-</details>
-
-```text:no-line-numbers
-B12.  # «для надёжности» HPA target CPU 30%
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Платишь за 3,3× потребления. Надёжность дают быстрый скейлинг, запас по нодам
+**B12.** ⚠️ Платишь за 3,3× потребления. Надёжность дают быстрый скейлинг, запас по нодам
 и корректные probes, а не низкая цель. 60–75%.
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Цена цели HPA (расчёт)
+#### C1. 🔑 Цена цели HPA (расчёт)
 Сервис: 16 ч в сутки потребляет 4 ядра, 8 ч (пик) — 10 ядер. Request одного пода — 500m,
 HPA держит цель точно, ноды следуют за подами. 1 vCPU·час = $0,04, месяц = 30 дней.
 Посчитай месячную стоимость requests при цели 50% и 70% и экономию.
 
-### C2. 🔑 KEDA по метрике Prometheus
-**1.** Поставь KEDA. Для `podinfo` из `demo` создай ServiceMonitor (порт 9898, путь `/metrics`)
-   и найди в метриках counter запросов (`curl …:9898/metrics | grep _count`).
-
 <details><summary>Ответ</summary>
 
-```text
+```text:no-line-numbers
 Цель 50%: база 4 / 0,5 = 8 ядер (16 подов) × 16 ч = 128 vCPU·ч
           пик 10 / 0,5 = 20 ядер (40 подов) × 8 ч = 160 vCPU·ч      → 288 vCPU·ч/сутки
 Цель 70%: база 4 / 0,7 = 5,71 → ⌈11,4⌉ = 12 подов = 6 ядер × 16 ч = 96
           пик 10 / 0,7 = 14,29 → ⌈28,6⌉ = 29 подов = 14,5 ядра × 8 ч = 116  → 212 vCPU·ч/сутки
 Месяц: 288 × 30 × $0,04 = $345,6;  212 × 30 × $0,04 = $254,4
 Экономия ≈ $91/мес (−26%) на одном сервисе — без изменения кода.
-```text
+```
+
 </details>
 
-**2.** Создай ScaledObject с prometheus-триггером: 1 реплика на 5 RPS, `minReplicaCount: 1`,
+#### C2. 🔑 KEDA по метрике Prometheus
+1. Поставь KEDA. Для `podinfo` из `demo` создай ServiceMonitor (порт 9898, путь `/metrics`)
+   и найди в метриках counter запросов (`curl …:9898/metrics | grep _count`).
+2. Создай ScaledObject с prometheus-триггером: 1 реплика на 5 RPS, `minReplicaCount: 1`,
    `maxReplicaCount: 6`.
-
-<details><summary>Ответ</summary>
-
--vCPU: полезно 1,9 − 0,4 = 1,5 → под на 3 vCPU не влезает вообще ❌ (нужен второй пул).
-
-</details>
-
-**3.** Дай нагрузку циклом `wget`, смотри `kubectl get hpa,pods -n demo -w`. Найди HPA,
+3. Дай нагрузку циклом `wget`, смотри `kubectl get hpa,pods -n demo -w`. Найди HPA,
    который создала KEDA, и объясни его `TARGETS`.
 
 <details><summary>Ответ</summary>
 
-Реплики поднимаются в пределах `pollingInterval` (30 с) после `start`. После `end`
-до нуля — ~`cooldownPeriod` (300 с) + интервал опроса. Если нужно быстрее — уменьшить
-`cooldownPeriod`.
+ServiceMonitor должен выбираться Prometheus'ом (на стенде селекторы открыты,
+в проде — лейбл `release`). Запрос вида `sum(rate(<counter>{namespace="demo"}[1m]))`,
+`threshold: "5"`. KEDA создаст `keda-hpa-podinfo`; в `kubectl get hpa` TARGETS показывают
+среднее значение метрики на реплику против 5 (External-метрика `s0-prometheus`).
 
 </details>
 
-### C3. 🔑 Dev спит ночью (KEDA cron)
-**1.** Создай namespace `dev` с двумя Deployment.
-
-<details><summary>Ответ</summary>
-
-```text
-Цель 50%: база 4 / 0,5 = 8 ядер (16 подов) × 16 ч = 128 vCPU·ч
-          пик 10 / 0,5 = 20 ядер (40 подов) × 8 ч = 160 vCPU·ч      → 288 vCPU·ч/сутки
-Цель 70%: база 4 / 0,7 = 5,71 → ⌈11,4⌉ = 12 подов = 6 ядер × 16 ч = 96
-          пик 10 / 0,7 = 14,29 → ⌈28,6⌉ = 29 подов = 14,5 ядра × 8 ч = 116  → 212 vCPU·ч/сутки
-Месяц: 288 × 30 × $0,04 = $345,6;  212 × 30 × $0,04 = $254,4
-Экономия ≈ $91/мес (−26%) на одном сервисе — без изменения кода.
-```text
-</details>
-
-**2.** Повесь на каждый ScaledObject с cron-триггером, где окно — ближайшие 10 минут
+#### C3. 🔑 Dev спит ночью (KEDA cron)
+1. Создай namespace `dev` с двумя Deployment.
+2. Повесь на каждый ScaledObject с cron-триггером, где окно — ближайшие 10 минут
    (`timezone: Asia/Almaty`), `minReplicaCount: 0`.
-
-<details><summary>Ответ</summary>
-
--vCPU: полезно 1,9 − 0,4 = 1,5 → под на 3 vCPU не влезает вообще ❌ (нужен второй пул).
-
-</details>
-
-**3.** Зафиксируй: когда поднялись реплики, через сколько после `end` стало 0. Сравни с `cooldownPeriod`.
+3. Зафиксируй: когда поднялись реплики, через сколько после `end` стало 0. Сравни с `cooldownPeriod`.
 
 <details><summary>Ответ</summary>
 
@@ -867,115 +774,142 @@ HPA держит цель точно, ноды следуют за подами.
 
 </details>
 
-### C4. kube-downscaler для всего namespace
+#### C4. kube-downscaler для всего namespace
 Поставь GoKubeDownscaler, повесь `downscaler/uptime` на namespace `dev2` с окном, которое
 закончится через 5 минут. Исключи один Deployment аннотацией `downscaler/exclude`.
 Сравни с KEDA cron: что удобнее для 30 сервисов и почему?
 
-### C5. Очередь и scale to zero (по желанию)
-**1.** Разверни `rabbitmq:4-management` (Deployment + Service, `RABBITMQ_DEFAULT_USER/PASS=keda/keda`),
-   Secret с `url: amqp://keda:keda@rabbitmq.orders:5672/`.
-
 <details><summary>Ответ</summary>
 
-```text
-Цель 50%: база 4 / 0,5 = 8 ядер (16 подов) × 16 ч = 128 vCPU·ч
-          пик 10 / 0,5 = 20 ядер (40 подов) × 8 ч = 160 vCPU·ч      → 288 vCPU·ч/сутки
-Цель 70%: база 4 / 0,7 = 5,71 → ⌈11,4⌉ = 12 подов = 6 ядер × 16 ч = 96
-          пик 10 / 0,7 = 14,29 → ⌈28,6⌉ = 29 подов = 14,5 ядра × 8 ч = 116  → 212 vCPU·ч/сутки
-Месяц: 288 × 30 × $0,04 = $345,6;  212 × 30 × $0,04 = $254,4
-Экономия ≈ $91/мес (−26%) на одном сервисе — без изменения кода.
-```text
+Downscaler: одна аннотация на namespace, исключения аннотациями, умеет много типов
+объектов — удобнее для 30 сервисов. KEDA cron — ScaledObject на каждый workload, зато можно
+совместить с событийным триггером («проснуться, если пришёл трафик»).
+
 </details>
 
-**2.** Создай очередь и сообщения через HTTP API (port-forward 15672):
+#### C5. Очередь и scale to zero (по желанию)
+1. Разверни `rabbitmq:4-management` (Deployment + Service, `RABBITMQ_DEFAULT_USER/PASS=keda/keda`),
+   Secret с `url: amqp://keda:keda@rabbitmq.orders:5672/`.
+2. Создай очередь и сообщения через HTTP API (port-forward 15672):
    `curl -u keda:keda -XPUT localhost:15672/api/queues/%2F/orders -H 'content-type: application/json' -d '{"durable":true}'`,
    публикация — `POST /api/exchanges/%2F/amq.default/publish` с `routing_key: orders`.
-
-<details><summary>Ответ</summary>
-
--vCPU: полезно 1,9 − 0,4 = 1,5 → под на 3 vCPU не влезает вообще ❌ (нужен второй пул).
-
-</details>
-
-**3.** Воркер — любой Deployment (`busybox sleep infinity`): скейлинг зависит только от длины очереди.
+3. Воркер — любой Deployment (`busybox sleep infinity`): скейлинг зависит только от длины очереди.
    ScaledObject из конспекта с `value: "20"`. Опубликуй 100 сообщений, потом очисти очередь
    (`DELETE /api/queues/%2F/orders/contents`). Наблюдай 0 → 5 → 0.
 
 <details><summary>Ответ</summary>
 
-Реплики поднимаются в пределах `pollingInterval` (30 с) после `start`. После `end`
-до нуля — ~`cooldownPeriod` (300 с) + интервал опроса. Если нужно быстрее — уменьшить
-`cooldownPeriod`.
+При 100 сообщениях и `value: "20"` KEDA активирует воркер и HPA поднимет ⌈100/20⌉ = 5
+реплик; после очистки очереди через `cooldownPeriod` (120 с) — 0. Воркер ничего не читает —
+это нормально: скейлинг зависит только от длины очереди.
 
 </details>
 
-### C6. Karpenter на бумаге
+#### C6. Karpenter на бумаге
 Напиши два NodePool: `general` (spot + on-demand, arm64/amd64, c/m/r, поколение > 5,
 лимит 100 vCPU, consolidation без трогания недогруженных нод в рабочие часы Алматы 10:00–19:00
 пн–пт) и `batch` (только spot, taint `workload=batch:NoSchedule`, `WhenEmpty`, лимит 50 vCPU).
 Проверь cron budgets в UTC.
 
-### C7. Готов ли сервис к spot
-Найди проблемы и исправь:
-```text:no-line-numbers
+<details><summary>Ответ</summary>
+
+```yaml
+# general
 spec:
-```text
-```text:no-line-numbers
-  replicas: 1
-```text
-```text:no-line-numbers
   template:
-```text
-```text:no-line-numbers
     spec:
-```text
-```text:no-line-numbers
+      nodeClassRef: { group: karpenter.k8s.aws, kind: EC2NodeClass, name: default }
+      requirements:
+        - { key: karpenter.sh/capacity-type, operator: In, values: ["spot", "on-demand"] }
+        - { key: kubernetes.io/arch, operator: In, values: ["arm64", "amd64"] }
+        - { key: karpenter.k8s.aws/instance-category, operator: In, values: ["c", "m", "r"] }
+        - { key: karpenter.k8s.aws/instance-generation, operator: Gt, values: ["5"] }
+  limits: { cpu: "100" }
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m
+    budgets:
+      - nodes: "10%"
+      - { nodes: "0", schedule: "0 5 * * mon-fri", duration: 9h, reasons: [Underutilized] }  # 10:00–19:00 UTC+5
+---
+# batch
+spec:
+  template:
+    spec:
+      nodeClassRef: { group: karpenter.k8s.aws, kind: EC2NodeClass, name: default }
+      taints: [{ key: workload, value: batch, effect: NoSchedule }]
+      requirements:
+        - { key: karpenter.sh/capacity-type, operator: In, values: ["spot"] }
+  limits: { cpu: "50" }
+  disruption: { consolidationPolicy: WhenEmpty, consolidateAfter: 5m }
+```
+
+</details>
+
+#### C7. Готов ли сервис к spot
+Найди проблемы и исправь:
+```yaml
+spec:
+  replicas: 1
+  template:
+    spec:
       terminationGracePeriodSeconds: 300
-```text
-```text:no-line-numbers
       containers:
-```text
-```text:no-line-numbers
         - name: api
-```text
-```text:no-line-numbers
           image: shop-api:2.3
-```text
-```text:no-line-numbers
           volumeMounts: [{ name: cache, mountPath: /cache }]    # тёплый кэш 20 ГБ, греется 15 минут
-```text
-```text:no-line-numbers
       volumes: [{ name: cache, emptyDir: {} }]
-```text
-```text:no-line-numbers
 # PDB нет, readinessProbe нет, все поды на spot одного типа в одной зоне
-```text
-### C8. Размер нод (расчёт)
+```
+
+<details><summary>Ответ</summary>
+
+Проблемы: 1 реплика (прерывание = простой) → 3+ реплики; нет PDB → `maxUnavailable: 1`;
+grace 300 с больше 2-минутного предупреждения → 30–60 с; нет readiness → под получает трафик
+до готовности, а 15 минут прогрева кэша при каждом прерывании — деградация → кэш во внешний
+Redis или прогрев в фоне с readiness; все поды на одном типе в одной зоне → spread по
+`karpenter.sh/capacity-type` и `topology.kubernetes.io/zone`, диверсификация типов,
+часть реплик — on-demand.
+
+</details>
+
+#### C8. Размер нод (расчёт)
 Поды: 30 × 0,5 vCPU и 2 × 3 vCPU. DaemonSet'ы — 0,4 vCPU на ноду. Allocatable: 2-vCPU нода —
-**1.** ,9; 4-vCPU — 3,8; 8-vCPU — 7,8. Сколько нод каждого размера нужно и сколько vCPU оплачивается?
+1,9; 4-vCPU — 3,8; 8-vCPU — 7,8. Сколько нод каждого размера нужно и сколько vCPU оплачивается?
 Какой вариант выгоднее?
 
 <details><summary>Ответ</summary>
 
-```text
-Цель 50%: база 4 / 0,5 = 8 ядер (16 подов) × 16 ч = 128 vCPU·ч
-          пик 10 / 0,5 = 20 ядер (40 подов) × 8 ч = 160 vCPU·ч      → 288 vCPU·ч/сутки
-Цель 70%: база 4 / 0,7 = 5,71 → ⌈11,4⌉ = 12 подов = 6 ядер × 16 ч = 96
-          пик 10 / 0,7 = 14,29 → ⌈28,6⌉ = 29 подов = 14,5 ядра × 8 ч = 116  → 212 vCPU·ч/сутки
-Месяц: 288 × 30 × $0,04 = $345,6;  212 × 30 × $0,04 = $254,4
-Экономия ≈ $91/мес (−26%) на одном сервисе — без изменения кода.
-```text
+```text:no-line-numbers
+Всего подов: 30 × 0,5 + 2 × 3 = 21 vCPU.
+2-vCPU: полезно 1,9 − 0,4 = 1,5 → под на 3 vCPU не влезает вообще ❌ (нужен второй пул).
+4-vCPU: полезно 3,8 − 0,4 = 3,4 → по одному 3-vCPU поду на ноду (остаток 0,4 < 0,5) = 2 ноды;
+        мелкие: 6 штук на ноду (3,0) → ⌈30 / 6⌉ = 5 нод. Итого 7 нод = 28 vCPU, накладные 2,8.
+8-vCPU: полезно 7,8 − 0,4 = 7,4 → нода 1: 3 + 3 + 2 × 0,5 = 7; ноды 2–3: по 14 × 0,5 = 7.
+        Итого 3 ноды = 24 vCPU, накладные 1,2.
+Выгоднее 8-vCPU: на 4 vCPU меньше (−14%), но blast radius — треть кластера на ноду.
+```
+
 </details>
 
-### C9. 🔑 Экономия от расписания (расчёт)
+#### C9. 🔑 Экономия от расписания (расчёт)
 Dev-кластер: 12 нод по $146/мес, из них 2 ноды — базы, которые работают 24/7.
 Окно: пн–пт 08:30–20:00. Посчитай стоимость до и после и экономию в месяц.
+
+<details><summary>Ответ</summary>
+
+```text:no-line-numbers
+До: 12 × $146 = $1 752/мес.
+Окно: 11,5 ч × 5 дней = 57,5 ч из 168 → 34,2%.
+После: 2 × $146 (базы 24/7) + 10 × $146 × 0,342 = $292 + $499 ≈ $791/мес.
+Экономия ≈ $961/мес (−55%). Если бы гасились и базы: 12 × 146 × 0,342 ≈ $599 → −66%.
+```
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** За ночь Karpenter создал 80 нод, утром — алерт бюджета. Как разбираешься
 и что добавить, чтобы не повторилось?
@@ -1060,14 +994,13 @@ expander `priority` или `least-waste`, min size GPU-группы 0.
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как автоскейлинг помогает экономить и почему иногда не помогает?
 
 <details><summary>Ответ</summary>
 
 Автоскейлинг подгоняет мощности под нагрузку: реплики (HPA/KEDA), ноды (CA/Karpenter),
-   время (расписания). Не помогает, если ноды не уходят за подами, пол и цель заданы
-   «с запасом», или узкое место — в БД.
+время (расписания). Не помогает, если ноды не уходят за подами, пол и цель заданы
+«с запасом», или узкое место — в БД.
 
 </details>
 
@@ -1076,7 +1009,7 @@ expander `priority` или `least-waste`, min size GPU-группы 0.
 <details><summary>Ответ</summary>
 
 60–75% для веба: стоимость ≈ потребление / цель; выше — дешевле, но нужен быстрый скейлинг
-   и запас нод; ниже — платишь за воздух.
+и запас нод; ниже — платишь за воздух.
 
 </details>
 
@@ -1085,6 +1018,7 @@ expander `priority` или `least-waste`, min size GPU-группы 0.
 <details><summary>Ответ</summary>
 
 Оператор, который скейлит по событиям (очереди, Prometheus, cron, 70+ источников) и умеет
+0 ↔ 1; для 1 ↔ N создаёт HPA. HPA — только метрики Metrics API и не до нуля.
 
 </details>
 
@@ -1093,7 +1027,7 @@ expander `priority` или `least-waste`, min size GPU-группы 0.
 <details><summary>Ответ</summary>
 
 На AWS/Azure — Karpenter: быстрее, подбирает дешёвый тип, consolidation, нативный spot.
-   В других облаках и on-prem — Cluster Autoscaler / автоскейлинг node pool провайдера.
+В других облаках и on-prem — Cluster Autoscaler / автоскейлинг node pool провайдера.
 
 </details>
 
@@ -1102,8 +1036,8 @@ expander `priority` или `least-waste`, min size GPU-группы 0.
 <details><summary>Ответ</summary>
 
 Постоянный поиск, как переложить поды на меньше/дешевле нод. Не сломать: PDB и несколько
-   реплик, disruption budgets по расписанию (UTC), `Balanced` для чувствительных пулов,
-   `do-not-disrupt` для хрупких задач, корректный graceful shutdown.
+реплик, disruption budgets по расписанию (UTC), `Balanced` для чувствительных пулов,
+`do-not-disrupt` для хрупких задач, корректный graceful shutdown.
 
 </details>
 
@@ -1112,7 +1046,7 @@ expander `priority` или `least-waste`, min size GPU-группы 0.
 <details><summary>Ответ</summary>
 
 Только отказоустойчивое: 3+ реплики, spread по капасити и зонам, часть на on-demand,
-   grace короче предупреждения, обработка уведомлений, диверсификация типов, stateful — не на spot.
+grace короче предупреждения, обработка уведомлений, диверсификация типов, stateful — не на spot.
 
 </details>
 
@@ -1121,7 +1055,7 @@ expander `priority` или `least-waste`, min size GPU-группы 0.
 <details><summary>Ответ</summary>
 
 KEDA cron на workload или kube-downscaler аннотацией на namespace, вместе с автоскейлером
-   нод; исключения для «нужен в субботу»; базы — отдельно; утренний подъём заранее.
+нод; исключения для «нужен в субботу»; базы — отдельно; утренний подъём заранее.
 
 </details>
 
@@ -1138,7 +1072,7 @@ KEDA cron на workload или kube-downscaler аннотацией на namespa
 <details><summary>Ответ</summary>
 
 Scale down нод заблокирован (PDB, `safe-to-evict`, локальные тома, min size),
-   поды размазаны по нодам, нет consolidation.
+поды размазаны по нодам, нет consolidation.
 
 </details>
 
@@ -1147,9 +1081,7 @@ Scale down нод заблокирован (PDB, `safe-to-evict`, локальн
 <details><summary>Ответ</summary>
 
 Компромисс: большие — меньше накладных и лучше упаковка, маленькие — мелкий шаг и меньший
-    blast radius. Обычно 4–16 vCPU, 3+ ноды; Karpenter выбирает сам.
-
----
+blast radius. Обычно 4–16 vCPU, 3+ ноды; Karpenter выбирает сам.
 
 </details>
 

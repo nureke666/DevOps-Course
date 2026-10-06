@@ -373,7 +373,7 @@ yc vpc security-group get sg-db
   Cloud Router в регионе есть.
 - Гибрид «облако РК + AWS/другой регион» — это site-to-site VPN или выделенный канал;
   первым делом согласуй непересекающиеся CIDR и реши, какой трафик (с ПДн или без)
-  вообще может ходить между площадками. Подробнее: [10_kz_clouds.md](/cloud/10-kz-clouds).
+  вообще может ходить между площадками. Подробнее: [10. Казахстанские облака](/cloud/10-kz-clouds).
 
 ---
 
@@ -411,8 +411,8 @@ yc vpc security-group get sg-db
 - При переходе в Kubernetes сетевые понятия повторяются уровнем выше:
   NetworkPolicy вместо security groups, Service/Ingress вместо балансировщика
   (см. [«13. NetworkPolicy»](/kubernetes/13-networkpolicy)).
-- Глубже по AWS-сети (VPC endpoints, Transit Gateway, ALB, Route 53): [08_aws_deep.md](/cloud/08-aws-deep);
-  по Yandex: [09_yandex_cloud.md](/cloud/09-yandex-cloud).
+- Глубже по AWS-сети (VPC endpoints, Transit Gateway, ALB, Route 53): [08. AWS глубже](/cloud/08-aws-deep);
+  по Yandex: [09. Yandex Cloud глубже](/cloud/09-yandex-cloud).
 
 ---
 

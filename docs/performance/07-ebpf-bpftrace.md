@@ -1,16 +1,16 @@
 ---
 title: "07. eBPF, bcc и bpftrace: вопросы прямо к ядру"
-description: "Блок → Deep Linux Troubleshooting & Performance → тема 07. Опирается на"
+description: "bcc-инструменты, one-liners bpftrace, экосистема (Cilium, Falco, Parca)"
 ---
 
 # 07. eBPF, bcc и bpftrace: вопросы прямо к ядру
 
 > Блок → Deep Linux Troubleshooting & Performance → тема 07. Опирается на
-> [../Linux/12_kernel.md](/linux/12-kernel) (syscalls, strace, sysctl),
-> [02_cpu_memory.md](/performance/02-cpu-memory) (perf, flame graphs), [03_disk_io.md](/performance/03-disk-io),
-> [04_network_deep.md](/performance/04-network-deep) и [05_strace_hung_processes.md](/performance/05-strace-hung-processes):
+> [Linux: 12. Ядро Linux](/linux/12-kernel) (syscalls, strace, sysctl),
+> [02. CPU и память: perf, flame graphs, OOM killer](/performance/02-cpu-memory) (perf, flame graphs), [03. Диск и I/O: latency, page cache и «куда делось место»](/performance/03-disk-io),
+> [04. Сеть глубже: очереди, TIMEWAIT, conntrack и дропы](/performance/04-network-deep) и [05. strace и зависшие процессы](/performance/05-strace-hung-processes):
 > здесь те же вопросы, но с ответом из ядра и почти без оверхеда. Классический BPF ты уже
-> видел в фильтрах tcpdump — [../Network/10_tcpdump_wireshark.md](/network/10-tcpdump-wireshark).
+> видел в фильтрах tcpdump — [Сети: 10. tcpdump и Wireshark](/network/10-tcpdump-wireshark).
 >
 > **После темы ты умеешь:** объяснить, что такое eBPF и почему он безопасен для прода;
 > выбрать bcc-инструмент под вопрос (кто запускает процессы, какие файлы не находятся,
@@ -22,7 +22,7 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  USER SPACE                                              KERNEL
  ┌──────────────────────────┐   bpf() syscall   ┌──────────────────────────────────────────┐
  │ bcc (Python, *-bpfcc)     │ ────────────────► │ verifier: безопасно? конечно? в границах?│
@@ -36,7 +36,8 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
               └──────────── maps ◄───────────────│ программа пишет в maps (hash, array,      │
                                                  │ per-CPU, ring buffer)                     │
                                                  └──────────────────────────────────────────┘
-```text
+```
+
 ---
 
 ## 1. Что такое eBPF — с точки зрения пользователя
@@ -81,7 +82,8 @@ syscall, отправка пакета, сэмпл профайлера. Про�
 sudo bpftrace -l 'tracepoint:syscalls:sys_enter_open*'   # поиск точек
 sudo bpftrace -l 'kprobe:tcp_*' | wc -l                   # сколько функций TCP можно трассировать
 sudo bpftrace -lv tracepoint:syscalls:sys_exit_read       # аргументы tracepoint (ret и др.)
-```text
+```
+
 ---
 
 ## 3. Требования и права
@@ -92,7 +94,8 @@ ls -l /sys/kernel/btf/vmlinux             # ⭐ BTF: типы ядра → CO-RE
 sysctl kernel.unprivileged_bpf_disabled   # Ubuntu: 2 → без привилегий eBPF не загрузить
 sudo bpftool prog list | head             # какие eBPF-программы УЖЕ загружены (systemd, Cilium…)
 sudo bpftool map list | head
-```text
+```
+
 | Что | Зачем |
 |-----|-------|
 | **root** или `CAP_BPF` + `CAP_PERFMON` (ядро 5.8+) | Загрузка программ и трассировка; для сетевых хуков ещё `CAP_NET_ADMIN`. До 5.8 — только `CAP_SYS_ADMIN` |
@@ -114,7 +117,7 @@ sudo bpftool map list | head
 
 ## 4. bcc: готовые инструменты под типовые вопросы
 
-```text
+```text:no-line-numbers
                         ┌───────────── приложения ─────────────┐
    execsnoop (кто стартует)   opensnoop (какие файлы)   profile / offcputime (где CPU / где ждёт)
                         ├──────── syscalls · VFS ──────────────┤
@@ -125,7 +128,8 @@ sudo bpftool map list | head
                         ├──────── планировщик ─────────────────┤
                  runqlat  runqlen  cpudist  offcputime
                         └──────────────────────────────────────┘
-```text
+```
+
 | Вопрос | Инструмент (Ubuntu) | Запуск |
 |--------|---------------------|--------|
 | Кто плодит короткоживущие процессы (их не видно в top)? | `execsnoop-bpfcc` | `sudo execsnoop-bpfcc -T` (`-x` — и неудачные exec) |
@@ -144,26 +148,26 @@ sudo bpftool map list | head
 
 ### Как это выглядит
 
-```text
+```
 # пример вывода: sudo execsnoop-bpfcc -T — cron-скрипт каждую секунду форкает curl и grep
 TIME     PCOMM            PID     PPID    RET ARGS
 14:02:11 check.sh         8120    8119      0 /opt/check.sh
 14:02:11 curl             8121    8120      0 /usr/bin/curl -s http://localhost:8080/health
 14:02:11 grep             8122    8120      0 /usr/bin/grep -q ok
-```text
+```
 Классика: `top` показывает 30% `%sys` и ни одного тяжёлого процесса, потому что процессы
 живут миллисекунды. execsnoop видит каждый.
 
-```text
+```
 # пример вывода: sudo opensnoop-bpfcc -x -p 2210 — сервис не видит конфиг
 PID    COMM               FD ERR PATH
 2210   app                -1   2 /etc/app/config.yaml
 2210   app                -1   2 /etc/app/conf.d/local.yaml
-```text
+```
 `ERR 2` = `ENOENT` (нет файла), `13` = `EACCES` (нет прав). То же, что `strace -e trace=openat -Z`,
 но без остановки процесса и по всей системе, если убрать `-p`.
 
-```text
+```text:no-line-numbers
 # пример вывода: sudo biolatency-bpfcc -D 10 1 — диск vdb с периодическими «залипаниями»
 disk = vdb
      usecs               : count     distribution
@@ -172,11 +176,11 @@ disk = vdb
        512 -> 1023       : 210      |****                                    |
       1024 -> 2047       : 12       |                                        |
     262144 -> 524287     : 38       |                                        |   ← хвост 0,26–0,5 с
-```text
+```
 Среднее `await` в `iostat` было бы «~5 мс» и не насторожило бы. Гистограмма показывает
-бимодальность: большинство I/O быстрые, но 38 запросов ждали полсекунды ([03_disk_io.md](/performance/03-disk-io)).
+бимодальность: большинство I/O быстрые, но 38 запросов ждали полсекунды ([03. Диск и I/O: latency, page cache и «куда делось место»](/performance/03-disk-io)).
 
-```text
+```
 # пример вывода: sudo runqlat-bpfcc -m 10 1 — CPU-насыщенная VM 2 vCPU
      msecs               : count     distribution
          0 -> 1          : 18210    |****************************************|
@@ -184,43 +188,44 @@ disk = vdb
          4 -> 7          : 1630     |***                                     |
          8 -> 15         : 941      |**                                      |
         16 -> 31         : 212      |                                        |
-```text
+```
 Задачи ждут ядро до 16–31 мс — прямая цена CPU saturation в латентности запросов.
 
-```text
+```
 # пример вывода: sudo tcplife-bpfcc — короткие соединения к БД без пула
 PID   COMM       LADDR           LPORT RADDR           RPORT TX_KB RX_KB MS
 3301  gunicorn   10.0.0.5        51022 10.0.0.9        5432      0     1 3.12
 3301  gunicorn   10.0.0.5        51024 10.0.0.9        5432      0     1 2.98
-```text
-Сотни соединений по 3 мс — нет пула соединений: растут TIME_WAIT и нагрузка на БД ([04_network_deep.md](/performance/04-network-deep)).
+```
+Сотни соединений по 3 мс — нет пула соединений: растут TIME_WAIT и нагрузка на БД ([04. Сеть глубже: очереди, TIMEWAIT, conntrack и дропы](/performance/04-network-deep)).
 
-```text
+```
 # пример вывода: sudo tcpretrans-bpfcc
 TIME     PID     IP LADDR:LPORT          T> RADDR:RPORT          STATE
 14:05:02 0       4  10.0.0.5:44310       R> 10.0.0.9:5432        ESTABLISHED
-```text
+```
 `PID 0` — нормально: ретрансмит по таймеру выполняет ядро в softirq, а не процесс.
 
-```text
+```
 # пример вывода: sudo oomkill-bpfcc
 Tracing OOM kills... Ctrl-C to stop.
 14:10:33 Triggered by PID 4312 ("python3"), OOM kill of PID 4312 ("python3"), 1015806 pages, loadavg: 1.02 0.61 0.30 3/211 4390
-```text
+```
 `Triggered by` — кто попросил память, `OOM kill of` — жертва; `pages` — объём памяти системы
-(totalpages), а не размер жертвы. Подробности — OOM-отчёт в `dmesg` ([02_cpu_memory.md](/performance/02-cpu-memory)).
+(totalpages), а не размер жертвы. Подробности — OOM-отчёт в `dmesg` ([02. CPU и память: perf, flame graphs, OOM killer](/performance/02-cpu-memory)).
 
 ---
 
 ## 5. bpftrace: свой вопрос одной строкой
 
-```text
+```
  probe                                /filter/             { action }
  tracepoint:syscalls:sys_enter_read   /pid == 2210/        { @[comm] = count(); }
  tracepoint:syscalls:sys_exit_read    /args.ret > 0/       { @h = hist(args.ret); }
  kretprobe:vfs_read                   /comm == "nginx"/    { @bytes = hist(retval); }
  profile:hz:99                        /pid == 2210/        { @[ustack] = count(); }
-```text
+```
+
 | Встроенное | Значение |
 |------------|----------|
 | `pid`, `tid`, `comm`, `uid` | Процесс/поток, имя, пользователь |
@@ -267,8 +272,9 @@ sudo bpftrace -e 'tracepoint:tcp:tcp_retransmit_skb { @[args.dport] = count(); }
 # 10. Печать раз в секунду вместо итога в конце
 sudo bpftrace -e 'tracepoint:raw_syscalls:sys_enter { @[comm] = count(); }
   interval:s:1 { print(@); clear(@); }'
-```text
-```text
+```
+
+```text:no-line-numbers
 # пример вывода one-liner 1 (Ctrl-C через 5 секунд)
 @[sshd]: 212
 @[systemd-journal]: 1804
@@ -280,7 +286,7 @@ sudo bpftrace -e 'tracepoint:raw_syscalls:sys_enter { @[comm] = count(); }
 [2, 4)                 0 |                                                    |
 [4, 8)             41203 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|   ← читает по 4–7 байт!
 [4K, 8K)              12 |                                                    |
-```text
+```
 Второй вывод — диагноз «читаем файл/сокет крошечными порциями без буферизации»: огромное
 число syscalls и высокий `%sys` при малом объёме данных.
 
@@ -289,7 +295,7 @@ sudo bpftrace -c 'curl -s example.com' -e 'tracepoint:syscalls:sys_enter_connect
 sudo bpftrace -p 2210 -e 'usdt:… { … }'           # -p: USDT/uprobe конкретного процесса
 ls /usr/sbin/*.bt                                 # готовые скрипты: biolatency.bt, tcpretrans.bt, oomkill.bt…
 sudo /usr/sbin/tcpconnect.bt
-```text
+```
 `cpid` — PID команды, запущенной через `-c`.
 
 ---
@@ -329,7 +335,8 @@ sudo /usr/sbin/tcpconnect.bt
 ```bash
 sudo bpftool prog list | awk '{print $2, $4}' | sort | uniq -c | sort -rn | head
 # на ноде с Cilium увидишь десятки программ типа sched_cls / xdp; systemd сам грузит cgroup_skb/cgroup_device
-```text
+```
+
 > 💡 Для дебага в Kubernetes: eBPF-инструменты запускают на **ноде** (`kubectl debug node/…
 > --profile=sysadmin` или привилегированный DaemonSet, тема 06), а фильтруют по cgroup
 > контейнера — у многих bcc-утилит есть `--cgroupmap`, у bpftrace — встроенный `cgroup`.
@@ -405,13 +412,17 @@ sudo bpftool prog list | awk '{print $2, $4}' | sort | uniq -c | sort -rn | head
 9. eBPF-инструмент в контейнере видит всё общее ядро ноды.
 10. В DevOps eBPF чаще встречается в продуктах: Cilium, Tetragon, Falco, Pixie, Parca, Beyla/OBI.
 
-➡️ Дальше: [08_practice_labs.md](/softskills/08-practice-labs) · задачи: 07_ebpf_bpftrace_tasks.md
+---
 
+## Задачи
+
+> Стенд: VM `perf-lab` из [Performance](/performance/); ⚠️ ломающие задачи — только на VM,
+> перед темой `vagrant snapshot save before_perf_07`. Все инструменты — через `sudo`;
+> bcc-утилиты называются `*-bpfcc`, bpftrace 0.20 (`args.field`). Рабочая папка — `~/perf/t07/`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Что такое eBPF своими словами? Что такое maps и почему главный принцип — «посчитай
 в ядре, отдай итог»?
@@ -593,311 +604,140 @@ RED-метрики и трейсы HTTP/gRPC из ядра без SDK. Inspektor
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```
 B1.  $ sudo biolatency -D 10 1
-```text
-<details><summary>Ответ</summary>
+     sudo: biolatency: command not found
 
-В Ubuntu утилиты bcc называются с суффиксом: `sudo biolatency-bpfcc -D 10 1`
+B2.  # one-liner из статьи 2019 года, bpftrace 0.20
+     sudo bpftrace -e 'tracepoint:syscalls:sys_enter_openat { printf("%s\n", str(args->filename)); }'
+
+B3.  # top: %sys 28%, тяжёлых процессов нет
+     $ sudo execsnoop-bpfcc -T
+     TIME     PCOMM            PID     PPID    RET ARGS
+     10:01:00 healthcheck.sh   9120    1       0   /opt/healthcheck.sh
+     10:01:00 curl             9121    9120    0   /usr/bin/curl -sf http://127.0.0.1:8080/health
+     10:01:00 jq               9122    9120    0   /usr/bin/jq -e .status
+     10:01:00 healthcheck.sh   9123    1       0   /opt/healthcheck.sh
+     …                                             (≈ 300 строк в секунду)
+
+B4.  $ sudo opensnoop-bpfcc -x -n app
+     PID    COMM               FD ERR PATH
+     4410   app                -1  13 /var/lib/app/data.db
+     4410   app                -1  13 /var/lib/app/data.db-wal
+
+B5.  # iostat: vdb r_await 4,8 мс — «диск в норме»; пользователи жалуются на редкие зависания
+     $ sudo biolatency-bpfcc -D -m 30 1
+     disk = vdb
+          msecs               : count     distribution
+              0 -> 1          : 9120     |****************************************|
+              2 -> 3          : 1210     |*****                                   |
+              4 -> 7          : 402      |*                                       |
+            256 -> 511        : 61       |                                        |
+            512 -> 1023       : 9        |                                        |
+
+B6.  # 4 vCPU, mpstat all: 60% usr — «CPU не узкое место»
+     $ sudo runqlat-bpfcc -m 10 1
+          msecs               : count     distribution
+              0 -> 1          : 40210    |****************************************|
+              2 -> 3          : 6120     |******                                  |
+              4 -> 7          : 3302     |***                                     |
+              8 -> 15         : 1840     |*                                       |
+             16 -> 31         : 920      |                                        |
+             32 -> 63         : 310      |                                        |
+             64 -> 127        : 42       |                                        |
+
+B7.  $ sudo tcplife-bpfcc | head -4
+     PID   COMM       LADDR           LPORT RADDR           RPORT TX_KB RX_KB MS
+     2210  php-fpm    10.0.0.5        40112 10.0.0.12       6379      0     0 1.85
+     2211  php-fpm    10.0.0.5        40114 10.0.0.12       6379      0     0 1.91
+     2212  php-fpm    10.0.0.5        40116 10.0.0.12       6379      0     0 1.77
+     # …и так 4000 строк в секунду
+
+B8.  $ sudo tcpconnect-bpfcc
+     modprobe: FATAL: Module kheaders not found in directory /lib/modules/6.8.0-45-generic
+     chdir(/lib/modules/6.8.0-45-generic/build): No such file or directory
+
+B9.  # тот же скрипт работал на старой ноде, на новой — предупреждение и нет событий
+     $ sudo bpftrace -e 'kprobe:tcp_v4_do_rcv_old { @ = count(); }'
+     WARNING: tcp_v4_do_rcv_old is not traceable (either non-existing, inlined, or marked as "notrace"); attaching to it will likely fail
+
+B10. # внутри обычного (непривилегированного) контейнера
+     $ bpftrace -e 'tracepoint:raw_syscalls:sys_enter { @[comm] = count(); }'
+     ERROR: … Operation not permitted
+
+B11. # нагруженный прод, 200 тыс. syscalls в секунду
+     $ sudo bpftrace -e 'tracepoint:raw_syscalls:sys_enter { printf("%s %d\n", comm, args.id); }'
+     …
+     Lost 1834112 events
+
+B12. $ sudo oomkill-bpfcc
+     03:12:44 Triggered by PID 991 ("nginx"), OOM kill of PID 4312 ("java"), 1015806 pages, loadavg: 7.80 3.10 1.20 9/412 5021
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** В Ubuntu утилиты bcc называются с суффиксом: `sudo biolatency-bpfcc -D 10 1`
 (`ls /usr/sbin/*-bpfcc`). Либо bpftrace-версия `/usr/sbin/biolatency.bt`.
 
-</details>
-
-```text:no-line-numbers
-     sudo: biolatency: command not found
-```text
-```text:no-line-numbers
-B2.  # one-liner из статьи 2019 года, bpftrace 0.20
-```text
-<details><summary>Ответ</summary>
-
-Старый синтаксис `args->filename`: в bpftrace 0.20 правильно `args.filename`; стрелка
+**B2.** Старый синтаксис `args->filename`: в bpftrace 0.20 правильно `args.filename`; стрелка
 устарела и в зависимости от версии даёт предупреждение или ошибку. Переписать:
 `printf("%s\n", str(args.filename))`, аргументы смотреть через `bpftrace -lv`.
 
-</details>
-
-```text:no-line-numbers
-     sudo bpftrace -e 'tracepoint:syscalls:sys_enter_openat { printf("%s\n", str(args->filename)); }'
-```text
-```text:no-line-numbers
-B3.  # top: %sys 28%, тяжёлых процессов нет
-```text
-<details><summary>Ответ</summary>
-
-Healthcheck-скрипт, который кто-то (PPID 1 — systemd-таймер или цикл) запускает ~100 раз
+**B3.** Healthcheck-скрипт, который кто-то (PPID 1 — systemd-таймер или цикл) запускает ~100 раз
 в секунду, и каждый запуск форкает curl и jq. Процессы живут миллисекунды, `top` их не видит,
 а fork/exec дают `%sys`. Найти источник (юнит/таймер, `systemctl status`), сделать проверку
 реже или встроить её в сам сервис.
 
-</details>
-
-```text:no-line-numbers
-     $ sudo execsnoop-bpfcc -T
-```text
-```text:no-line-numbers
-     TIME     PCOMM            PID     PPID    RET ARGS
-```text
-```text:no-line-numbers
-     10:01:00 healthcheck.sh   9120    1       0   /opt/healthcheck.sh
-```text
-```text:no-line-numbers
-     10:01:00 curl             9121    9120    0   /usr/bin/curl -sf http://127.0.0.1:8080/health
-```text
-```text:no-line-numbers
-     10:01:00 jq               9122    9120    0   /usr/bin/jq -e .status
-```text
-```text:no-line-numbers
-     10:01:00 healthcheck.sh   9123    1       0   /opt/healthcheck.sh
-```text
-```text:no-line-numbers
-     …                                             (≈ 300 строк в секунду)
-```text
-```text:no-line-numbers
-B4.  $ sudo opensnoop-bpfcc -x -n app
-```text
-<details><summary>Ответ</summary>
-
-`ERR 13` = `EACCES`: у процесса `app` нет прав на базу и её WAL (владелец/права каталога,
+**B4.** `ERR 13` = `EACCES`: у процесса `app` нет прав на базу и её WAL (владелец/права каталога,
 AppArmor). Проверить `ls -l /var/lib/app`, пользователя сервиса (`ps -o user= -p 4410`),
 `namei -l /var/lib/app/data.db`, `journalctl -k | grep -i apparmor`.
 
-</details>
-
-```text:no-line-numbers
-     PID    COMM               FD ERR PATH
-```text
-```text:no-line-numbers
-     4410   app                -1  13 /var/lib/app/data.db
-```text
-```text:no-line-numbers
-     4410   app                -1  13 /var/lib/app/data.db-wal
-```text
-```text:no-line-numbers
-B5.  # iostat: vdb r_await 4,8 мс — «диск в норме»; пользователи жалуются на редкие зависания
-```text
-<details><summary>Ответ</summary>
-
-Бимодальность: большинство I/O быстрые, но 70 запросов за 30 с ждали 0,26–1 с — эти
+**B5.** Бимодальность: большинство I/O быстрые, но 70 запросов за 30 с ждали 0,26–1 с — эти
 редкие зависания пользователи и видят; среднее 4,8 мс их прячет. Дальше: `biosnoop-bpfcc -Q`
 (какие процессы, какие операции, чтение или запись/flush), время — совпадает ли с writeback,
 бэкапом, compaction; облачный диск — не упирается ли в burst/лимит IOPS.
 
-</details>
-
-```text:no-line-numbers
-     $ sudo biolatency-bpfcc -D -m 30 1
-```text
-```text:no-line-numbers
-     disk = vdb
-```text
-```text:no-line-numbers
-          msecs               : count     distribution
-```text
-```text:no-line-numbers
-              0 -> 1          : 9120     |****************************************|
-```text
-```text:no-line-numbers
-              2 -> 3          : 1210     |*****                                   |
-```text
-```text:no-line-numbers
-              4 -> 7          : 402      |*                                       |
-```text
-```text:no-line-numbers
-            256 -> 511        : 61       |                                        |
-```text
-```text:no-line-numbers
-            512 -> 1023       : 9        |                                        |
-```text
-```text:no-line-numbers
-B6.  # 4 vCPU, mpstat all: 60% usr — «CPU не узкое место»
-```text
-<details><summary>Ответ</summary>
-
-Среднее 60% прячет saturation: заметная доля пробуждений ждёт CPU 8–127 мс, то есть
+**B6.** Среднее 60% прячет saturation: заметная доля пробуждений ждёт CPU 8–127 мс, то есть
 на пиках задачи стоят в run queue десятки миллисекунд — это прямо добавляется к latency.
 Смотреть `runqlat -P` (кто страдает), `mpstat -P ALL` (дисбаланс ядер), throttling контейнеров;
 лечить — больше ядер/подов, меньше потоков, убрать соседей.
 
-</details>
-
-```text:no-line-numbers
-     $ sudo runqlat-bpfcc -m 10 1
-```text
-```text:no-line-numbers
-          msecs               : count     distribution
-```text
-```text:no-line-numbers
-              0 -> 1          : 40210    |****************************************|
-```text
-```text:no-line-numbers
-              2 -> 3          : 6120     |******                                  |
-```text
-```text:no-line-numbers
-              4 -> 7          : 3302     |***                                     |
-```text
-```text:no-line-numbers
-              8 -> 15         : 1840     |*                                       |
-```text
-```text:no-line-numbers
-             16 -> 31         : 920      |                                        |
-```text
-```text:no-line-numbers
-             32 -> 63         : 310      |                                        |
-```text
-```text:no-line-numbers
-             64 -> 127        : 42       |                                        |
-```text
-```text:no-line-numbers
-B7.  $ sudo tcplife-bpfcc | head -4
-```text
-<details><summary>Ответ</summary>
-
-Каждый запрос php-fpm открывает новое соединение к Redis на ~2 мс и закрывает: 4000
+**B7.** Каждый запрос php-fpm открывает новое соединение к Redis на ~2 мс и закрывает: 4000
 соединений в секунду — TIME_WAIT, эфемерные порты, нагрузка на Redis и лишние RTT на хендшейк.
 Нужны persistent-соединения (`pconnect`) или пул.
 
-</details>
-
-```text:no-line-numbers
-     PID   COMM       LADDR           LPORT RADDR           RPORT TX_KB RX_KB MS
-```text
-```text:no-line-numbers
-     2210  php-fpm    10.0.0.5        40112 10.0.0.12       6379      0     0 1.85
-```text
-```text:no-line-numbers
-     2211  php-fpm    10.0.0.5        40114 10.0.0.12       6379      0     0 1.91
-```text
-```text:no-line-numbers
-     2212  php-fpm    10.0.0.5        40116 10.0.0.12       6379      0     0 1.77
-```text
-```text:no-line-numbers
-     # …и так 4000 строк в секунду
-```text
-```text:no-line-numbers
-B8.  $ sudo tcpconnect-bpfcc
-```text
-<details><summary>Ответ</summary>
-
-bcc не нашёл заголовков ядра: нет ни модуля `kheaders`, ни каталога `build`.
+**B8.** bcc не нашёл заголовков ядра: нет ни модуля `kheaders`, ни каталога `build`.
 Поставить `linux-headers-$(uname -r)` или использовать libbpf-tools/bpftrace, которым хватает BTF.
 
-</details>
-
-```text:no-line-numbers
-     modprobe: FATAL: Module kheaders not found in directory /lib/modules/6.8.0-45-generic
-```text
-```text:no-line-numbers
-     chdir(/lib/modules/6.8.0-45-generic/build): No such file or directory
-```text
-```text:no-line-numbers
-B9.  # тот же скрипт работал на старой ноде, на новой — предупреждение и нет событий
-```text
-<details><summary>Ответ</summary>
-
-Функции с таким именем в новом ядре нет (переименована, заинлайнена или помечена
+**B9.** Функции с таким именем в новом ядре нет (переименована, заинлайнена или помечена
 `notrace`) — kprobe-скрипты ломаются между версиями. Найти замену через
 `bpftrace -l 'kprobe:tcp_v4*'`, а лучше перейти на tracepoint (`tcp:*`, `sock:*`) или `kfunc`.
 
-</details>
-
-```text:no-line-numbers
-     $ sudo bpftrace -e 'kprobe:tcp_v4_do_rcv_old { @ = count(); }'
-```text
-```text:no-line-numbers
-     WARNING: tcp_v4_do_rcv_old is not traceable (either non-existing, inlined, or marked as "notrace"); attaching to it will likely fail
-```text
-```text:no-line-numbers
-B10.  # внутри обычного (непривилегированного) контейнера
-```text
-<details><summary>Ответ</summary>
-
-Загрузка eBPF требует привилегий: в непривилегированном контейнере нет `CAP_BPF`/
+**B10.** Загрузка eBPF требует привилегий: в непривилегированном контейнере нет `CAP_BPF`/
 `CAP_PERFMON` (и Ubuntu запрещает непривилегированный `bpf()`). Запускать на ноде
 (`kubectl debug node/… --profile=sysadmin`, привилегированный DaemonSet) или дать контейнеру
 нужные capabilities осознанно.
 
-</details>
-
-```text:no-line-numbers
-     $ bpftrace -e 'tracepoint:raw_syscalls:sys_enter { @[comm] = count(); }'
-```text
-```text:no-line-numbers
-     ERROR: … Operation not permitted
-```text
-```text:no-line-numbers
-B11.  # нагруженный прод, 200 тыс. syscalls в секунду
-```text
-<details><summary>Ответ</summary>
-
-`printf` на каждое из сотен тысяч событий в секунду: буфер переполнился (потеряно 1,8 млн
+**B11.** `printf` на каждое из сотен тысяч событий в секунду: буфер переполнился (потеряно 1,8 млн
 событий), CPU уходит на вывод, сервис замедляется. Нужно агрегировать в ядре
 (`@[comm, args.id] = count();`), фильтровать по процессу и ограничить время (`interval:s:10 { exit(); }`).
 
-</details>
-
-```text:no-line-numbers
-     $ sudo bpftrace -e 'tracepoint:raw_syscalls:sys_enter { printf("%s %d\n", comm, args.id); }'
-```text
-```text:no-line-numbers
-     …
-```text
-```text:no-line-numbers
-     Lost 1834112 events
-```text
-```text:no-line-numbers
-B12.  $ sudo oomkill-bpfcc
-```text
-<details><summary>Ответ</summary>
-
-Память попросил nginx (PID 991), а убит java (PID 4312) — у него максимальный badness.
+**B12.** Память попросил nginx (PID 991), а убит java (PID 4312) — у него максимальный badness.
 Инициатор OOM не обязательно виновник. `pages` — общий объём памяти системы (totalpages), не
 размер жертвы. Детали — в OOM-отчёте `dmesg` (таблица задач, `constraint`).
 
 </details>
 
-```text:no-line-numbers
-     03:12:44 Triggered by PID 991 ("nginx"), OOM kill of PID 4312 ("java"), 1015806 pages, loadavg: 7.80 3.10 1.20 9/412 5021
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Проверка стенда
-**1.** `uname -r`, `ls -l /sys/kernel/btf/vmlinux`, `sysctl kernel.unprivileged_bpf_disabled`.
-
-<details><summary>Ответ</summary>
-
-Ядро 6.x (у GA-ядра Ubuntu 24.04 — 6.8), файл BTF на месте, `unprivileged_bpf_disabled = 2`. В списке
-программ — `cgroup_device` и `cgroup_skb` от systemd, после установки Docker — ещё программы
-для cgroups контейнеров. Без sudo bpftrace завершается ошибкой прав.
-
-</details>
-
-**2.** `sudo bpftool prog list | head -20` и подсчёт по типам:
+#### C1. 🔑 Проверка стенда
+1. `uname -r`, `ls -l /sys/kernel/btf/vmlinux`, `sysctl kernel.unprivileged_bpf_disabled`.
+2. `sudo bpftool prog list | head -20` и подсчёт по типам:
    `sudo bpftool prog list | grep -oE '^[0-9]+: [a-z_]+' | awk '{print $2}' | sort | uniq -c`.
    Кто уже загрузил программы (systemd, Docker)?
-
-<details><summary>Ответ</summary>
-
-В `top` виновника почти не видно (процессы живут миллисекунды), `%sys` заметно вырос.
-execsnoop показывает непрерывный поток `date` и `id` с одним PPID — PID нашего шелла; `wc -l`
-за 5 с — тысячи exec (сотни–тысяча в секунду).
-
-</details>
-
-**3.** Убедись, что без sudo eBPF не работает: `bpftrace -e 'BEGIN { exit(); }'`.
-
-<details><summary>Ответ</summary>
-
-) Латентность read у fio — сотни мкс–мс (прямой I/O ждёт диск), у прочих процессов — единицы мкс.
-
-</details>
-
-### C2. 🔑 Невидимый «форкальщик»
-**1.** Запусти скрытую нагрузку: `while true; do /usr/bin/date >/dev/null; /usr/bin/id >/dev/null; done &`.
+3. Убедись, что без sudo eBPF не работает: `bpftrace -e 'BEGIN { exit(); }'`.
 
 <details><summary>Ответ</summary>
 
@@ -907,202 +747,151 @@ execsnoop показывает непрерывный поток `date` и `id` 
 
 </details>
 
-**2.** Посмотри `top` 10 секунд: видно ли виновника? Сколько `%sys`?
-
-<details><summary>Ответ</summary>
-
-В `top` виновника почти не видно (процессы живут миллисекунды), `%sys` заметно вырос.
-execsnoop показывает непрерывный поток `date` и `id` с одним PPID — PID нашего шелла; `wc -l`
-за 5 с — тысячи exec (сотни–тысяча в секунду).
-
-</details>
-
-**3.** `sudo execsnoop-bpfcc -T` — кто запускается и кто родитель. Посчитай exec в секунду:
+#### C2. 🔑 Невидимый «форкальщик»
+1. Запусти скрытую нагрузку: `while true; do /usr/bin/date >/dev/null; /usr/bin/id >/dev/null; done &`.
+2. Посмотри `top` 10 секунд: видно ли виновника? Сколько `%sys`?
+3. `sudo execsnoop-bpfcc -T` — кто запускается и кто родитель. Посчитай exec в секунду:
    `sudo timeout 5 execsnoop-bpfcc | wc -l`. Убери нагрузку (`kill %1`).
 
 <details><summary>Ответ</summary>
 
-) Латентность read у fio — сотни мкс–мс (прямой I/O ждёт диск), у прочих процессов — единицы мкс.
-
-</details>
-
-### C3. 🔑 Файлы, которых нет
-**1.** `while true; do python3 -c "open('/etc/app/config.yaml')" 2>/dev/null; sleep 1; done &`.
-
-<details><summary>Ответ</summary>
-
-Ядро 6.x (у GA-ядра Ubuntu 24.04 — 6.8), файл BTF на месте, `unprivileged_bpf_disabled = 2`. В списке
-программ — `cgroup_device` и `cgroup_skb` от systemd, после установки Docker — ещё программы
-для cgroups контейнеров. Без sudo bpftrace завершается ошибкой прав.
-
-</details>
-
-**2.** `sudo opensnoop-bpfcc -x` — найди ошибку и её код.
-
-<details><summary>Ответ</summary>
-
 В `top` виновника почти не видно (процессы живут миллисекунды), `%sys` заметно вырос.
 execsnoop показывает непрерывный поток `date` и `id` с одним PPID — PID нашего шелла; `wc -l`
 за 5 с — тысячи exec (сотни–тысяча в секунду).
 
 </details>
 
-**3.** То же через strace: `strace -f -e trace=openat -Z python3 -c "open('/etc/app/config.yaml')"`.
+#### C3. 🔑 Файлы, которых нет
+1. `while true; do python3 -c "open('/etc/app/config.yaml')" 2>/dev/null; sleep 1; done &`.
+2. `sudo opensnoop-bpfcc -x` — найди ошибку и её код.
+3. То же через strace: `strace -f -e trace=openat -Z python3 -c "open('/etc/app/config.yaml')"`.
    Чем подходы отличаются для работающего сервиса?
 
 <details><summary>Ответ</summary>
 
-) Латентность read у fio — сотни мкс–мс (прямой I/O ждёт диск), у прочих процессов — единицы мкс.
+opensnoop печатает `python3 … -1 2 /etc/app/config.yaml` — `ERR 2` = `ENOENT`. strace
+с `-Z` показывает `openat(AT_FDCWD, "/etc/app/config.yaml", O_RDONLY|O_CLOEXEC) = -1 ENOENT`.
+strace останавливает процесс на каждом syscall и нужен PID или запуск под ним; opensnoop не
+тормозит сервис и видит все процессы сразу.
 
 </details>
 
-### C4. 🔑 Хвост латентности диска
-```text:no-line-numbers
+#### C4. 🔑 Хвост латентности диска
+```bash
 mkdir -p ~/perf/t07
-```text
-```text:no-line-numbers
 fio --name=rr --filename=/var/tmp/fio.dat --size=512M --rw=randread --bs=4k --direct=1 \
-```text
-```text:no-line-numbers
     --ioengine=libaio --iodepth=16 --runtime=40 --time_based --group_reporting &
-```text
+```
 Во время теста: `sudo biolatency-bpfcc -D 10 1`, `sudo biosnoop-bpfcc -Q | head -20`, `iostat -xz 1 3`.
 Сравни среднее `r_await` из iostat с гистограммой и перцентилями `clat` из вывода fio.
 
-### C5. Цена CPU saturation в миллисекундах
-**1.** `sudo runqlat-bpfcc -m 10 1` на спокойной VM.
-
 <details><summary>Ответ</summary>
 
-Ядро 6.x (у GA-ядра Ubuntu 24.04 — 6.8), файл BTF на месте, `unprivileged_bpf_disabled = 2`. В списке
-программ — `cgroup_device` и `cgroup_skb` от systemd, после установки Docker — ещё программы
-для cgroups контейнеров. Без sudo bpftrace завершается ошибкой прав.
+biolatency для устройства с `/var/tmp` (vda) — основная масса в сотнях мкс–единицах мс
+и хвост; biosnoop показывает `fio` с операциями `R` по 4096 байт и задержками. Среднее `r_await`
+iostat близко к среднему fio, но перцентили `clat` (p99, p99.9) и хвост гистограммы заметно выше
+среднего — ради этого и нужны гистограммы.
 
 </details>
 
-**2.** `stress-ng --cpu 4 --timeout 60s &` и снова `runqlat`. Как сдвинулась гистограмма?
+#### C5. Цена CPU saturation в миллисекундах
+1. `sudo runqlat-bpfcc -m 10 1` на спокойной VM.
+2. `stress-ng --cpu 4 --timeout 60s &` и снова `runqlat`. Как сдвинулась гистограмма?
+3. Добавь `-P` — у каких PID хвост длиннее?
 
 <details><summary>Ответ</summary>
 
-В `top` виновника почти не видно (процессы живут миллисекунды), `%sys` заметно вырос.
-execsnoop показывает непрерывный поток `date` и `id` с одним PPID — PID нашего шелла; `wc -l`
-за 5 с — тысячи exec (сотни–тысяча в секунду).
+На спокойной VM почти всё в `0 -> 1` мс. Под `stress-ng --cpu 4` на 2 vCPU гистограмма
+сдвигается вправо: появляются корзины 4–7, 8–15, 16–31 мс (задачи ждут квант). С `-P` длинный хвост
+у воркеров `stress-ng` и у всех остальных процессов, которым не хватает CPU.
 
 </details>
 
-**3.** Добавь `-P` — у каких PID хвост длиннее?
-
-<details><summary>Ответ</summary>
-
-) Латентность read у fio — сотни мкс–мс (прямой I/O ждёт диск), у прочих процессов — единицы мкс.
-
-</details>
-
-### C6. Жизнь TCP-соединений
-**1.** `python3 -m http.server 8000 &` и `for i in $(seq 200); do curl -s -o /dev/null localhost:8000/; done`.
-
-<details><summary>Ответ</summary>
-
-Ядро 6.x (у GA-ядра Ubuntu 24.04 — 6.8), файл BTF на месте, `unprivileged_bpf_disabled = 2`. В списке
-программ — `cgroup_device` и `cgroup_skb` от systemd, после установки Docker — ещё программы
-для cgroups контейнеров. Без sudo bpftrace завершается ошибкой прав.
-
-</details>
-
-**2.** Параллельно `sudo tcplife-bpfcc -T` и `sudo tcpconnect-bpfcc -t`. Сколько живёт соединение,
+#### C6. Жизнь TCP-соединений
+1. `python3 -m http.server 8000 &` и `for i in $(seq 200); do curl -s -o /dev/null localhost:8000/; done`.
+2. Параллельно `sudo tcplife-bpfcc -T` и `sudo tcpconnect-bpfcc -t`. Сколько живёт соединение,
    сколько байт передано? Как бы ты объяснил разработчику, зачем пул соединений?
 
 <details><summary>Ответ</summary>
 
-В `top` виновника почти не видно (процессы живут миллисекунды), `%sys` заметно вырос.
-execsnoop показывает непрерывный поток `date` и `id` с одним PPID — PID нашего шелла; `wc -l`
-за 5 с — тысячи exec (сотни–тысяча в секунду).
+tcplife: соединения по единицам миллисекунд, `TX_KB`/`RX_KB` — 0–1 КБ, на каждый запрос —
+новое соединение (HTTP/1.0 `http.server`). tcpconnect показывает каждый `connect()` curl к
+127.0.0.1:8000. Объяснение: каждое соединение — хендшейк (RTT), TIME_WAIT, порт, работа сервера;
+пул переиспользует соединение для тысяч запросов.
 
 </details>
 
-### C7. 🔑 bpftrace one-liners на живой нагрузке
-**1.** Кто делает больше всего syscalls: запусти `dd if=/dev/zero of=/dev/null bs=1 count=2000000 &`
+#### C7. 🔑 bpftrace one-liners на живой нагрузке
+1. Кто делает больше всего syscalls: запусти `dd if=/dev/zero of=/dev/null bs=1 count=2000000 &`
    и one-liner 1 из конспекта на 5 секунд.
-
-<details><summary>Ответ</summary>
-
-Ядро 6.x (у GA-ядра Ubuntu 24.04 — 6.8), файл BTF на месте, `unprivileged_bpf_disabled = 2`. В списке
-программ — `cgroup_device` и `cgroup_skb` от systemd, после установки Docker — ещё программы
-для cgroups контейнеров. Без sudo bpftrace завершается ошибкой прав.
-
-</details>
-
-**2.** Гистограмма read(): `dd if=/etc/services of=/dev/null bs=1 &` (в цикле) и one-liner 3 —
+2. Гистограмма read(): `dd if=/etc/services of=/dev/null bs=1 &` (в цикле) и one-liner 3 —
    что видно у `dd`?
+3. Латентность read() (one-liner 4) во время C4: какие значения у fio?
+4. One-liner 10 (печать раз в секунду) — останови через 5 секунд.
 
 <details><summary>Ответ</summary>
 
-В `top` виновника почти не видно (процессы живут миллисекунды), `%sys` заметно вырос.
-execsnoop показывает непрерывный поток `date` и `id` с одним PPID — PID нашего шелла; `wc -l`
-за 5 с — тысячи exec (сотни–тысяча в секунду).
+1\) В топе `dd` с сотнями тысяч syscalls в секунду (read+write по 1 байту). 2) В гистограмме
+у `dd` все чтения в корзине `[1]` — по одному байту: огромное число syscalls на крошечный объём.
+3) Латентность read у fio — сотни мкс–мс (прямой I/O ждёт диск), у прочих процессов — единицы мкс.
+4) Раз в секунду печатается и очищается таблица счётчиков.
 
 </details>
 
-**3.** Латентность read() (one-liner 4) во время C4: какие значения у fio?
-
-<details><summary>Ответ</summary>
-
-) Латентность read у fio — сотни мкс–мс (прямой I/O ждёт диск), у прочих процессов — единицы мкс.
-
-</details>
-
-**4.** One-liner 10 (печать раз в секунду) — останови через 5 секунд.
-
-<details><summary>Ответ</summary>
-
-) Раз в секунду печатается и очищается таблица счётчиков.
-
-</details>
-
-### C8. Flame graph из eBPF
-Повтори профилирование лабы 1 ([08_practice_labs.md](/softskills/08-practice-labs)) через
+#### C8. Flame graph из eBPF
+Повтори профилирование лабы 1 ([08. Практика: 6 инцидентов на стенде](/performance/08-practice-labs)) через
 `sudo profile-bpfcc -F 99 -f -p PID 30 > bpf.folded` и `~/FlameGraph/flamegraph.pl bpf.folded > bpf.svg`.
 Затем снимите off-CPU профиль того же процесса: `sudo offcputime-bpfcc -f -p PID 30 > off.folded`.
 Чем отличаются картинки?
 
-### C9. OOM глазами eBPF
-**1.** В одном окне `sudo oomkill-bpfcc`.
+<details><summary>Ответ</summary>
+
+On-CPU профиль (profile) показывает, где процесс тратит CPU: `checksum`, функции SHA-256.
+Off-CPU (offcputime) — где потоки спят и ждут: `accept`/`select` в HTTP-сервере, ожидание GIL
+(futex), сетевой ввод-вывод. Вместе они отвечают на «почему медленно»: считает или ждёт.
+
+</details>
+
+#### C9. OOM глазами eBPF
+1. В одном окне `sudo oomkill-bpfcc`.
+2. В другом: `sudo systemd-run --unit=oomt -p MemoryMax=100M python3 -c "x=[b'x'*(10<<20) for _ in range(50)]"`.
+3. Сравни строку oomkill с отчётом в `sudo dmesg -T | tail -20`. `sudo systemctl reset-failed oomt`.
 
 <details><summary>Ответ</summary>
 
-Ядро 6.x (у GA-ядра Ubuntu 24.04 — 6.8), файл BTF на месте, `unprivileged_bpf_disabled = 2`. В списке
-программ — `cgroup_device` и `cgroup_skb` от systemd, после установки Docker — ещё программы
-для cgroups контейнеров. Без sudo bpftrace завершается ошибкой прав.
+oomkill печатает строку `Triggered by PID … ("python3"), OOM kill of PID … ("python3")`;
+в `dmesg` — полный отчёт с `constraint=CONSTRAINT_MEMCG` и `oom_memcg=/system.slice/oomt.service`.
+Инструмент удобен для «живой ленты» OOM по всем нодам, отчёт — для разбора причин.
 
 </details>
 
-**2.** В другом: `sudo systemd-run --unit=oomt -p MemoryMax=100M python3 -c "x=[b'x'*(10<&lt;20) for _ in range(50)]"`.
-
-<details&gt;<summary>Ответ</summary>
-
-В `top` виновника почти не видно (процессы живут миллисекунды), `%sys` заметно вырос.
-execsnoop показывает непрерывный поток `date` и `id` с одним PPID — PID нашего шелла; `wc -l`
-за 5 с — тысячи exec (сотни–тысяча в секунду).
-
-</details>
-
-**3.** Сравни строку oomkill с отчётом в `sudo dmesg -T | tail -20`. `sudo systemctl reset-failed oomt`.
-
-<details><summary>Ответ</summary>
-
-) Латентность read у fio — сотни мкс–мс (прямой I/O ждёт диск), у прочих процессов — единицы мкс.
-
-</details>
-
-### C10. Свой bpftrace-скрипт
+#### C10. Свой bpftrace-скрипт
 Напиши `~/perf/t07/openat_lat.bt`: гистограмма латентности `openat()` в микросекундах по имени
 процесса, сам завершается через 10 секунд. Запусти и прогони что-нибудь, что открывает много
 файлов (`find /usr -name '*.py' > /dev/null`).
 
+<details><summary>Ответ</summary>
+
+```
+#!/usr/bin/env bpftrace
+// ~/perf/t07/openat_lat.bt — латентность openat() в мкс по процессам, 10 секунд
+tracepoint:syscalls:sys_enter_openat { @start[tid] = nsecs; }
+
+tracepoint:syscalls:sys_exit_openat /@start[tid]/ {
+  @us[comm] = hist((nsecs - @start[tid]) / 1000);
+  delete(@start[tid]);
+}
+
+interval:s:10 { clear(@start); exit(); }
+```
+`sudo bpftrace ~/perf/t07/openat_lat.bt` — через 10 секунд печатаются гистограммы; у `find`
+большинство openat в единицах мкс (метаданные в кэше), холодные — дольше.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Сервер: 25% `%sys`, в `top` ничего тяжёлого, LA умеренный. Что предполагаешь и чем проверишь?
 
@@ -1196,15 +985,14 @@ uprobe на `malloc` срабатывает на каждом вызове — �
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое eBPF и почему он безопасен?
 
 <details><summary>Ответ</summary>
 
 Технология выполнения небольших программ в ядре по событиям (функции ядра, syscalls, пакеты,
-   профайлер) с агрегацией в maps. Безопасна, потому что verifier до загрузки проверяет
-   ограниченность циклов, доступ к памяти и разрешённые вызовы; ядро не уронить, как модулем.
-   JIT делает её быстрой.
+профайлер) с агрегацией в maps. Безопасна, потому что verifier до загрузки проверяет
+ограниченность циклов, доступ к памяти и разрешённые вызовы; ядро не уронить, как модулем.
+JIT делает её быстрой.
 
 </details>
 
@@ -1213,8 +1001,8 @@ uprobe на `malloc` срабатывает на каждом вызове — �
 <details><summary>Ответ</summary>
 
 strace останавливает процесс на каждом syscall и замедляет его в разы; eBPF считает в ядре
-   и отдаёт агрегаты — оверхед маленький, можно смотреть всю систему сразу, и видно не только
-   syscalls, но и диск, сеть, планировщик, off-CPU.
+и отдаёт агрегаты — оверхед маленький, можно смотреть всю систему сразу, и видно не только
+syscalls, но и диск, сеть, планировщик, off-CPU.
 
 </details>
 
@@ -1223,8 +1011,8 @@ strace останавливает процесс на каждом syscall и з
 <details><summary>Ответ</summary>
 
 execsnoop (короткоживущие процессы), opensnoop (открытие файлов, ошибки), biolatency/biosnoop
-   (латентность диска), runqlat (ожидание CPU), tcpconnect/tcplife/tcpretrans (TCP), cachestat
-   (page cache), oomkill (OOM), profile/offcputime (on/off-CPU flame graphs).
+(латентность диска), runqlat (ожидание CPU), tcpconnect/tcplife/tcpretrans (TCP), cachestat
+(page cache), oomkill (OOM), profile/offcputime (on/off-CPU flame graphs).
 
 </details>
 
@@ -1233,8 +1021,8 @@ execsnoop (короткоживущие процессы), opensnoop (откры
 <details><summary>Ответ</summary>
 
 Tracepoint — статическая точка в ядре со стабильным форматом аргументов; kprobe — динамическая
-   точка на любой функции ядра: гибче, но зависит от версии и может сломаться.
-   По возможности — tracepoint.
+точка на любой функции ядра: гибче, но зависит от версии и может сломаться.
+По возможности — tracepoint.
 
 </details>
 
@@ -1243,8 +1031,8 @@ Tracepoint — статическая точка в ядре со стабиль
 <details><summary>Ответ</summary>
 
 Достаточно свежее ядро (5.8+), BTF (`/sys/kernel/btf/vmlinux`) для CO-RE и bpftrace, права root
-   или `CAP_BPF` + `CAP_PERFMON`, для bcc — заголовки ядра; в Kubernetes — привилегированный под
-   на ноде или `kubectl debug node/… --profile=sysadmin`.
+или `CAP_BPF` + `CAP_PERFMON`, для bcc — заголовки ядра; в Kubernetes — привилегированный под
+на ноде или `kubectl debug node/… --profile=sysadmin`.
 
 </details>
 
@@ -1253,7 +1041,7 @@ Tracepoint — статическая точка в ядре со стабиль
 <details><summary>Ответ</summary>
 
 `execsnoop-bpfcc` показывает каждый exec с родителем и аргументами; дополнительно — счётчик
-   exec в секунду и `%sys` в mpstat.
+exec в секунду и `%sys` в mpstat.
 
 </details>
 
@@ -1262,7 +1050,7 @@ Tracepoint — статическая точка в ядре со стабиль
 <details><summary>Ответ</summary>
 
 `biolatency-bpfcc -D` — гистограмма по дискам; `biosnoop-bpfcc` — каждый I/O с процессом
-   и задержкой; в fio — перцентили `clat`.
+и задержкой; в fio — перцентили `clat`.
 
 </details>
 
@@ -1279,8 +1067,8 @@ Tracepoint — статическая точка в ядре со стабиль
 <details><summary>Ответ</summary>
 
 Сеть и NetworkPolicy (Cilium, замена kube-proxy), наблюдаемость потоков (Hubble), runtime
-   security (Falco, Tetragon), continuous profiling (Parca, Pyroscope), автоинструментация (Beyla/OBI,
-   Pixie), ad-hoc дебаг (Inspektor Gadget, bcc на ноде).
+security (Falco, Tetragon), continuous profiling (Parca, Pyroscope), автоинструментация (Beyla/OBI,
+Pixie), ad-hoc дебаг (Inspektor Gadget, bcc на ноде).
 
 </details>
 
@@ -1289,11 +1077,9 @@ Tracepoint — статическая точка в ядре со стабиль
 <details><summary>Ответ</summary>
 
 Оверхед при частых событиях, `printf` на событие и uprobe на горячих функциях; kprobe-скрипты
-    ломаются между версиями ядра; привилегированные инструменты видят всю ноду (данные соседей,
-    секреты в аргументах); bcc тяжёлый на старте. Поэтому — фильтры, агрегация, ограничение по
-    времени, проверка на стенде, контроль доступа.
-
----
+ломаются между версиями ядра; привилегированные инструменты видят всю ноду (данные соседей,
+секреты в аргументах); bcc тяжёлый на старте. Поэтому — фильтры, агрегация, ограничение по
+времени, проверка на стенде, контроль доступа.
 
 </details>
 

@@ -1,6 +1,6 @@
 ---
 title: "09. Вопросы с собеседований: хранилища и stateful"
-description: "Блок → Хранилища и stateful → собеседование."
+description: "Главные вопросы с развёрнутыми ответами + 42 коротких + ситуационные задачи"
 ---
 
 # 09. Вопросы с собеседований: хранилища и stateful
@@ -9,8 +9,8 @@ description: "Блок → Хранилища и stateful → собеседов
 > Про диски, бэкапы и stateful в кубере спрашивают почти на любом собесе девопса — особенно в
 > компаниях со своим железом (в Казахстане таких много): «диск расширили, а места нет»,
 > «как бэкапишь базу», «чем StatefulSet отличается от Deployment», «что будет, если умрёт нода
-> с томом». Базовые вопросы по PV/PVC — в [../Kubernetes/23_interview.md](/kubernetes/23-interview),
-> по бэкапам PostgreSQL — в [../Left/01_Databases/11_interview.md](/databases/11-interview).
+> с томом». Базовые вопросы по PV/PVC — в [Kubernetes: 23. Вопросы с собеседований](/kubernetes/23-interview),
+> по бэкапам PostgreSQL — в [Базы данных: 11. Вопросы с собеседований](/databases/11-interview).
 
 ---
 
@@ -65,7 +65,8 @@ description: "Блок → Хранилища и stateful → собеседов
 
 ```bash
 lsblk → growpart /dev/vda 3 → pvresize /dev/vda3 → lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv → df -h
-```text
+```
+
 ---
 
 ### 5. Как устроен Ceph?
@@ -212,7 +213,7 @@ lsblk → growpart /dev/vda 3 → pvresize /dev/vda3 → lvextend -r -l +100%FRE
 
 ### 1. «На сервере БД через час кончится место на `/var/lib/postgresql`»
 
-```text
+```text:no-line-numbers
 1. Понять, что растёт        df -h, du по PGDATA: base/ или pg_wal/?
 2. pg_wal растёт?            pg_stat_archiver.failed_count (архивация сломана?),
                              pg_replication_slots (брошенный слот?), долгие транзакции
@@ -221,7 +222,7 @@ lsblk → growpart /dev/vda 3 → pvresize /dev/vda3 → lvextend -r -l +100%FRE
 4. Добавить место онлайн     новый диск → pvcreate → vgextend → lvextend -r (или growpart-лестница)
 5. base/ растёт?             bloat, забытые таблицы, логи внутри PGDATA — разбираться после
 6. После                     алерты на заполнение и прогноз (predict_linear), постмортем
-```text
+```
 Сильная часть ответа — **сначала причина роста WAL** (самая частая), а не «докинем диск».
 
 ### 2. «Посчитай полезную ёмкость»
@@ -229,7 +230,7 @@ lsblk → growpart /dev/vda 3 → pvresize /dev/vda3 → lvextend -r -l +100%FRE
 Условие: 5 серверов по 8 дисков × 8 ТБ. Вариант А — Ceph `size 3`, вариант Б — EC 4+2.
 Сколько полезного места и сколько можно заполнить, чтобы пережить отказ сервера?
 
-```text
+```text:no-line-numbers
 Сырое:          5 × 8 × 8 ТБ = 320 ТБ
 А. size 3:      320 / 3 ≈ 106,7 ТБ полезных
 Б. EC 4+2:      320 × 4/6 ≈ 213 ТБ полезных, но нужно ≥ 6 хостов при failure domain host —
@@ -237,7 +238,8 @@ lsblk → growpart /dev/vda 3 → pvresize /dev/vda3 → lvextend -r -l +100%FRE
 Отказ сервера:  остаётся 256 ТБ сырого; чтобы после recovery быть ≤ 85% (nearfull):
                 занято сырого ≤ 0,85 × 256 ≈ 218 ТБ → ≤ 68% от 320 ТБ
                 → для size 3 безопасно ≈ 72 ТБ данных из 106,7
-```text
+```
+
 ### 3. «Кто-то удалил namespace `prod-shop`»
 
 > «Первое — оценить ущерб: что было в namespace, есть ли там данные (PVC, базы), что говорят
@@ -311,6 +313,6 @@ lsblk → growpart /dev/vda 3 → pvresize /dev/vda3 → lvextend -r -l +100%FRE
 - [ ] Расскажу бэкап Kubernetes по слоям: GitOps, Velero, etcd, ключи
 - [ ] Назову RPO/RTO своей схемы и как их замерил на учениях
 
-➡️ Назад к карте блока: [00_INDEX.md](/storage/) · Блоки-основа:
-[../Kubernetes/00_INDEX.md](/kubernetes/) ·
-[../Left/01_Databases/00_INDEX.md](/databases/)
+➡️ Назад к карте блока: [Хранилища](/storage/) · Блоки-основа:
+[Kubernetes](/kubernetes/) ·
+[Базы данных](/databases/)

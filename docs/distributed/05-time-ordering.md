@@ -1,16 +1,16 @@
 ---
 title: "05. Время и порядок событий: часы, логические часы, лизы и fencing-токены"
-description: "Блок → Распределённые системы → тема 05. Heartbeat и лизы как детектор отказов — в"
+description: "NTP/chrony и дрейф, монотонные часы, Lamport и векторные часы, HLC, лизы, fencing-токены, спор о Redlock"
 ---
 
 # 05. Время и порядок событий: часы, логические часы, лизы и fencing-токены
 
 > Блок → Распределённые системы → тема 05. Heartbeat и лизы как детектор отказов — в
-> [01_fallacies_basics.md](/distributed/01-fallacies-basics), LWW и конфликты multi-leader — в
-> [03_replication_partitioning.md](/distributed/03-replication-partitioning), термы Raft и лизы etcd — в
-> [04_consensus_quorum.md](/distributed/04-consensus-quorum), `MON_CLOCK_SKEW` в Ceph — в
-> [../Storage/04_ceph.md](/storage/04-ceph), `timedatectl` на стенде `web`/`app` — в
-> [../Linux/27_practice_labs.md](/linux/27-practice-labs) (лаба 7).
+> [01. Основы: частичные отказы, задержки и 8 заблуждений о сети](/distributed/01-fallacies-basics), LWW и конфликты multi-leader — в
+> [03. Репликация и шардирование](/distributed/03-replication-partitioning), термы Raft и лизы etcd — в
+> [04. Консенсус и кворум: Raft, etcd, Patroni, Ceph, corosync](/distributed/04-consensus-quorum), `MON_CLOCK_SKEW` в Ceph — в
+> [Хранилища: 04. Ceph: распределённое хранилище](/storage/04-ceph), `timedatectl` на стенде `web`/`app` — в
+> [Linux: 27. Практика: лабы](/linux/27-practice-labs) (лаба 7).
 >
 > **После темы ты умеешь:** объяснить, почему часы машин расходятся и чем шаг отличается от
 > подстройки; проверить chrony (`tracking`, `sources`, `makestep`, `maxdistance`) и алертить по
@@ -23,7 +23,7 @@ description: "Блок → Распределённые системы → те�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                 «что было раньше?» — в распределённой системе нет общих часов
                                          │
        ┌─────────────────────────────────┼──────────────────────────────────┐
@@ -38,7 +38,8 @@ description: "Блок → Распределённые системы → те�
        └──────────────► ПРАВИЛО: длительности — монотонными часами на ОДНОЙ машине;
                         порядок между машинами — логическими часами и номерами (терм,
                         ревизия etcd, epoch), а не сравнением time.time() с разных хостов
-```text
+```
+
 ---
 
 ## 1. Почему часы врут
@@ -57,7 +58,7 @@ description: "Блок → Распределённые системы → те�
 
 ### Шаг против плавной подстройки (step vs slew)
 
-```text
+```text:no-line-numbers
  реальное время ───────────────────────────────────────────────────►
  часы ноды (спешат на 2 с)
 
@@ -67,7 +68,8 @@ description: "Блок → Распределённые системы → те�
   10:00:03 ─┘ ← «прошлое повторилось»:  ни разу не шло назад
   метки времени повторяются, таймеры    минус: большой сдвиг исправляется долго
   по wall clock сходят с ума            (сдвиг на 2 ч при 1/12 — целые сутки)
-```text
+```
+
 У chrony по умолчанию максимальная скорость подстройки `maxslewrate` — 83 333 ppm (1/12):
 исправить 1 с можно не быстрее чем за 12 с. Поэтому в стандартном `chrony.conf` Debian/Ubuntu
 стоит `makestep 1 3` — **шагать**, если ошибка больше 1 с, но только в первые три обновления
@@ -95,8 +97,8 @@ DNS-запросов; починили проверкой на отрицате�
   `--cap-add SYS_TIME` **сдвинет часы хоста** и всех соседей; без него — не сработает. Время
   чинят на ноде; подменить его одному процессу для тестов можно `libfaketime` (`LD_PRELOAD`).
 - **VM** — своё ядро и свои часы: после паузы, миграции или отката на снапшот с памятью время
-  «прыгает» ([../Virtualization/02_kvm_qemu_libvirt.md](/virtualization/02-kvm-qemu-libvirt)) — в гостях
-  нужен свой chrony ([../Virtualization/06_virt_automation.md](/virtualization/06-virt-automation)).
+  «прыгает» ([Виртуализация: 02. KVM, QEMU и libvirt руками: virsh, cloud-init, qcow2, снапшоты](/virtualization/02-kvm-qemu-libvirt)) — в гостях
+  нужен свой chrony ([Виртуализация: 06. Автоматизация: шаблоны, cloud-init, Packer, Terraform, Ansible, VMware](/virtualization/06-virt-automation)).
 - **Часовой пояс — не часы.** С 1 марта 2024 года Казахстан на едином UTC+5: машины со старым
   `tzdata` показывали «местное» время на час не так при точных часах. Серверы и логи — в UTC.
 
@@ -124,8 +126,9 @@ start = time.perf_counter()         # ✅ замер: монотонные, лу
 do_work()
 elapsed = time.perf_counter() - start   # никогда не отрицательное (в отличие от time.time())
 created_at = time.time()            # ✅ момент события — wall clock (как created_at в linkd)
-```text
-Поэтому `CircuitBreaker` в [../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns) §4
+```
+
+Поэтому `CircuitBreaker` в [SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns) §4
 считает `reset_timeout` через `time.monotonic()`. В Java — `System.nanoTime()` против
 `currentTimeMillis()`, в Go — `time.Since()` (монотонная часть `time.Time`).
 
@@ -142,7 +145,8 @@ maxdistance 3                                # источник с root distance
 rtcsync                                      # периодически писать время в аппаратные часы
 leapsectz right/UTC                          # откуда узнавать о високосных секундах
 # allow 192.168.56.0/24                      # раздавать время соседям (свой NTP-сервер в LAN)
-```text
+```
+
 В GCP источник — `metadata.google.internal` (тоже со smear). Правило: **один набор источников
 на всех узлах** — лучше 2–3 своих NTP-сервера в LAN: узлы расходятся между собой на доли
 миллисекунды, даже если все вместе ошибаются относительно UTC.
@@ -152,8 +156,9 @@ chronyc tracking            # главное: насколько мои часы
 chronyc sources -v          # источники и их состояние; sourcestats — дрейф и разброс по каждому
 chronyc makestep            # шагнуть прямо сейчас (осознанно: время прыгнет)
 timedatectl                 # System clock synchronized: yes; timesync-status — для systemd-timesyncd
-```text
-```text
+```
+
+```text:no-line-numbers
 $ chronyc tracking
 Reference ID    : C0A83801 (192.168.56.1)
 Stratum         : 3                           ← на сколько «ступеней» от эталона
@@ -169,7 +174,8 @@ MS Name/IP address    Stratum Poll Reach LastRx Last sample
 ^+ ntp2.example.kz          2   6   377    33   -310us[ -280us] +/-  14ms
    ^* текущий  ^+ участвует  ^- отброшен  ^? недоступен  ^x falseticker (врёт)  ^~ нестабилен
    Reach 377 (восьмеричное) = последние 8 опросов успешны
-```text
+```
+
 **`maxdistance`** — защита от «далёких» источников: root distance — оценка максимальной ошибки
 источника. Если все источники хуже порога, chrony не синхронизируется совсем (и честно пишет
 `Not synchronised`) — лучше, чем тихо тянуть часы к плохому серверу. Для кластера с жёсткими
@@ -196,7 +202,7 @@ MS Name/IP address    Stratum Poll Reach LastRx Last sample
 - alert: NodeClockNotSynchronising    # синхронизации нет вовсе
   expr: min_over_time(node_timex_sync_status[5m]) == 0 and node_timex_maxerror_seconds >= 16
   for: 10m
-```text
+```
 ⚠️ Две оговорки. С **chrony** `node_timex_offset_seconds` часто всегда 0 — chrony не пользуется
 PLL ядра (issue node_exporter #2445); `sync_status` работает (с `rtcsync`), а реальное смещение
 даёт `chrony_exporter` (порт 9123, `chrony_tracking_system_time_seconds` — **проверь** имена).
@@ -217,8 +223,8 @@ PLL ядра (issue node_exporter #2445); `sync_status` работает (с `rt
 | Подписи запросов S3 / AWS SigV4 | `RequestTimeTooSkewed` | Около 15 минут для S3 (**проверь**) |
 | **TTL-блокировки по времени** | `expires_at` посчитан на одной машине, проверен на другой → две машины держат «блокировку» | Никакого допуска: это ошибка корректности (§7) |
 | Логи и трейсы | Следствие «раньше» причины; спан дочернего сервиса начинается до родителя | Сравнивай корреляцией (trace_id), а не временем |
-| **LWW** (last write wins) | Узел со спешащими часами «побеждает» всегда, запись с отстающего теряется молча | Cassandra, S3, multi-leader — [03_replication_partitioning.md](/distributed/03-replication-partitioning) |
-| Ceph MON | `HEALTH_WARN MON_CLOCK_SKEW` | 0,05 с — [../Storage/04_ceph.md](/storage/04-ceph) |
+| **LWW** (last write wins) | Узел со спешащими часами «побеждает» всегда, запись с отстающего теряется молча | Cassandra, S3, multi-leader — [03. Репликация и шардирование](/distributed/03-replication-partitioning) |
+| Ceph MON | `HEALTH_WARN MON_CLOCK_SKEW` | 0,05 с — [Хранилища: 04. Ceph: распределённое хранилище](/storage/04-ceph) |
 | etcd | Предупреждения о большом расхождении часов с пиром в логах | Безопасность Raft от часов не зависит (Jepsen проверял сдвиг на сотни секунд) |
 | CockroachDB | Узел, ушедший больше чем на 80% `--max-offset` (по умолчанию 500 мс) от половины кластера, **сам завершается** | Безопасность держится на ограниченном расхождении часов |
 | cron, бэкапы, PITR | Задача «не в своё время»; `recovery_target_time` трактуется по часам primary | Всё планировать и хранить в UTC |
@@ -248,7 +254,7 @@ primary или `bigserial`), а не каждый клиент своими ча
 Правила: перед каждым локальным событием и отправкой `C := C + 1`, сообщение несёт `C`;
 при получении `C := max(C, C_msg) + 1`.
 
-```text
+```text:no-line-numbers
  A:  a1 (1) ──── a2 send m1 (2) ────────── a3 (3)
                       │
                       ▼
@@ -256,11 +262,12 @@ primary или `bigserial`), а не каждый клиент своими ча
                                                             │
                                                             ▼
  C:  c1 (1) ──────────────────────────────── c2 recv m2: max(1,4)+1 = (5)
-```text
+```
+
 Гарантия: `a → b` ⇒ `C(a) < C(b)`. **Обратное неверно:** `C(b1)=1 < C(a2)=2`, но `b1 ∥ a2`;
 `C(a3)=3 = C(b2)=3` — одновременны. Часы Лэмпорта дают **полный порядок** (при равенстве —
 сравнить ID процесса), согласованный с причинностью, но не видят одновременности — а она и есть
-конфликт. Ты их уже видел: **терм Raft** ([04_consensus_quorum.md](/distributed/04-consensus-quorum)), epoch
+конфликт. Ты их уже видел: **терм Raft** ([04. Консенсус и кворум: Raft, etcd, Patroni, Ceph, corosync](/distributed/04-consensus-quorum)), epoch
 лидера партиции Kafka, timeline PostgreSQL после promote.
 
 ### Векторные часы
@@ -269,7 +276,7 @@ primary или `bigserial`), а не каждый клиент своими ча
 я видел». Локальное событие и отправка: `V[i] += 1`; получение: `V := max(V, V_msg)` по
 компонентам, затем `V[i] += 1`.
 
-```text
+```text:no-line-numbers
  векторы [A, B, C], тот же сценарий
  A:  a1 [1,0,0]   a2 send m1 [2,0,0]   a3 [3,0,0]
  B:  b1 [0,1,0]   b2 recv m1: max([0,1,0],[2,0,0]) → [2,1,0] → B+1 → [2,2,0]   b3 send m2 [2,3,0]
@@ -278,7 +285,8 @@ primary или `bigserial`), а не каждый клиент своими ча
  сравнение: V ≤ W, если каждая компонента V ≤ компоненты W
    a2 [2,0,0] ≤ c2 [2,3,2]  → a2 → c2  (причинно связаны, через B)
    a3 [3,0,0] и b2 [2,2,0]  → ни одно не ≤ другого → a3 ∥ b2  ⭐ одновременны
-```text
+```
+
 | | Лэмпорт | Векторные часы |
 |-|---------|----------------|
 | Размер / одновременность | Одно число / ❌ не видит | N чисел (растёт с участниками) / ✅ видит — это и есть «конфликт» |
@@ -296,7 +304,7 @@ primary или `bigserial`), а не каждый клиент своими ча
 Кулкарни, Демирбаш и др., «Logical Physical Clocks» (OPODIS 2014). Метка = пара `(l, c)`:
 `l` — максимум физического времени, которое узел «слышал», `c` — счётчик для событий с равным `l`.
 
-```text
+```
  отправка или локальное событие:    l' = max(l, pt);  c = (l' == l) ? c+1 : 0;  l = l'
  получение (l_m, c_m):              l' = max(l, l_m, pt)
                                     c  = если l'==l==l_m: max(c, c_m)+1
@@ -304,7 +312,8 @@ primary или `bigserial`), а не каждый клиент своими ча
                                          если l'==l_m:    c_m+1
                                          иначе:           0
  pt — физические часы узла (NTP)
-```text
+```
+
 Свойства: причинность как у Лэмпорта (`a → b` ⇒ `HLC(a) < HLC(b)`), `l` никогда не меньше
 физического времени и отличается от него не больше чем на ошибку синхронизации ε, метка
 помещается в 64 бита формата NTP (48 бит `l` + 16 бит `c`). Итог: метки близки к настоящему
@@ -316,12 +325,13 @@ primary или `bigserial`), а не каждый клиент своими ча
 
 ### TrueTime — Google Spanner (OSDI 2012)
 
-```text
+```text:no-line-numbers
  TT.now() → [earliest, latest]    истинное время гарантированно внутри; ε (полуширина) у Google —
                                   пила ~1–7 мс, в среднем ~4 мс; источник — GPS и атомные часы в ДЦ
  COMMIT WAIT:  метка s = TT.now().latest; ответ клиенту — только когда TT.now().earliest > s (≈ 2ε)
                → транзакция, начатая после ответа, получит метку больше s → external consistency
-```text
+```
+
 | | NTP + wall clock | HLC | TrueTime |
 |-|------------------|-----|----------|
 | Что знаем об ошибке | Ничего гарантированного | Ограничена ε (предположение) | Явный интервал, гарантия железа |
@@ -346,7 +356,7 @@ kube-controller-manager — lease 15 с, renew 10 с, retry 2 с — зазор 
 
 ### Где лиза не спасает: GC-пауза (сценарий Клеппмана)
 
-```text
+```text:no-line-numbers
  время ─────────────────────────────────────────────────────────────────────────►
  клиент 1   [лиза, токен 33] ── ⏸ GC-пауза / пауза VM / swap 40 с ····· ▶ «я ещё держу!»
                                                                           write(x, token=33)
@@ -357,7 +367,8 @@ kube-controller-manager — lease 15 с, renew 10 с, retry 2 с — зазор 
  хранилище                                         принял 34 ◄────┘   max = 34   ▼
    БЕЗ fencing:  принимает и 33 → два писателя, данные перезаписаны старым клиентом ❌
    С fencing:    33 < 34 → REJECT: «токен устарел» ✅
-```text
+```
+
 Клиент 1 **не может** узнать, что проспал: проверка «лиза жива?» перед записью не помогает —
 пауза бывает между проверкой и записью, пакет — застревает в сети. **Fencing-токен** — растущий
 номер, который сервис блокировок выдаёт с каждой лизой; хранилище помнит максимальный и отвергает меньшие.
@@ -366,17 +377,18 @@ kube-controller-manager — lease 15 с, renew 10 с, retry 2 с — зазор 
 |--------------------|-----|
 | **etcd** | Ревизия ключа блокировки (`mod_revision`/`create_revision`) — глобально упорядочена; так советует Jepsen в анализе etcd 3.4.3 |
 | ZooKeeper | `zxid` или версия znode |
-| Raft, Kafka, Patroni-подобное | Терм, epoch лидера; Kafka отсекает «зомби»-продюсера по `producer epoch` (тема [06_failure_modes.md](/distributed/06-failure-modes)) |
+| Raft, Kafka, Patroni-подобное | Терм, epoch лидера; Kafka отсекает «зомби»-продюсера по `producer epoch` (тема [06. Режимы отказов: split brain, retry storm, метастабильность, exactly-once и outbox](/distributed/06-failure-modes)) |
 | PostgreSQL | `bigserial`/последовательность в таблице блокировок |
 
 ```sql
 -- хранилище проверяет токен само, в той же операции записи
 UPDATE jobs SET state = 'done', result = $2, fence = $3
  WHERE id = $1 AND fence < $3;        -- 0 строк ⇒ мой токен устарел: остановиться
-```text
+```
+
 ⭐ Главное: проверку делает **ресурс**, а не клиент. Если ресурс не умеет проверять токен
 (отправка письма, внешний API оплаты), fencing не построить — нужна идемпотентность на стороне
-ресурса (ключ операции) или STONITH (тема [06_failure_modes.md](/distributed/06-failure-modes)).
+ресурса (ключ операции) или STONITH (тема [06. Режимы отказов: split brain, retry storm, метастабильность, exactly-once и outbox](/distributed/06-failure-modes)).
 
 Jepsen (etcd 3.4.3, 2020): блокировки etcd сами по себе **не дают** взаимного исключения —
 одну блокировку держали двое даже без сбоев, с паузами и TTL 1–3 с — чаще; терялось ~18%
@@ -421,7 +433,8 @@ cd ~/Projects/devops/stands/net-lab && vagrant up && vagrant snapshot save befor
 # на обеих VM: что синхронизирует время, ставим chrony (на Ubuntu он вытесняет systemd-timesyncd — проверь)
 timedatectl; sudo apt-get update && sudo apt-get install -y chrony python3-jwt
 chronyc tracking; chronyc sources -v; grep makestep /etc/chrony/chrony.conf   # ждём makestep 1 3
-```text
+```
+
 **1. TLS.** На `web` — сертификат на сутки и сервер; на `app` — забрать его и проверить:
 ```bash
 # web
@@ -435,7 +448,8 @@ sudo systemctl stop chrony && sudo date -s '2 hours ago'
 curl -sS -o /dev/null --cacert /tmp/c.pem https://192.168.56.10:8443/   # certificate is not yet valid
 sudo date -s 'now + 2 days'
 curl -sS -o /dev/null --cacert /tmp/c.pem https://192.168.56.10:8443/   # certificate has expired
-```text
+```
+
 **2. JWT.** Токен на 5 минут выпускает `web`, проверяет `app`:
 ```bash
 # web
@@ -443,10 +457,11 @@ python3 -c 'import jwt,time; n=int(time.time()); print(jwt.encode({"sub":"alice"
 "lab-secret-lab-secret-lab-secret!",algorithm="HS256"))'
 # app: сейчас ≈ +2 дня → ExpiredSignatureError
 python3 -c 'import jwt,sys; print(jwt.decode(sys.argv[1],"lab-secret-lab-secret-lab-secret!",
-algorithms=["HS256"]))' "&lt;токен&gt;"
+algorithms=["HS256"]))' "<токен>"
 sudo chronyd -q && sudo date -s '2 hours ago'   # разово вернуть точное время, затем −2 часа
 # повтори decode → ImmatureSignatureError (nbf в будущем); leeway=180 простит 2 минуты, но не 2 часа
-```text
+```
+
 **3. Порядок логов** (`app` всё ещё на 2 часа позади; обе VM в одном поясе):
 ```bash
 # app: сервер, чьи логи уходят в journald
@@ -457,7 +472,8 @@ for i in 1 2 3; do logger -t lab-web "req=$i sent"; curl -s -o /dev/null "http:/
 { vagrant ssh web -c 'journalctl -t lab-web -o short-iso-precise --no-pager'
   vagrant ssh app -c 'journalctl -t lab-app -o short-iso-precise --no-pager'; } | grep req= | sort
 #   «GET /?req=1» на app стоит на 2 часа РАНЬШЕ «req=1 sent» на web — следствие до причины
-```text
+```
+
 **4. Лечим и смотрим slew.**
 ```bash
 # app
@@ -466,7 +482,8 @@ journalctl -u chrony --no-pager | tail -5                 # «System clock wrong
 sudo date -s '2 seconds ago'; watch -n2 chronyc tracking  # makestep «израсходован» → плавный slew
 # (в журнале может быть «Backward time jump detected» — поведение зависит от версии, проверь)
 chronyc makestep                                          # не хочешь ждать — осознанный прыжок
-```text
+```
+
 Запиши: ошибки curl и PyJWT при каждом сдвиге; за сколько chrony съел 2 с и почему не шагнул;
 что вместо времени связало бы строки логов. Откат: `vagrant snapshot restore before_clock`.
 
@@ -498,7 +515,7 @@ chronyc makestep                                          # не хочешь ж
 - На ревью кода: таймауты и ретраи — на монотонных часах; сравнение меток времени с разных
   машин — повод задать вопрос; блокировки — «для эффективности или для корректности?».
 - При разборе инцидента хронологию собирают по trace_id и корреляционным ID, а время разных
-  хостов считают приблизительным ([../SRE/04_incident_management.md](/sre/04-incident-management)).
+  хостов считают приблизительным ([SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management)).
 - На собесе: «почему нельзя верить часам», «что такое fencing-токен», «Лэмпорт или векторные
   часы», «безопасен ли Redlock», «как сделать распределённую блокировку».
 
@@ -546,13 +563,18 @@ chronyc makestep                                          # не хочешь ж
 10. Сначала спроси «блокировка для эффективности или для корректности?» — от ответа зависит
     всё решение.
 
-➡️ Дальше: [06_failure_modes.md](/distributed/06-failure-modes) · задачи: 05_time_ordering_tasks.md
+---
 
+## Задачи
+
+> Стенд: `net-lab` (`web` 192.168.56.10, `app` 192.168.56.11) с chrony из мини-лабы; перед
+> экспериментами — `vagrant snapshot save before_clock`. Для задач с etcd — стенд
+> `~/labs/distributed/04` из [04. Консенсус и кворум: Raft, etcd, Patroni, Ceph, corosync](/distributed/04-consensus-quorum); для задач с PostgreSQL —
+> любой `postgres:17` в docker (`docker run -d --name pg -e POSTGRES_PASSWORD=pg postgres:17`).
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Почему часы двух серверов расходятся, даже если на обоих работает NTP? Назови пять
 источников ошибки.
@@ -585,6 +607,7 @@ chronyc makestep                                          # не хочешь ж
 Step — мгновенный прыжок (может назад): повторяются метки, таймеры на wall clock сходят
 с ума. Slew — часы идут чуть быстрее/медленнее, время монотонно. `makestep 1 3` — шагать, если
 ошибка > 1 с, но только в первые три обновления после старта chronyd. Максимум slew 1/12:
+3 с × 12 = **36 с** минимум.
 
 </details>
 
@@ -793,223 +816,103 @@ Redis ломает большинство; antirez: клиент проверя�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```python
 B1.  start = time.time()
-```text
-<details><summary>Ответ</summary>
+     while not job.done():
+         if time.time() - start > 30:
+             raise TimeoutError
+         time.sleep(1)
 
-⚠️ Таймаут по wall clock: шаг назад — ждём дольше 30 с (или вечно при большом шаге),
+B2.  if redis.set(f"payout:{order_id}", worker_id, nx=True, px=10_000):
+         bank.transfer(order_id, amount)          # внешний API банка
+
+B3.  # воркер берёт «блокировку», now — часы самого воркера
+     cur.execute("UPDATE locks SET owner=%s, expires_at=%s WHERE name='report' AND expires_at < %s",
+                 (me, now + 30, now))
+
+B4.  jwt.decode(token, key, algorithms=["HS256"], leeway=3600)   # «чтобы часы не мешали»
+
+B5.  # лидер перед записью проверяет лизу
+     lease = etcd.get_lease_info()                 # expires_at посчитан на сервере etcd
+     if lease.expires_at > time.time():
+         storage.write(data)
+
+B6.  # профиль пользователя пишут два региона
+     UPDATE profiles SET data=$1, updated_at=$client_ts WHERE id=$2 AND updated_at < $client_ts
+```
+
+```
+B7.  /etc/chrony/chrony.conf на проде:   makestep 1 -1
+
+B8.  три ноды Ceph:  ceph1 — server time.google.com iburst
+                     ceph2 — pool pool.ntp.org iburst
+                     ceph3 — pool pool.ntp.org iburst
+
+B9.  docker run --cap-add SYS_TIME myapp-tests sh -c 'date -s "2030-01-01" && pytest'
+
+B10. DaemonSet `chrony-sync` с privileged-контейнером, «чтобы у подов было точное время»
+
+B11. алерт: node_timex_offset_seconds > 1   (на всех нодах — chrony)
+
+B12. etcdctl lock backup -- ./backup.sh      # backup.sh перезаписывает s3://bk/latest.tar
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Таймаут по wall clock: шаг назад — ждём дольше 30 с (или вечно при большом шаге),
 шаг вперёд — таймаут сразу. `time.monotonic()`.
 
-</details>
-
-```text:no-line-numbers
-     while not job.done():
-```text
-```text:no-line-numbers
-         if time.time() - start > 30:
-```text
-```text:no-line-numbers
-             raise TimeoutError
-```text
-```text:no-line-numbers
-         time.sleep(1)
-```text
-```text:no-line-numbers
-B2.  if redis.set(f"payout:{order_id}", worker_id, nx=True, px=10_000):
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Деньги под «блокировкой для эффективности»: пауза воркера дольше 10 с или failover
+**B2.** ⚠️ Деньги под «блокировкой для эффективности»: пауза воркера дольше 10 с или failover
 Redis (асинхронная реплика не получила ключ) → второй воркер тоже переведёт. Нужна
 идемпотентность на стороне банка (ключ операции = `order_id`) и/или блокировка в БД в одной
 транзакции со статусом выплаты.
 
-</details>
-
-```text:no-line-numbers
-         bank.transfer(order_id, amount)          # внешний API банка
-```text
-```text:no-line-numbers
-B3.  # воркер берёт «блокировку», now — часы самого воркера
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `expires_at` посчитан часами воркера и сравнивается с часами другого воркера: у кого
+**B3.** ⚠️ `expires_at` посчитан часами воркера и сравнивается с часами другого воркера: у кого
 часы спешат, тот «видит» чужую блокировку истёкшей. И нет fencing. Время — `now()` самой базы
 (одна точка часов), плюс токен/версия в условной записи.
 
-</details>
-
-```text:no-line-numbers
-     cur.execute("UPDATE locks SET owner=%s, expires_at=%s WHERE name='report' AND expires_at < %s",
-```text
-```text:no-line-numbers
-                 (me, now + 30, now))
-```text
-```text:no-line-numbers
-B4.  jwt.decode(token, key, algorithms=["HS256"], leeway=3600)   # «чтобы часы не мешали»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Час допуска — это продление жизни украденных токенов на час. Допуск — секунды–минута;
+**B4.** ⚠️ Час допуска — это продление жизни украденных токенов на час. Допуск — секунды–минута;
 лечить часы (chrony), а не валидатор.
 
-</details>
-
-```text:no-line-numbers
-B5.  # лидер перед записью проверяет лизу
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Сравнение времени сервера etcd с часами клиента + классическая проверка «перед
+**B5.** ⚠️ Сравнение времени сервера etcd с часами клиента + классическая проверка «перед
 записью»: пауза между `if` и `write` делает её бесполезной. Нужен fencing-токен (ревизия) и
 проверка на хранилище.
 
-</details>
-
-```text:no-line-numbers
-     lease = etcd.get_lease_info()                 # expires_at посчитан на сервере etcd
-```text
-```text:no-line-numbers
-     if lease.expires_at > time.time():
-```text
-```text:no-line-numbers
-         storage.write(data)
-```text
-```text:no-line-numbers
-B6.  # профиль пользователя пишут два региона
-```text
-<details><summary>Ответ</summary>
-
-⚠️ LWW по часам клиента: регион со спешащими часами всегда побеждает, запись с
+**B6.** ⚠️ LWW по часам клиента: регион со спешащими часами всегда побеждает, запись с
 отстающими часами молча теряется (а может быть и навсегда «заблокирована» меткой из будущего).
 Версия/счётчик, векторные версии или одна точка порядка.
 
-</details>
-
-```text:no-line-numbers
-     UPDATE profiles SET data=$1, updated_at=$client_ts WHERE id=$2 AND updated_at < $client_ts
-```text
-```text:no-line-numbers
-B7.  /etc/chrony/chrony.conf на проде:   makestep 1 -1
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Шагать всегда: при работе сервисов время будет прыгать, в том числе назад. На проде —
+**B7.** ⚠️ Шагать всегда: при работе сервисов время будет прыгать, в том числе назад. На проде —
 шаг только при старте (`makestep 1 3`), дальше slew.
 
-</details>
-
-```text:no-line-numbers
-B8.  три ноды Ceph:  ceph1 — server time.google.com iburst
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `time.google.com` размазывает високосную секунду, `pool.ntp.org` — нет: в ночь
+**B8.** ⚠️ `time.google.com` размазывает високосную секунду, `pool.ntp.org` — нет: в ночь
 вставки узлы разойдутся до 0,5 с при пороге `MON_CLOCK_SKEW` 0,05 с. Один набор источников на
 все узлы (лучше свой NTP в LAN).
 
-</details>
+**B9.** ⚠️ `date -s` с `SYS_TIME` сдвинет часы **хоста** — у всех контейнеров и самого хоста
+2030 год (TLS, cron, лизы). Для тестов — `libfaketime` или подмена часов в коде (freezegun).
 
-```text:no-line-numbers
-                     ceph2 — pool pool.ntp.org iburst
-```text
-```text:no-line-numbers
-                     ceph3 — pool pool.ntp.org iburst
-```text
-```text:no-line-numbers
-B9.  docker run --cap-add SYS_TIME myapp-tests sh -c 'date -s "2030-01-01" && pytest'
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `date -s` с `SYS_TIME` сдвинет часы **хоста** — у всех контейнеров и самого хоста
-
-</details>
-
-```text:no-line-numbers
-B10.  DaemonSet `chrony-sync` с privileged-контейнером, «чтобы у подов было точное время»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Часы у подов общие с нодой; privileged-контейнер с chrony меняет часы ноды — и
+**B10.** ⚠️ Часы у подов общие с нодой; privileged-контейнер с chrony меняет часы ноды — и
 конфликтует с chrony на самой ноде. chrony — на ноде, мониторинг — node_exporter.
 
-</details>
-
-```text:no-line-numbers
-B11.  алерт: node_timex_offset_seconds > 1   (на всех нодах — chrony)
-```text
-<details><summary>Ответ</summary>
-
-⚠️ С chrony `node_timex_offset_seconds` часто всегда 0 — алерт не сработает никогда.
+**B11.** ⚠️ С chrony `node_timex_offset_seconds` часто всегда 0 — алерт не сработает никогда.
 Плюс 1 с — слишком поздно для Ceph. `sync_status`/`maxerror` + `chrony_exporter`, порог ~50 мс.
 
-</details>
-
-```text:no-line-numbers
-B12.  etcdctl lock backup -- ./backup.sh      # backup.sh перезаписывает s3://bk/latest.tar
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Лиза блокировки истечёт при паузе или разрыве сети, второй запуск возьмёт
+**B12.** ⚠️ Лиза блокировки истечёт при паузе или разрыве сети, второй запуск возьмёт
 блокировку, и оба перезапишут `latest`; S3 не проверяет токены. Писать в объект с уникальным
 именем (с `ETCD_LOCK_REV` в имени) и переключать «latest» условной операцией, либо
 идемпотентный бэкап.
 
 </details>
 
-
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 chrony: читать вывод
+#### C1. 🔑 chrony: читать вывод
 На `web` и `app` выполни `chronyc tracking`, `chronyc sources -v`, `chronyc sourcestats`.
 Выпиши: текущий источник и его stratum, смещение, собственный дрейф кварца (`Frequency`),
 root distance (посчитай из `Root delay` и `Root dispersion`). Есть ли источники `^-` или `^x`?
-
-### C2. 🔑 Свой NTP-сервер в LAN
-Сделай `web` источником времени для `app`: на `web` — `allow 192.168.56.0/24`, на `app` — только
-`server 192.168.56.10 iburst` (пулы закомментировать). Проверь: на `app` источник `^*` —
-`web`, stratum `app` на единицу больше; на `web` — `chronyc clients`. Что будет с `app`, если
-остановить chrony на `web`, — сразу и через час?
-
-### C3. Step или slew: прогноз и замер
-На `app` при работающем chrony (после старта прошло больше трёх обновлений) сдвинь часы на
-**5.** секунд назад. Сначала посчитай минимальное время исправления при `maxslewrate` по
-умолчанию, потом замерь по `watch -n2 chronyc tracking`. Повтори с `maxslewrate 1000` в
-конфиге — какой прогноз? Почему на проде никто не ставит `makestep 1 -1`, чтобы «быстрее»?
-
-<details><summary>Ответ</summary>
-
-```text
-Лэмпорт:   p1=1  p2=2(m1)  r1=1  r2=2(m3)  q1=max(0,2)+1=3  q2=4(m2)  q3=5
-           p3=max(2,2)+1=3   r3=max(2,4)+1=5
-Векторы:   p1 [1,0,0]  p2 [2,0,0]            r1 [0,0,1]  r2 [0,0,2]
-           q1 [2,1,0]  q2 [2,2,0]  q3 [2,3,0]
-           p3 max([2,0,0],[0,0,2])→[2,0,2]→[3,0,2]
-           r3 max([0,0,2],[2,2,0])→[2,2,2]→[2,2,3]
-(p3, q3):  [3,0,2] vs [2,3,0] → ∥      (Лэмпорт 3 < 5 — ложный «порядок»)
-(p1, r3):  [1,0,0] ≤ [2,2,3] → p1 → r3  (через m1 → q1 → q2 → m2)
-(r2, q3):  [0,0,2] vs [2,3,0] → ∥      (Лэмпорт 2 < 5 — ложный)
-(p3, r3):  [3,0,2] vs [2,2,3] → ∥      (Лэмпорт 3 < 5 — ложный)
-```text
-</details>
-
-### C4. Мониторинг часов
-Поставь на `app` `prometheus-node-exporter` из apt и посмотри
-`curl -s localhost:9100/metrics | grep -E 'node_timex_(offset|sync_status|maxerror)'`.
-Что показывает offset под chrony? Останови chrony на 10 минут: как меняются `sync_status` и
-`maxerror`? Какой из двух алертов node-mixin сработал бы и через сколько?
-
-### C5. Лэмпорт и векторные часы на бумаге
-Три процесса P, Q, R. P: `p1` локальное, `p2` отправка m1 → Q, `p3` получение m3.
-Q: `q1` получение m1, `q2` отправка m2 → R, `q3` локальное. R: `r1` локальное, `r2` отправка
-m3 → P, `r3` получение m2. Порядок внутри процесса — по номерам.
-**1.** Посчитай часы Лэмпорта для всех событий.
 
 <details><summary>Ответ</summary>
 
@@ -1020,7 +923,11 @@ m3 → P, `r3` получение m2. Порядок внутри процесс
 
 </details>
 
-**2.** Посчитай векторные часы `[P, Q, R]`.
+#### C2. 🔑 Свой NTP-сервер в LAN
+Сделай `web` источником времени для `app`: на `web` — `allow 192.168.56.0/24`, на `app` — только
+`server 192.168.56.10 iburst` (пулы закомментировать). Проверь: на `app` источник `^*` —
+`web`, stratum `app` на единицу больше; на `web` — `chronyc clients`. Что будет с `app`, если
+остановить chrony на `web`, — сразу и через час?
 
 <details><summary>Ответ</summary>
 
@@ -1032,8 +939,11 @@ m3 → P, `r3` получение m2. Порядок внутри процесс
 
 </details>
 
-**3.** Для пар (p3, q3), (p1, r3), (r2, q3), (p3, r3) определи: `→`, `←` или `∥`. Где часы
-   Лэмпорта «подсказали бы» ложный порядок?
+#### C3. Step или slew: прогноз и замер
+На `app` при работающем chrony (после старта прошло больше трёх обновлений) сдвинь часы на
+5 секунд назад. Сначала посчитай минимальное время исправления при `maxslewrate` по
+умолчанию, потом замерь по `watch -n2 chronyc tracking`. Повтори с `maxslewrate 1000` в
+конфиге — какой прогноз? Почему на проде никто не ставит `makestep 1 -1`, чтобы «быстрее»?
 
 <details><summary>Ответ</summary>
 
@@ -1043,30 +953,107 @@ m3 → P, `r3` получение m2. Порядок внутри процесс
 
 </details>
 
-### C6. 🔑 Fencing-токен в PostgreSQL
+#### C4. Мониторинг часов
+Поставь на `app` `prometheus-node-exporter` из apt и посмотри
+`curl -s localhost:9100/metrics | grep -E 'node_timex_(offset|sync_status|maxerror)'`.
+Что показывает offset под chrony? Останови chrony на 10 минут: как меняются `sync_status` и
+`maxerror`? Какой из двух алертов node-mixin сработал бы и через сколько?
+
+<details><summary>Ответ</summary>
+
+Под chrony offset почти наверняка 0 (оговорка из конспекта). После остановки chrony
+`maxerror` растёт: ядро прибавляет 500 мкс в секунду — за 10 минут всего +0,3 с. Флаг
+«не синхронизировано» ядро ставит само, когда `maxerror` дойдёт до 16 с, — это ~9 часов
+(chrony при остановке может выставить его раньше — **проверь** на своей версии). Значит,
+`NodeClockNotSynchronising` (`sync_status == 0` и `maxerror ≥ 16`, `for: 10m`) после простой
+остановки chrony сработает очень нескоро; для быстрой реакции — `chrony_exporter` или
+проверка `systemctl is-active chrony` (алерт на юнит).
+
+</details>
+
+#### C5. Лэмпорт и векторные часы на бумаге
+Три процесса P, Q, R. P: `p1` локальное, `p2` отправка m1 → Q, `p3` получение m3.
+Q: `q1` получение m1, `q2` отправка m2 → R, `q3` локальное. R: `r1` локальное, `r2` отправка
+m3 → P, `r3` получение m2. Порядок внутри процесса — по номерам.
+1. Посчитай часы Лэмпорта для всех событий.
+2. Посчитай векторные часы `[P, Q, R]`.
+3. Для пар (p3, q3), (p1, r3), (r2, q3), (p3, r3) определи: `→`, `←` или `∥`. Где часы
+   Лэмпорта «подсказали бы» ложный порядок?
+
+<details><summary>Ответ</summary>
+
+```text:no-line-numbers
+Лэмпорт:   p1=1  p2=2(m1)  r1=1  r2=2(m3)  q1=max(0,2)+1=3  q2=4(m2)  q3=5
+           p3=max(2,2)+1=3   r3=max(2,4)+1=5
+Векторы:   p1 [1,0,0]  p2 [2,0,0]            r1 [0,0,1]  r2 [0,0,2]
+           q1 [2,1,0]  q2 [2,2,0]  q3 [2,3,0]
+           p3 max([2,0,0],[0,0,2])→[2,0,2]→[3,0,2]
+           r3 max([0,0,2],[2,2,0])→[2,2,2]→[2,2,3]
+(p3, q3):  [3,0,2] vs [2,3,0] → ∥      (Лэмпорт 3 < 5 — ложный «порядок»)
+(p1, r3):  [1,0,0] ≤ [2,2,3] → p1 → r3  (через m1 → q1 → q2 → m2)
+(r2, q3):  [0,0,2] vs [2,3,0] → ∥      (Лэмпорт 2 < 5 — ложный)
+(p3, r3):  [3,0,2] vs [2,2,3] → ∥      (Лэмпорт 3 < 5 — ложный)
+```
+
+</details>
+
+#### C6. 🔑 Fencing-токен в PostgreSQL
 В `postgres:17` создай таблицу `payouts (id, state, fence)` и последовательность токенов.
 Смоделируй в двух `psql`: воркер A получил токен, «уснул»; воркер B получил следующий токен и
 выполнил выплату; A проснулся и пытается записать. Запись A должна дать 0 строк. Затем сделай
 то же самое без токена, но с `SELECT … FOR UPDATE` в одной транзакции — чем отличается и когда
 этот вариант не подходит?
 
-### C7. Блокировка etcd и ревизия как токен
+<details><summary>Ответ</summary>
+
+```sql
+CREATE TABLE payouts (id int PRIMARY KEY, state text NOT NULL, fence bigint NOT NULL DEFAULT 0);
+CREATE SEQUENCE fence_seq;
+INSERT INTO payouts VALUES (1, 'new', 0);
+SELECT nextval('fence_seq');     -- A: 1, «уснул»
+SELECT nextval('fence_seq');     -- B: 2
+UPDATE payouts SET state='paid by B', fence=2 WHERE id=1 AND fence < 2;   -- B: UPDATE 1
+UPDATE payouts SET state='paid by A', fence=1 WHERE id=1 AND fence < 1;   -- A: UPDATE 0 → стоп
+```
+С `BEGIN; SELECT … FOR UPDATE; …; COMMIT;` второй ждёт блокировку строки; «уснувший» первый
+держит её (или его откатит `idle_in_transaction_session_timeout`) — корректно: блокировка и данные
+в одной транзакции. Не подходит, если ресурс вне этой базы (S3, внешний API) или работа длинная.
+
+</details>
+
+#### C7. Блокировка etcd и ревизия как токен
 На стенде темы 04 запусти клиента в отдельном контейнере
-(`docker run --rm -it --network &lt;сеть лабы&gt; --entrypoint etcdctl &lt;образ etcd&gt;
+(`docker run --rm -it --network <сеть лабы> --entrypoint etcdctl <образ etcd>
 --endpoints=etcd1:2379 lock --ttl 5 job`), во втором терминале — такого же. Второй ждёт.
-Поставь первый на паузу (`docker pause &lt;id&gt;`) на 20 секунд. Что произошло со вторым? Сравни
+Поставь первый на паузу (`docker pause <id>`) на 20 секунд. Что произошло со вторым? Сравни
 `create_revision` ключей под префиксом `job` (`etcdctl get job --prefix -w json`). Что
 увидит первый после `docker unpause`? Какой номер ты передал бы в хранилище как токен?
 
-### C8. Монотонные часы под шагом времени
+<details><summary>Ответ</summary>
+
+На паузе сессия первого не шлёт keepalive, лиза (TTL 5 с) истекает, ключ удаляется —
+второй получает блокировку, `create_revision` его ключа больше. После `unpause` первый обнаружит
+потерю сессии (текст ошибки — **проверь** на своей версии), но в промежутке «думал», что держит
+блокировку. Токен — ревизия ключа (`ETCD_LOCK_REV`); хранилище принимает только не меньший.
+
+</details>
+
+#### C8. Монотонные часы под шагом времени
 На `app` запусти скрипт, который раз в секунду печатает `time.time()`, `time.monotonic()` и
 разницы с предыдущим значением. Во время работы останови chrony и сделай `date -s '1 minute ago'`.
 Что показали обе разницы? Верни время (`sudo chronyd -q`, затем `systemctl start chrony`).
 
+<details><summary>Ответ</summary>
+
+Разница `time.time()` в момент шага ≈ −59 с (время пошло назад), разница
+`time.monotonic()` ≈ +1 с — монотонные часы шаг не заметили. Любой таймаут, rate limiter или
+замер на `time.time()` в эту секунду получил бы отрицательную длительность.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Утром на одной ноде Kubernetes поды начали получать 401 от apiserver, kubelet пишет
 `x509: certificate has expired or is not yet valid`; на остальных нодах всё хорошо.
@@ -1087,7 +1074,7 @@ MON_CLOCK_SKEW`, клиенты жалуются на таймауты.
 Откат на снапшот с памятью вернул гостю старое время, chrony ещё не догнал или шагает
 только при старте. `ceph health detail`, `chronyc tracking` на MON; `chronyc makestep` на этой
 ноде; проверить, что все MON на одних источниках. На будущее: после отката снапшота —
-принудительная синхронизация в runbook ([../Storage/04_ceph.md](/storage/04-ceph)).
+принудительная синхронизация в runbook ([Хранилища: 04. Ceph: распределённое хранилище](/storage/04-ceph)).
 
 </details>
 
@@ -1134,7 +1121,7 @@ action items — про базу. Позже выяснилось, что баз
 Часы хоста базы спешили/отставали, хронологию собирали сортировкой по времени. Вывод
 неверный — и action items не те. Переписать таймлайн по корреляционным ID и причинности,
 добавить в постмортем фактор «несинхронизированное время» и action item на chrony + алерт
-([../SRE/05_postmortems.md](/sre/05-postmortems)).
+([SRE: 05. Постмортемы](/sre/05-postmortems)).
 
 </details>
 
@@ -1177,14 +1164,13 @@ action items — про базу. Позже выяснилось, что баз
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Почему нельзя верить часам в распределённой системе?
 
 <details><summary>Ответ</summary>
 
 Часы машин всегда расходятся (дрейф, ошибка NTP, шаги, високосные секунды), а процессы и VM
-   засыпают, не зная об этом. Длительности — монотонными часами, порядок между машинами —
-   логическими (терм, ревизия, epoch), блокировки — с fencing.
+засыпают, не зная об этом. Длительности — монотонными часами, порядок между машинами —
+логическими (терм, ревизия, epoch), блокировки — с fencing.
 
 </details>
 
@@ -1193,7 +1179,7 @@ action items — про базу. Позже выяснилось, что баз
 <details><summary>Ответ</summary>
 
 Кварц уходит на единицы–десятки ppm (86,4 мс/сутки на ppm). chrony с одним набором
-   источников, шаг только при старте, дальше slew, одна политика leap smear, мониторинг.
+источников, шаг только при старте, дальше slew, одна политика leap smear, мониторинг.
 
 </details>
 
@@ -1202,7 +1188,7 @@ action items — про базу. Позже выяснилось, что баз
 <details><summary>Ответ</summary>
 
 Wall clock — «который час», может прыгать назад; монотонные — «сколько прошло», не прыгают,
-   но несравнимы между машинами. Таймауты — монотонными, `created_at` — wall clock.
+но несравнимы между машинами. Таймауты — монотонными, `created_at` — wall clock.
 
 </details>
 
@@ -1211,7 +1197,7 @@ Wall clock — «который час», может прыгать назад; 
 <details><summary>Ответ</summary>
 
 Лэмпорт — одно число, `a → b ⇒ C(a) < C(b)`, полный порядок, одновременности не видит.
-   Векторные — N чисел, точно видят причинность и одновременность (конфликты), дороже.
+Векторные — N чисел, точно видят причинность и одновременность (конфликты), дороже.
 
 </details>
 
@@ -1220,7 +1206,7 @@ Wall clock — «который час», может прыгать назад; 
 <details><summary>Ответ</summary>
 
 Растущий номер лизы, который идёт с каждой записью; хранилище отвергает номер меньше
-   виденного — старый держатель после паузы ничего не испортит. В etcd — ревизия ключа.
+виденного — старый держатель после паузы ничего не испортит. В etcd — ревизия ключа.
 
 </details>
 
@@ -1229,8 +1215,8 @@ Wall clock — «который час», может прыгать назад; 
 <details><summary>Ответ</summary>
 
 Для эффективности — да. Для корректности — нет гарантий: зависит от ограниченных пауз,
-   задержек и ошибки часов и не даёт токенов (Клеппман); antirez спорит с допущениями, но паузу
-   после проверки без участия ресурса не поймать.
+задержек и ошибки часов и не даёт токенов (Клеппман); antirez спорит с допущениями, но паузу
+после проверки без участия ресурса не поймать.
 
 </details>
 
@@ -1239,8 +1225,8 @@ Wall clock — «который час», может прыгать назад; 
 <details><summary>Ответ</summary>
 
 Сначала «зачем»: эффективность — Redis/лиза + идемпотентность; корректность — блокировка в
-   той же БД в одной транзакции или etcd-лиза + ревизия с проверкой на ресурсе; ресурс не
-   проверяет — идемпотентность на его стороне или STONITH.
+той же БД в одной транзакции или etcd-лиза + ревизия с проверкой на ресурсе; ресурс не
+проверяет — идемпотентность на его стороне или STONITH.
 
 </details>
 
@@ -1249,8 +1235,8 @@ Wall clock — «который час», может прыгать назад; 
 <details><summary>Ответ</summary>
 
 HLC — физическое время + счётчик: близко к реальному времени и сохраняет причинность, но
-   требует ограниченного расхождения часов. TrueTime — интервал с гарантированной ошибкой
-   (GPS, атомные часы), коммит ждёт ~2ε ради внешней согласованности.
+требует ограниченного расхождения часов. TrueTime — интервал с гарантированной ошибкой
+(GPS, атомные часы), коммит ждёт ~2ε ради внешней согласованности.
 
 </details>
 
@@ -1259,8 +1245,8 @@ HLC — физическое время + счётчик: близко к реа
 <details><summary>Ответ</summary>
 
 chrony везде с одним набором источников; алерты на синхронизацию и смещение (node_exporter
-   timex, под chrony — `chrony_exporter`), порог ~50 мс; `chronyc tracking` в runbook перед
-   работами с кворумными системами.
+timex, под chrony — `chrony_exporter`), порог ~50 мс; `chronyc tracking` в runbook перед
+работами с кворумными системами.
 
 </details>
 
@@ -1269,10 +1255,8 @@ chrony везде с одним набором источников; алерт�
 <details><summary>Ответ</summary>
 
 TLS kubelet ↔ apiserver (`not yet valid`/`expired`), 401 на service account токенах, неверные
-    метки в событиях и логах; leader election устойчив к смещению, но не к разной скорости
-    часов; etcd на этой ноде предупреждает о расхождении с пирами.
-
----
+метки в событиях и логах; leader election устойчив к смещению, но не к разной скорости
+часов; etcd на этой ноде предупреждает о расхождении с пирами.
 
 </details>
 

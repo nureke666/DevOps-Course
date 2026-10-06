@@ -1,6 +1,6 @@
 ---
 title: "05. Kubernetes и Helm: чарт linkd 2.0 и данные в кластере"
-description: "Цель этапа: перенести чарт из 07-orbit в портфолио, довести его до linkd 2.0"
+description: "чарт под linkd 2.0, dev/prod, данные отдельно"
 ---
 
 # 05. Kubernetes и Helm: чарт linkd 2.0 и данные в кластере
@@ -48,7 +48,7 @@ description: "Цель этапа: перенести чарт из 07-orbit в 
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
  linkd-platform/deploy/helm/linkd/    ← chart/ из 07-orbit, обновлённый под 2.0
  linkd-gitops/envs/dev/values.yaml    ← values-dev.yaml   (image.tag пишет CI)
  linkd-gitops/envs/prod/values.yaml   ← values-prod.yaml
@@ -62,7 +62,8 @@ description: "Цель этапа: перенести чарт из 07-orbit в 
             postgres-0 (PVC)                           postgres-0 (PVC)
  Secret с LINKD_DATABASE_URL — пока руками (этап 08 заменит на Vault + ESO)
  NetworkPolicy: ingress-controller → linkd → postgres, остальное — deny
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -71,7 +72,8 @@ description: "Цель этапа: перенести чарт из 07-orbit в 
 
 ```bash
 cd ~/Projects/devops/07-orbit && ./check.sh
-```text
+```
+
 ### 2. Перенос
 
 - `chart/` → `linkd-platform/deploy/helm/linkd/`;
@@ -117,7 +119,7 @@ cd ~/Projects/devops/07-orbit && ./check.sh
 | Вариант | Плюсы | Минусы | Когда |
 |---------|-------|--------|-------|
 | Свой StatefulSet (из 07-orbit) | всё видно и объяснимо: PVC, headless Service, пробы | нет автофейловера, реплик, PITR | pet-проект, обучение |
-| Оператор (CloudNativePG) | реплики, фейловер, бэкапы и PITR декларативно | ещё один слой CRD и «магии» | расширение проекта ([11_demo_and_next.md](/project/11-demo-and-next)) |
+| Оператор (CloudNativePG) | реплики, фейловер, бэкапы и PITR декларативно | ещё один слой CRD и «магии» | расширение проекта ([11. Финальный прогон, демо и развитие](/project/11-demo-and-next)) |
 | Готовый чарт | быстро | проверяй, откуда образы и обновляются ли они | если понятно, что внутри |
 | Managed БД | бэкапы, обновления, HA у провайдера | деньги, vendor lock-in | прод |
 
@@ -129,7 +131,8 @@ cd ~/Projects/devops/07-orbit && ./check.sh
 helm lint deploy/helm/linkd -f ../linkd-gitops/envs/dev/values.yaml
 helm template linkd deploy/helm/linkd -f ../linkd-gitops/envs/prod/values.yaml \
   | kubectl apply --dry-run=server -f -
-```text
+```
+
 Потом поведение — это то, о чём спросят на собесе:
 
 - **rolling update под нагрузкой** (цикл `curl` или k6 из 14-pulse) — ноль ответов 5xx
@@ -159,7 +162,8 @@ helm template linkd deploy/helm/linkd -f ../linkd-gitops/envs/prod/values.yaml \
 ```bash
 git -C ~/Projects/linkd-platform add deploy docs && git -C ~/Projects/linkd-platform commit -m "deploy: helm chart for linkd 2.0"
 git -C ~/Projects/linkd-gitops add envs data && git -C ~/Projects/linkd-gitops commit -m "envs: dev/prod values and postgres"
-```text
+```
+
 ---
 
 ## ✅ Критерии приёмки
@@ -186,7 +190,7 @@ git -C ~/Projects/linkd-gitops add envs data && git -C ~/Projects/linkd-gitops c
   `storage` в `/health`.
 - **`replicas` в Deployment при включённом HPA** — каждый sync сбрасывает реплики,
   HPA возвращает: «пила». При HPA поле не рендерится.
-- **HPA без `requests.cpu`** не может посчитать утилизацию: `&lt;unknown&gt;`.
+- **HPA без `requests.cpu`** не может посчитать утилизацию: `<unknown>`.
 - **CPU limit** даёт throttling даже на свободной ноде; limit по памяти — обязателен.
 - **PDB при одной реплике** блокирует `drain` навсегда — в dev PDB выключен.
 - **Secret создан после Deployment** → `CreateContainerConfigError`. Под поднимется сам,
@@ -218,18 +222,18 @@ git -C ~/Projects/linkd-gitops add envs data && git -C ~/Projects/linkd-gitops c
 
 ## 📚 Теория в волте
 
-- Deployment, rolling update: [../Kubernetes/05_deployment.md](/kubernetes/05-deployment)
-- StatefulSet: [../Kubernetes/06_daemonset_statefulset.md](/kubernetes/06-daemonset-statefulset)
-- ConfigMap/Secret: [../Kubernetes/08_configmap_secret.md](/kubernetes/08-configmap-secret)
-- Probes и ресурсы: [../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources)
-- Service и Ingress: [../Kubernetes/11_service.md](/kubernetes/11-service),
-  [../Kubernetes/12_ingress.md](/kubernetes/12-ingress)
-- NetworkPolicy: [../Kubernetes/13_networkpolicy.md](/kubernetes/13-networkpolicy)
-- Хранилище: [../Kubernetes/14_storage.md](/kubernetes/14-storage)
-- Helm: [../Kubernetes/15_helm.md](/kubernetes/15-helm)
-- HPA: [../Kubernetes/18_hpa_autoscaling.md](/kubernetes/18-hpa-autoscaling)
-- PDB, spread, affinity: [../Kubernetes/19_scheduling.md](/kubernetes/19-scheduling)
-- Когда под не стартует: [../Kubernetes/20_troubleshooting.md](/kubernetes/20-troubleshooting)
-- PostgreSQL в эксплуатации: [../Left/01_Databases/04_postgresql_conf.md](/databases/04-postgresql-conf)
+- Deployment, rolling update: [Kubernetes: 05. Deployment и ReplicaSet](/kubernetes/05-deployment)
+- StatefulSet: [Kubernetes: 06. DaemonSet и StatefulSet](/kubernetes/06-daemonset-statefulset)
+- ConfigMap/Secret: [Kubernetes: 08. ConfigMap и Secret](/kubernetes/08-configmap-secret)
+- Probes и ресурсы: [Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources)
+- Service и Ingress: [Kubernetes: 11. Service](/kubernetes/11-service),
+  [Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress)
+- NetworkPolicy: [Kubernetes: 13. NetworkPolicy](/kubernetes/13-networkpolicy)
+- Хранилище: [Kubernetes: 14. Хранилище: PV, PVC, StorageClass](/kubernetes/14-storage)
+- Helm: [Kubernetes: 15. Helm](/kubernetes/15-helm)
+- HPA: [Kubernetes: 18. HPA и автоскейлинг](/kubernetes/18-hpa-autoscaling)
+- PDB, spread, affinity: [Kubernetes: 19. Планирование подов](/kubernetes/19-scheduling)
+- Когда под не стартует: [Kubernetes: 20. Траблшутинг кластера](/kubernetes/20-troubleshooting)
+- PostgreSQL в эксплуатации: [Базы данных: 04. postgresql.conf — основные параметры](/databases/04-postgresql-conf)
 
-➡️ Следующий этап: [06_gitops_argocd.md](/project/06-gitops-argocd)
+➡️ Следующий этап: [06. GitOps: Argo CD собирает кластер из linkd-gitops](/project/06-gitops-argocd)

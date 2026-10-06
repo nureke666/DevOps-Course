@@ -1,13 +1,13 @@
 ---
 title: "06. Паттерны надёжности, нагрузка и chaos engineering"
-description: "Блок → SRE и Observability → тема 06. Пробы и ресурсы в кубере — в"
+description: "Таймауты, ретраи с jitter, circuit breaker, k6, chaos engineering"
 ---
 
 # 06. Паттерны надёжности, нагрузка и chaos engineering
 
 > Блок → SRE и Observability → тема 06. Пробы и ресурсы в кубере — в
-> [../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources), graceful shutdown пода —
-> в [../Kubernetes/04_pod.md](/kubernetes/04-pod), rate limit в nginx — в [../Network/12_nginx.md](/network/12-nginx).
+> [Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources), graceful shutdown пода —
+> в [Kubernetes: 04. Pod — минимальная единица](/kubernetes/04-pod), rate limit в nginx — в [Сети: 12. Nginx](/network/12-nginx).
 >
 > **После темы ты умеешь:** выставлять таймауты и ретраи с exponential backoff и jitter,
 > объяснить retry storm и idempotency, применить circuit breaker, bulkhead, rate limiting
@@ -18,7 +18,7 @@ description: "Блок → SRE и Observability → тема 06. Пробы и �
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                     зависимость тормозит или падает
                                   │
    ┌──────────────┬───────────────┼────────────────┬─────────────────┐
@@ -32,7 +32,8 @@ description: "Блок → SRE и Observability → тема 06. Пробы и �
         на входе: RATE LIMITING / LOAD SHEDDING — не пускать больше, чем выдержим
         при выкатке: GRACEFUL SHUTDOWN + READINESS — не терять запросы
         проверка: НАГРУЗОЧНЫЕ ТЕСТЫ (k6) и CHAOS (game day) — до того, как сломает прод
-```text
+```
+
 ---
 
 ## 1. Таймауты
@@ -40,10 +41,11 @@ description: "Блок → SRE и Observability → тема 06. Пробы и �
 **Каждый сетевой вызов должен иметь таймаут.** Без него один зависший сервис держит
 соединения, потоки и память вызывающего — и падает цепочкой.
 
-```text
+```text:no-line-numbers
 без таймаута:  payments завис → shop-api ждёт вечно → воркеры shop-api заняты →
                shop-api не отвечает никому → фронт ждёт shop-api → всё лежит
-```text
+```
+
 | Правило | Пояснение |
 |---------|-----------|
 | Connect и read — отдельно | Connect короткий (0,5–1 с): «хост жив?»; read — по p99,9 зависимости + запас |
@@ -56,7 +58,8 @@ description: "Блок → SRE и Observability → тема 06. Пробы и �
 import httpx
 # 0,5 с на соединение, 2 с на остальное (чтение, запись, ожидание пула соединений)
 client = httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=0.5))
-```text
+```
+
 > ⚠️ Таймаут на стороне клиента не останавливает работу на стороне сервера. На стенде это
 > видно под нагрузкой: shop-api сдаётся через 2 с и отдаёт 504, а payments продолжает
 > обрабатывать очередь запросов, которые уже никто не ждёт, — полезная пропускная
@@ -73,12 +76,13 @@ client = httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=0.5))
 Нельзя: `400/401/403/404/422` (повтор даст то же самое) и неидемпотентный `POST` без ключа
 (двойное списание денег).
 
-```text
+```text:no-line-numbers
 exponential backoff:  0,1 → 0,2 → 0,4 → 0,8 с …  (растёт, но не больше cap)
 + jitter (full):      пауза = random(0, min(cap, base × 2^попытка))
 без jitter:           1000 клиентов ретраят в одну и ту же миллисекунду → волны нагрузки
 с jitter:             повторы размазаны во времени
-```text
+```
+
 ```python
 import asyncio
 import random
@@ -99,7 +103,8 @@ async def get_with_retries(client: httpx.AsyncClient, url: str,
         if attempt < attempts - 1:
             await asyncio.sleep(random.uniform(0, min(cap, base * 2 ** attempt)))  # full jitter
     return r
-```text
+```
+
 То же библиотекой `tenacity`:
 ```python
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
@@ -108,14 +113,16 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ra
        wait=wait_random_exponential(multiplier=0.1, max=2),
        retry=retry_if_exception_type(httpx.TransportError))
 async def fetch_price(item_id: int): ...
-```text
+```
+
 ### Retry storm
 
-```text
+```text:no-line-numbers
  клиент ─3 попытки─► API ─3 попытки─► payments ─3 попытки─► БД
  один запрос пользователя → до 3 × 3 × 3 = 27 запросов в базу
  база притормозила → все слои ретраят → нагрузка ×27 → база ложится окончательно
-```text
+```
+
 | Защита | Как |
 |--------|-----|
 | Ретраи на одном уровне | Обычно ближе к краю (клиент/шлюз) или только у вызова самой зависимости |
@@ -152,7 +159,7 @@ INSERT INTO payments (idempotency_key, order_id, amount)
 VALUES ('4f1c2a7e-…', 42, 1990.00)
 ON CONFLICT (idempotency_key) DO NOTHING
 RETURNING *;          -- пусто ⇒ это повтор: вернуть уже сохранённый платёж
-```text
+```
 Для очередей: консьюмер хранит ID обработанных сообщений (или делает операцию
 идемпотентной по бизнес-ключу) — доставка «ровно один раз» на практике строится как
 «хотя бы один раз + идемпотентный обработчик».
@@ -161,7 +168,7 @@ RETURNING *;          -- пусто ⇒ это повтор: вернуть уж
 
 ## 4. Circuit breaker
 
-```text
+```text:no-line-numbers
             N ошибок подряд / доля ошибок > порога
    CLOSED ───────────────────────────────────────► OPEN
  (пропускаем)                                    (сразу отказ, зависимость отдыхает)
@@ -169,7 +176,8 @@ RETURNING *;          -- пусто ⇒ это повтор: вернуть уж
       │ пробные запросы успешны                        ▼
       └─────────────────────────────────────────  HALF-OPEN
                   проба неудачна → снова OPEN     (пропускаем немного на пробу)
-```text
+```
+
 Зачем: не тратить таймауты и потоки на заведомо больную зависимость, отвечать быстро
 (fail fast или деградация) и дать зависимости восстановиться без добивающей нагрузки.
 
@@ -196,7 +204,7 @@ class CircuitBreaker:
         self.failures += 1
         if self.opened_at is not None or self.failures >= self.failure_threshold:
             self.opened_at = time.monotonic()         # → OPEN (или снова OPEN после пробы)
-```text
+```
 ```python
 breaker = CircuitBreaker()
 
@@ -211,7 +219,8 @@ async def pay_or_degrade():
         raise
     breaker.record_success()
     return r.json()
-```text
+```
+
 В проде берут готовое: resilience4j (Java), Polly (.NET), pybreaker (Python), gobreaker (Go) —
 или делают это на уровне сети через service mesh:
 ```yaml
@@ -229,19 +238,21 @@ spec:
       interval: 10s
       baseEjectionTime: 30s
       maxEjectionPercent: 50
-```text
+```
+
 ---
 
 ## 5. Bulkhead — переборки
 
 Как отсеки на корабле: пробоина в одном не топит весь корабль.
 
-```text
+```text:no-line-numbers
 БЕЗ ИЗОЛЯЦИИ                              С ПЕРЕБОРКАМИ
 общий пул из 100 воркеров                 payments: 20   search: 30   прочее: 50
 payments завис → все 100 ждут его  →      payments завис → заняты 20 его слотов,
 сервис лежит целиком                      поиск и каталог работают
-```text
+```
+
 Где применяют: отдельные пулы соединений/потоков на каждую зависимость, семафоры,
 отдельные инстансы или node pool'ы для критичного и фонового трафика, лимиты
 `connectionPool` в mesh, разные очереди для разных типов задач.
@@ -254,7 +265,8 @@ async def call_payments():
         raise HTTPException(status_code=503, detail="payments busy")
     async with PAYMENTS_SLOTS:
         return await client.get(f"{PAYMENTS_URL}/pay")
-```text
+```
+
 ---
 
 ## 6. Rate limiting и load shedding
@@ -277,7 +289,8 @@ http {
         }
     }
 }
-```text
+```
+
 - **Rate limiting** — квоты на клиента («не больше 100 запросов/мин на API-ключ»):
   защита от злоупотреблений и «шумных соседей».
 - **Load shedding** — когда сервис перегружен **в целом**, он сам отбрасывает часть
@@ -306,14 +319,14 @@ http {
 
 ## 8. Graceful shutdown и health checks
 
-```text
+```text:no-line-numbers
 Kubernetes удаляет под (деплой, скейл-даун, эвикция):
  1. под → Terminating; параллельно его убирают из Endpoints (это занимает секунды!)
  2. preStop (например, sleep 5) — ждём, пока балансировщики перестанут слать трафик
  3. SIGTERM → приложение перестаёт принимать новые запросы, дорабатывает текущие,
     закрывает соединения с БД, коммитит офсеты очереди
  4. через terminationGracePeriodSeconds (по умолчанию 30 с) — SIGKILL
-```text
+```
 ```yaml
 spec:
   terminationGracePeriodSeconds: 30
@@ -322,13 +335,13 @@ spec:
       lifecycle:
         preStop:
           exec: { command: ["sleep", "5"] }   # в свежих Kubernetes есть и встроенное `sleep`
-```text
+```
 Без этого каждый деплой — пачка 502 и съеденный кусок error budget.
 Uvicorn на SIGTERM сам перестаёт принимать соединения и ждёт текущие запросы
 (верхний предел — `--timeout-graceful-shutdown`). Приложение должно быть PID 1 или
 получать сигнал (exec-форма `CMD`), иначе SIGTERM не дойдёт.
 
-**Health checks** (подробно — [../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources)):
+**Health checks** (подробно — [Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources)):
 
 | Проба | Отвечает на вопрос | Грабля |
 |-------|--------------------|--------|
@@ -345,7 +358,7 @@ Uvicorn на SIGTERM сам перестаёт принимать соедине
 
 **Закон Литтла:** `L = λ × W` — среднее число запросов в системе = поток × время обработки.
 
-```text
+```text:no-line-numbers
 Стенд: пул payments = 10 «соединений», обработка ~75 мс в среднем
   ёмкость ≈ 10 / 0,075 ≈ 133 запроса/с
   при 100 RPS: в работе ≈ 100 × 0,075 = 7,5 соединения — запас есть
@@ -353,8 +366,9 @@ Uvicorn на SIGTERM сам перестаёт принимать соедине
                латентность уходит в секунды, после 2 с — 504
 Реальный прогон k6 на стенде: «колено» около 120 RPS — p95 скачком с 0,19 до 1,9 с,
 затем почти все ошибки — 504. Близко к расчёту, но ниже: свои накладные расходы у Python.
-```text
-```text
+```
+
+```text:no-line-numbers
 latency
    │                                  ╱  ← «колено»: очередь растёт быстрее,
    │                                 ╱      чем обслуживается
@@ -362,14 +376,15 @@ latency
    │ ___________________________╱
    └──────────────────────────────────────► нагрузка (RPS)
          рабочая зона        запас    насыщение
-```text
+```
+
 Практика:
 - Знать пиковую нагрузку (и сезонность: распродажи, конец месяца) и ёмкость каждого звена.
 - Держать запас: N+1 (выдержать потерю одного инстанса/зоны), целевая утилизация в пик
   ~50–70% для CPU-bound сервисов.
 - Узкое место — часто не CPU, а пулы соединений, лимиты БД, квоты облака, внешние API.
 - Прогноз роста раз в квартал + нагрузочный тест перед крупными событиями.
-- Автомасштабирование ([../Kubernetes/18_hpa_autoscaling.md](/kubernetes/18-hpa-autoscaling))
+- Автомасштабирование ([Kubernetes: 18. HPA и автоскейлинг](/kubernetes/18-hpa-autoscaling))
   не спасает, если узкое место — база или внешний лимит.
 
 ---
@@ -402,20 +417,21 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_failed: ['rate&lt;0.01'],                 // ≤ 1% ошибок
+    http_req_failed: ['rate<0.01'],                 // ≤ 1% ошибок
     http_req_duration: ['p(95)<300', 'p(99)<1000'], // латентность в мс
   },
 };
 
 export default function () {
   const res = http.get(`${BASE_URL}/checkout`, { tags: { name: 'checkout' } });
-  check(res, { 'status 200': (r) =&gt; r.status === 200 });
+  check(res, { 'status 200': (r) => r.status === 200 });
 }
-```text
+```
 ```bash
 docker compose run --rm k6 run /scripts/load.js                             # итог в консоли
 docker compose run --rm k6 run -o experimental-prometheus-rw /scripts/load.js  # + метрики k6_* в Prometheus
-```text
+```
+
 Как читать результат:
 - **thresholds** — критерии «прошёл/не прошёл» (k6 завершится с ненулевым кодом → удобно в CI).
 - `http_req_failed`, `http_req_duration` p95/p99 — сравнивай с SLO, а не «на глаз».
@@ -435,14 +451,15 @@ docker compose run --rm k6 run -o experimental-prometheus-rw /scripts/load.js  #
 Chaos engineering — **эксперименты** с контролируемыми отказами, чтобы проверить гипотезу
 об устойчивости, а не «сломать что-нибудь и посмотреть».
 
-```text
+```text:no-line-numbers
 1. Steady state: как выглядит норма в метриках? (SLI: доля ошибок < 0,1%, p99 < 300 мс)
 2. Гипотеза:     «если payments начнёт отвечать за 2 с, checkout деградирует до очереди,
                   SLI останется в норме, алерт придёт за 5 минут»
 3. Эксперимент:  внести отказ, ограничив радиус поражения (staging, 1 инстанс, 5% трафика)
 4. Наблюдение:   сравнить с гипотезой; условия досрочной остановки заданы заранее
 5. Вывод:        баги, дыры в алертах и runbooks → задачи; повторять регулярно, автоматизировать
-```text
+```
+
 | Что ломать | Как (стенд / Linux / Kubernetes) | Что проверяем |
 |-----------|-----------------------------------|---------------|
 | Процесс упал | `docker compose stop payments`, удалить под | Быстрый отказ, ретраи, readiness |
@@ -459,7 +476,7 @@ Chaos Monkey в Netflix.
 
 **Game day** — запланированные учения команды: сценарий отказа + проведение инцидента
 по-настоящему (роли, канал, апдейты, runbook) + постмортем. Проверяет не только систему,
-но и людей, алерты и документацию. Формат — в [07_practice_labs.md](/mlops/07-practice-labs), лаба 4.
+но и людей, алерты и документацию. Формат — в [07. Практика: 4 лабы по SRE и observability](/sre/07-practice-labs), лаба 4.
 
 ---
 
@@ -531,13 +548,17 @@ Chaos Monkey в Netflix.
 9. Закон Литтла и нагрузочный тест находят «колено» — ёмкость планируют с запасом N+1.
 10. Chaos — это эксперимент с гипотезой и стоп-условиями; game day проверяет и систему, и людей.
 
-➡️ Дальше: [07_practice_labs.md](/mlops/07-practice-labs) · задачи: 06_reliability_patterns_tasks.md
+---
 
+## Задачи
+
+> Стенд: из [SRE](/sre/); код сервиса — `app/app.py` из
+> [07. Практика: 4 лабы по SRE и observability](/sre/07-practice-labs). После правок: `docker compose up -d --build shop-api`.
+> Нагрузка: `docker compose run --rm k6 run /scripts/load.js`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Почему у каждого сетевого вызова должен быть таймаут? Опиши каскадный отказ.
 
@@ -693,6 +714,7 @@ Liveness решает «рестартовать ли контейнер», read
 <details><summary>Ответ</summary>
 
 `L = λ × W`: 300 × 0,04 = 12 одновременных запросов. С запасом на пики и разброс —
+18–24 соединения; и проверить, что суммарно по подам не превышен `max_connections` БД.
 
 </details>
 
@@ -731,172 +753,99 @@ Steady state → гипотеза → эксперимент с ограниче
 
 ### Блок B. «Что произойдёт / что тут не так»
 
+```python
+B1.  requests.get("http://payments/pay")
+
+B2.  for i in range(5):
+         try:
+             requests.post(PAY_URL, json=order, timeout=2)
+             break
+         except Exception:
+             time.sleep(1)
+
+B3.  # ретраим любой статус >= 400, включая 400 Bad Request
+```
+
+```yaml
+B4.  # клиент, API, payments и драйвер БД — каждый ретраит 3 раза
+
+B5.  livenessProbe:
+       httpGet: { path: /health, port: 8000 }   # /health проверяет Postgres и Redis
+
+B6.  # Dockerfile
+     CMD python app.py              # shell-форма; terminationGracePeriodSeconds: 30
+```
+
+```javascript
+B7.  // «проверим, сколько RPS выдержит API»
+     export const options = { vus: 50, duration: '10m' };
+     export default function () { http.get(URL); sleep(1); }
+```
 
 ```text:no-line-numbers
-B1.  requests.get("http://payments/pay")
-```text
-<details><summary>Ответ</summary>
+B8.  circuit breaker: failure_threshold = 1, reset_timeout = 5 минут
 
-⚠️ `requests` по умолчанию ждёт бесконечно — зависание payments повесит воркеры.
+B9.  limit_req zone=api;            # без burst; клиенты шлют пачки по 5 запросов разом
+
+B10. fallback «показывать закэшированные цены» написан год назад, ни разу не срабатывал
+
+B11. «Давайте в пятницу вечером убьём продовую базу и посмотрим, что будет»
+
+B12. пул соединений 200 на каждом из 20 подов; у PostgreSQL max_connections = 100
+
+B13. таймаут shop-api → payments 10 с, таймаут Ingress — 5 с
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ `requests` по умолчанию ждёт бесконечно — зависание payments повесит воркеры.
 Нужен `timeout=(0.5, 2)`.
 
-</details>
-
-```text:no-line-numbers
-B2.  for i in range(5):
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Ретрай неидемпотентного POST (двойные списания), ловится любое исключение,
+**B2.** ⚠️ Ретрай неидемпотентного POST (двойные списания), ловится любое исключение,
 фиксированная пауза без backoff и jitter, 5 попыток. Нужны `Idempotency-Key`, ретрай
 только временных ошибок, backoff + jitter, 2–3 попытки.
 
-</details>
+**B3.** ⚠️ 4xx — ошибки запроса: повтор даст тот же ответ и лишнюю нагрузку.
 
-```text:no-line-numbers
-         try:
-```text
-```text:no-line-numbers
-             requests.post(PAY_URL, json=order, timeout=2)
-```text
-```text:no-line-numbers
-             break
-```text
-```text:no-line-numbers
-         except Exception:
-```text
-```text:no-line-numbers
-             time.sleep(1)
-```text
-```text:no-line-numbers
-B3.  # ретраим любой статус >= 400, включая 400 Bad Request
-```text
-<details><summary>Ответ</summary>
+**B4.** ⚠️ Retry storm: 3⁴ = 81× на базу. Ретраи — на одном уровне, с бюджетом.
 
-⚠️ 4xx — ошибки запроса: повтор даст тот же ответ и лишнюю нагрузку.
+**B5.** ⚠️ Моргнула база или Redis — рестарт всех подов. Зависимости — не в liveness.
 
-</details>
-
-
-```text:no-line-numbers
-B4.  # клиент, API, payments и драйвер БД — каждый ретраит 3 раза
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Retry storm: 3⁴ = 81× на базу. Ретраи — на одном уровне, с бюджетом.
-
-</details>
-
-```text:no-line-numbers
-B5.  livenessProbe:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Моргнула база или Redis — рестарт всех подов. Зависимости — не в liveness.
-
-</details>
-
-```text:no-line-numbers
-       httpGet: { path: /health, port: 8000 }   # /health проверяет Postgres и Redis
-```text
-```text:no-line-numbers
-B6.  # Dockerfile
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Shell-форма запускает `/bin/sh -c`, SIGTERM получает shell, а не Python —
+**B6.** ⚠️ Shell-форма запускает `/bin/sh -c`, SIGTERM получает shell, а не Python —
 graceful shutdown не происходит, через 30 с SIGKILL. Нужна exec-форма:
 `CMD ["python", "app.py"]`.
 
-</details>
-
-```text:no-line-numbers
-     CMD python app.py              # shell-форма; terminationGracePeriodSeconds: 30
-```text
-```text:no-line-numbers
-B7.  // «проверим, сколько RPS выдержит API»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Closed model со `sleep(1)`: при тормозах сервиса нагрузка сама снижается,
+**B7.** ⚠️ Closed model со `sleep(1)`: при тормозах сервиса нагрузка сама снижается,
 тест не покажет предел. Нужен `ramping-arrival-rate`.
 
-</details>
-
-```text:no-line-numbers
-     export const options = { vus: 50, duration: '10m' };
-```text
-```text:no-line-numbers
-     export default function () { http.get(URL); sleep(1); }
-```text
-```text:no-line-numbers
-B8.  circuit breaker: failure_threshold = 1, reset_timeout = 5 минут
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Одна случайная ошибка открывает breaker на 5 минут — сервис сам себе устраивает
+**B8.** ⚠️ Одна случайная ошибка открывает breaker на 5 минут — сервис сам себе устраивает
 отказ. Порог по доле ошибок на окне, `reset_timeout` — секунды или десятки секунд.
 
-</details>
-
-```text:no-line-numbers
-B9.  limit_req zone=api;            # без burst; клиенты шлют пачки по 5 запросов разом
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без `burst` лишние запросы пачки сразу получают отказ, хотя средняя скорость в норме.
+**B9.** ⚠️ Без `burst` лишние запросы пачки сразу получают отказ, хотя средняя скорость в норме.
 Нужен `burst` (и `nodelay`, если не хочется задерживать).
 
-</details>
+**B10.** ⚠️ Непроверенный fallback скорее всего не сработает. Проверить chaos-экспериментом.
 
-```text:no-line-numbers
-B10.  fallback «показывать закэшированные цены» написан год назад, ни разу не срабатывал
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Непроверенный fallback скорее всего не сработает. Проверить chaos-экспериментом.
-
-</details>
-
-```text:no-line-numbers
-B11.  «Давайте в пятницу вечером убьём продовую базу и посмотрим, что будет»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Нет гипотезы, радиуса, стоп-условий; прод и пятница. Начинать со staging,
+**B11.** ⚠️ Нет гипотезы, радиуса, стоп-условий; прод и пятница. Начинать со staging,
 в рабочее время, с ограниченным радиусом.
 
-</details>
-
-```text:no-line-numbers
-B12.  пул соединений 200 на каждом из 20 подов; у PostgreSQL max_connections = 100
-```text
-<details><summary>Ответ</summary>
-
-⚠️ 20 × 200 = 4000 соединений при лимите 100. Пулы считать от лимита БД
+**B12.** ⚠️ 20 × 200 = 4000 соединений при лимите 100. Пулы считать от лимита БД
 (с учётом всех подов и HPA) или ставить PgBouncer.
 
-</details>
-
-```text:no-line-numbers
-B13.  таймаут shop-api → payments 10 с, таймаут Ingress — 5 с
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Ingress сдаётся через 5 с, а shop-api ждёт payments ещё 5 с впустую.
+**B13.** ⚠️ Ingress сдаётся через 5 с, а shop-api ждёт payments ещё 5 с впустую.
 Внутренний таймаут должен быть меньше внешнего.
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Падение против зависания
-**1.** `docker compose pause payments`, сделай два запроса к `/checkout` с
+#### C1. 🔑 Падение против зависания
+1. `docker compose pause payments`, сделай два запроса к `/checkout` с
    `curl -s -o /dev/null -w "%{http_code} %{time_total}s\n"`.
+2. `docker compose unpause payments && docker compose stop payments` — повтори.
+3. Сравни коды и время. Почему зависание хуже падения? Не забудь `docker compose start payments`.
 
 <details><summary>Ответ</summary>
 
@@ -906,107 +855,117 @@ B13.  таймаут shop-api → payments 10 с, таймаут Ingress — 5 �
 
 </details>
 
-**2.** `docker compose unpause payments && docker compose stop payments` — повтори.
-
-<details><summary>Ответ</summary>
-
-На стенде колено обычно около 110–130 RPS (при расчётных ~133): p95 скачком уходит
-с ~0,2 с в секунды, затем основная масса ошибок — 504 (таймаут shop-api → payments), часть —
-
-</details>
-
-**3.** Сравни коды и время. Почему зависание хуже падения? Не забудь `docker compose start payments`.
-
-<details><summary>Ответ</summary>
-
-Прогноз: 20 / 0,075 ≈ 267 RPS. На практике упрёшься раньше — в CPU единственного
-процесса uvicorn в shop-api или payments (накладные расходы Python и инструментации).
-Узкое место переехало из пула в CPU.
-
-</details>
-
-### C2. 🔑 Найти «колено» k6
-**1.** Запусти `load.js` с выводом в Prometheus.
-
-<details><summary>Ответ</summary>
-
-`pause`: 504 примерно через 2 с — процесс заморожен, соединение принимается ядром,
-ответа нет, срабатывает read timeout. `stop`: 502 за десятки миллисекунд — имя `payments`
-не резолвится, ошибка мгновенная. Зависание хуже: каждый запрос держит ресурсы до таймаута.
-
-</details>
-
-**2.** По графикам RPS и p95 `/checkout` найди нагрузку, на которой латентность резко растёт.
-
-<details><summary>Ответ</summary>
-
-На стенде колено обычно около 110–130 RPS (при расчётных ~133): p95 скачком уходит
-с ~0,2 с в секунды, затем основная масса ошибок — 504 (таймаут shop-api → payments), часть —
-
-</details>
-
-**3.** Какие коды ошибок появились? Есть ли `dropped_iterations`? Что показывает спан
+#### C2. 🔑 Найти «колено» k6
+1. Запусти `load.js` с выводом в Prometheus.
+2. По графикам RPS и p95 `/checkout` найди нагрузку, на которой латентность резко растёт.
+3. Какие коды ошибок появились? Есть ли `dropped_iterations`? Что показывает спан
    `db.pool.acquire` в медленных трейсах?
 
 <details><summary>Ответ</summary>
 
+На стенде колено обычно около 110–130 RPS (при расчётных ~133): p95 скачком уходит
+с ~0,2 с в секунды, затем основная масса ошибок — 504 (таймаут shop-api → payments), часть —
+502. `dropped_iterations` появляются, когда запросы висят долго и VU не хватает. В медленных
+трейсах почти всё время занимает `db.pool.acquire`.
+
+</details>
+
+#### C3. Закон Литтла
+Посчитай ожидаемую ёмкость payments при `POOL_SIZE=20` (среднее время обработки ~75 мс).
+Поменяй в compose, перезапусти, повтори C2. Совпал ли прогноз? Если нет — что стало
+следующим узким местом?
+
+<details><summary>Ответ</summary>
+
 Прогноз: 20 / 0,075 ≈ 267 RPS. На практике упрёшься раньше — в CPU единственного
 процесса uvicorn в shop-api или payments (накладные расходы Python и инструментации).
 Узкое место переехало из пула в CPU.
 
 </details>
 
-### C3. Закон Литтла
-Посчитай ожидаемую ёмкость payments при `POOL_SIZE=20` (среднее время обработки ~75 мс).
-Поменяй в compose, перезапусти, повтори C2. Совпал ли прогноз? Если нет — что стало
-следующим узким местом?
-
-### C4. Ретраи с jitter
-**1.** Оберни вызов payments в `/checkout` функцией `get_with_retries` из конспекта.
-
-<details><summary>Ответ</summary>
-
-`pause`: 504 примерно через 2 с — процесс заморожен, соединение принимается ядром,
-ответа нет, срабатывает read timeout. `stop`: 502 за десятки миллисекунд — имя `payments`
-не резолвится, ошибка мгновенная. Зависание хуже: каждый запрос держит ресурсы до таймаута.
-
-</details>
-
-**2.** Включи `error_rate=0.3`. Сравни долю ошибок `/checkout` и RPS на payments с ретраями
+#### C4. Ретраи с jitter
+1. Оберни вызов payments в `/checkout` функцией `get_with_retries` из конспекта.
+2. Включи `error_rate=0.3`. Сравни долю ошибок `/checkout` и RPS на payments с ретраями
    и без. Посчитай теоретические значения заранее.
 
 <details><summary>Ответ</summary>
 
-На стенде колено обычно около 110–130 RPS (при расчётных ~133): p95 скачком уходит
-с ~0,2 с в секунды, затем основная масса ошибок — 504 (таймаут shop-api → payments), часть —
+Без ретраев ошибок ~30%. С 3 попытками вероятность неудачи 0,3³ = 2,7%, но нагрузка
+на payments растёт в 1 + 0,3 + 0,09 = 1,39 раза. Ретраи хороши при случайных ошибках
+и опасны при перегрузке.
 
 </details>
 
-### C5. Circuit breaker
+#### C5. Circuit breaker
 Добавь `CircuitBreaker` с fallback `{"status": "queued"}`. Сделай `pause payments`
 под фоновым трафиком. Как изменились латентность и коды ответов после срабатывания breaker?
 
-### C6. Bulkhead
+<details><summary>Ответ</summary>
+
+Первые запросы ждут таймаут (2 с) и дают 504; после `failure_threshold` ошибок
+breaker открывается — ответы мгновенные с fallback. Раз в `reset_timeout` проба;
+после `unpause` breaker закрывается.
+
+</details>
+
+#### C6. Bulkhead
 Ограничь одновременные вызовы payments семафором на 20 с быстрым отказом `503`.
 Прогони `load.js`. Сравни распределение латентности и кодов с C2.
 
-### C7. Rate limiting
+<details><summary>Ответ</summary>
+
+Вместо 504 через 2 с часть запросов получает быстрый 503: латентность успешных
+ниже, очередь в payments не растёт без предела, «хвост» короче.
+
+</details>
+
+#### C7. Rate limiting
 Поставь перед shop-api контейнер nginx с `limit_req` (10 r/s, burst 20). Дай всплеск k6.
 Какая доля ответов — `429`? Что увидит клиент в заголовках?
 
-### C8. Graceful shutdown
+<details><summary>Ответ</summary>
+
+Доля 429 зависит от всплеска. nginx по умолчанию не добавляет `Retry-After`;
+вариант — отдать отказ через именованную локацию:
+```nginx
+limit_req_status 429;
+error_page 429 = @ratelimited;
+location @ratelimited {
+    add_header Retry-After 1 always;   # always — чтобы заголовок попал в ответ с ошибкой
+    return 429;
+}
+```
+
+</details>
+
+#### C8. Graceful shutdown
 Под постоянной нагрузкой (`constant-arrival-rate`, 30 RPS) сделай `docker compose restart shop-api`.
 Сколько запросов упало? Что понадобилось бы в Kubernetes, чтобы деплой проходил без ошибок?
 
-### C9. 🔑 Chaos-эксперимент по правилам
+<details><summary>Ответ</summary>
+
+Упадут запросы, которые были в работе или пришли во время рестарта (единицы–десятки).
+В Kubernetes: несколько реплик, rolling update с `maxUnavailable: 0`, readiness-проба,
+`preStop: sleep`, обработка SIGTERM, PodDisruptionBudget.
+
+</details>
+
+#### C9. 🔑 Chaos-эксперимент по правилам
 Для сценария «payments отвечает на 500 мс дольше» запиши: steady state (SLI), гипотезу,
 радиус поражения, условия остановки. Проведи (`/chaos?delay_ms=500`), сравни с гипотезой,
 оформи выводы как action items.
 
+<details><summary>Ответ</summary>
+
+Пример гипотезы: «SLI доступности останется ≥ 99,9%, p99 вырастет до ~0,8 с,
+латентный SLO начнёт гореть, латентный алерт придёт за ≤ 10 минут». Условие остановки:
+доля ошибок > 5% дольше 2 минут.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После каждого деплоя — всплеск 502 примерно на 20 секунд.
 
@@ -1101,13 +1060,12 @@ Staging не похож на прод: меньше данных (индексы
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как правильно делать ретраи?
 
 <details><summary>Ответ</summary>
 
 Только временные ошибки и идемпотентные операции (или с ключом), 2–3 попытки,
-   exponential backoff с jitter, на одном уровне, с retry budget, уважая `Retry-After`.
+exponential backoff с jitter, на одном уровне, с retry budget, уважая `Retry-After`.
 
 </details>
 
@@ -1116,7 +1074,7 @@ Staging не похож на прод: меньше данных (индексы
 <details><summary>Ответ</summary>
 
 Пауза между попытками растёт экспоненциально с ограничением; jitter — случайная пауза
-   в этих пределах, чтобы клиенты не ретраили синхронно.
+в этих пределах, чтобы клиенты не ретраили синхронно.
 
 </details>
 
@@ -1125,7 +1083,7 @@ Staging не похож на прод: меньше данных (индексы
 <details><summary>Ответ</summary>
 
 Повтор операции даёт тот же результат; делает безопасными ретраи и доставку «хотя бы один
-   раз». Реализуется ключом идемпотентности и уникальным ограничением.
+раз». Реализуется ключом идемпотентности и уникальным ограничением.
 
 </details>
 
@@ -1134,7 +1092,7 @@ Staging не похож на прод: меньше данных (индексы
 <details><summary>Ответ</summary>
 
 Автомат с состояниями closed/open/half-open: при частых ошибках перестаёт звать зависимость
-   и отвечает сразу (или fallback), периодически пробует восстановиться.
+и отвечает сразу (или fallback), периодически пробует восстановиться.
 
 </details>
 
@@ -1143,7 +1101,7 @@ Staging не похож на прод: меньше данных (индексы
 <details><summary>Ответ</summary>
 
 Изоляция ресурсов (пулы, семафоры, инстансы) по зависимостям и классам трафика, чтобы
-   отказ одной части не съел всё.
+отказ одной части не съел всё.
 
 </details>
 
@@ -1152,7 +1110,7 @@ Staging не похож на прод: меньше данных (индексы
 <details><summary>Ответ</summary>
 
 Liveness — «жив ли процесс» (рестарт), readiness — «готов ли к трафику» (исключение
-   из балансировки).
+из балансировки).
 
 </details>
 
@@ -1161,7 +1119,7 @@ Liveness — «жив ли процесс» (рестарт), readiness — «г
 <details><summary>Ответ</summary>
 
 Обработка SIGTERM в приложении, `preStop: sleep`, readiness, достаточный grace period,
-   rolling update с `maxUnavailable: 0`, PDB.
+rolling update с `maxUnavailable: 0`, PDB.
 
 </details>
 
@@ -1170,8 +1128,8 @@ Liveness — «жив ли процесс» (рестарт), readiness — «г
 <details><summary>Ответ</summary>
 
 Цель и SLO → сценарий по реальному профилю → open model (arrival rate) в k6 → smoke,
-   затем ступенчатый рост → thresholds от SLO → наблюдение за сервером (RED, трейсы,
-   ресурсы) → поиск колена и узкого места → отчёт.
+затем ступенчатый рост → thresholds от SLO → наблюдение за сервером (RED, трейсы,
+ресурсы) → поиск колена и узкого места → отчёт.
 
 </details>
 
@@ -1180,7 +1138,7 @@ Liveness — «жив ли процесс» (рестарт), readiness — «г
 <details><summary>Ответ</summary>
 
 Контролируемые эксперименты с отказами: steady state, гипотеза, малый радиус,
-   условия остановки, выводы; game day — учения команды.
+условия остановки, выводы; game day — учения команды.
 
 </details>
 
@@ -1189,9 +1147,7 @@ Liveness — «жив ли процесс» (рестарт), readiness — «г
 <details><summary>Ответ</summary>
 
 Закон Литтла, профиль нагрузки и пики, нагрузочный тест до колена, запас N+1 и целевая
-    утилизация, учёт узких мест вне CPU (пулы, лимиты БД, квоты).
-
----
+утилизация, учёт узких мест вне CPU (пулы, лимиты БД, квоты).
 
 </details>
 

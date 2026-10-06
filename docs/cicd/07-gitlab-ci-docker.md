@@ -434,7 +434,7 @@ deploy:staging:
 > (Settings → Repository → Deploy tokens, scope `read_registry`) и логинься им.
 
 ### Через Ansible
-См. [03_pipeline_design.md](/cicd/03-pipeline-design) §5 — плейбук получает `app_image`
+См. [03. Проектирование пайплайна](/cicd/03-pipeline-design) §5 — плейбук получает `app_image`
 параметром и не знает ничего про CI.
 
 ---

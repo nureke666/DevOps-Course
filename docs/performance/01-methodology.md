@@ -1,14 +1,14 @@
 ---
 title: "01. Методология: USE, «60 секунд» и load average"
-description: "Блок → Deep Linux Troubleshooting & Performance → тема 01. Опирается на"
+description: "Метод вместо случайных команд, чтение vmstat/mpstat/iostat/sar, гипотеза → замер"
 ---
 
 # 01. Методология: USE, «60 секунд» и load average
 
 > Блок → Deep Linux Troubleshooting & Performance → тема 01. Опирается на
-> [../Linux/14_process_utilization.md](/linux/14-process-utilization) (top, vmstat, iostat,
-> sar — базово), [../Linux/21_troubleshooting.md](/linux/21-troubleshooting) (диагностика
-> сети снизу вверх) и [../Left/02_Monitoring/07_what_to_monitor.md](/monitoring/07-what-to-monitor)
+> [Linux: 14. Мониторинг процессов и cron](/linux/14-process-utilization) (top, vmstat, iostat,
+> sar — базово), [Linux: 21. Troubleshooting](/linux/21-troubleshooting) (диагностика
+> сети снизу вверх) и [Мониторинг: 07. Что мониторить: 4 сигнала, USE, RED, SLO](/monitoring/07-what-to-monitor)
 > (USE и RED как метрики в Prometheus).
 >
 > **После темы ты умеешь:** идти по методу вместо случайных команд; за минуту снять картину
@@ -20,7 +20,7 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  жалоба: «тормозит»
         │
         ▼
@@ -38,7 +38,8 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
         │
         ▼
  одно изменение ──► замер «после» тем же инструментом ──► причина доказана ──► постмортем
-```text
+```
+
 ---
 
 ## 1. Почему метод, а не «команды по привычке»
@@ -69,7 +70,7 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
 
 ## 2. USE-метод на CLI
 
-Определения и PromQL — в [../Left/02_Monitoring/07_what_to_monitor.md](/monitoring/07-what-to-monitor).
+Определения и PromQL — в [Мониторинг: 07. Что мониторить: 4 сигнала, USE, RED, SLO](/monitoring/07-what-to-monitor).
 Здесь — **какая команда отвечает на какой вопрос** на живом хосте.
 
 | Ресурс | Utilization | Saturation | Errors |
@@ -89,18 +90,18 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
 
 > ⚠️ Utilization за интервал прячет всплески: «60% за минуту» может быть 30 секунд по 100%
 > и 30 секунд простоя. Для коротких всплесков нужны интервалы по 1 секунде и гистограммы
-> (тема [07_ebpf_bpftrace.md](/performance/07-ebpf-bpftrace)).
+> (тема [07. eBPF, bcc и bpftrace: вопросы прямо к ядру](/performance/07-ebpf-bpftrace)).
 
 **Программные ресурсы** забывают чаще всего, а ломаются они не реже железа: файловые
 дескрипторы, conntrack, эфемерные порты, пулы потоков и соединений к БД, лимиты cgroups.
 Если USE по железу чистый, а сервису плохо — ищи здесь (темы
-[04_network_deep.md](/performance/04-network-deep) и [06_cgroups_containers.md](/performance/06-cgroups-containers)).
+[04. Сеть глубже: очереди, TIMEWAIT, conntrack и дропы](/performance/04-network-deep) и [06. cgroups v2 и контейнеры](/performance/06-cgroups-containers)).
 
 ---
 
 ## 3. RED → USE: от сервиса к ресурсу
 
-```text
+```text:no-line-numbers
  RED (Grafana / SLO)                      USE (хост / под)
  ─────────────────────────────            ──────────────────────────────────────
  Duration p99 /checkout ×10 с 13:40 ──►   какие инстансы? все или один?
@@ -108,9 +109,10 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
  Rate без изменений               ──►     значит, не нагрузка, а деградация
                                           ▼
                                   диск: w_await 180 мс, aqu-sz 36 ──► кто пишет? (pidstat -d)
-```text
-RED говорит **«что и где болит»** (детали — [../Left/02_Monitoring/07_what_to_monitor.md](/monitoring/07-what-to-monitor)
-и [../SRE/02_sli_slo_error_budget.md](/sre/02-sli-slo-error-budget)), USE — **«почему»**.
+```
+
+RED говорит **«что и где болит»** (детали — [Мониторинг: 07. Что мониторить: 4 сигнала, USE, RED, SLO](/monitoring/07-what-to-monitor)
+и [SRE: 02. SLI, SLO и error budget](/sre/02-sli-slo-error-budget)), USE — **«почему»**.
 Когда ресурс найден, включается **workload characterization**:
 
 | Вопрос | Команда (пример для диска) |
@@ -138,13 +140,14 @@ free -m
 sar -n DEV 1
 sar -n TCP,ETCP 1
 top
-```text
+```
+
 ### 4.1. `uptime` — есть ли нагрузка и куда она идёт
 
-```text
+```
 # пример вывода, VM 2 vCPU
  14:02:11 up 12 days,  3:40,  1 user,  load average: 8.12, 5.40, 1.95
-```text
+```
 1-минутный LA намного выше 15-минутного → нагрузка **растёт прямо сейчас**. Обратная
 картина (`0.9, 3.2, 7.8`) — проблема проходит, и ты, возможно, пришёл к её хвосту.
 Что входит в LA — раздел 5.
@@ -153,19 +156,20 @@ top
 
 Ищешь строки, которые сразу называют причину: `Out of memory: Killed process`,
 `nf_conntrack: table full, dropping packet`, `blocked for more than 120 seconds`,
-`I/O error`, `Possible SYN flooding`. Полная таблица — в [../Linux/15_logging.md](/linux/15-logging).
+`I/O error`, `Possible SYN flooding`. Полная таблица — в [Linux: 15. Логирование](/linux/15-logging).
 Это буква **E** из USE сразу для всех ресурсов.
 
 ### 4.3. `vmstat 1` — общая картина по секундам
 
-```text
+```text:no-line-numbers
 # пример вывода, VM 2 vCPU, procps-ng 4.0 (Ubuntu 24.04)
 procs -----------memory---------- ---swap-- -----io---- -system-- -------cpu-------
  r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st gu
  1  0      0 812344  52104 2410200    0    0    12    40  210  390  3  1 96  0  0  0   ← среднее с загрузки
  5  0      0 811920  52104 2410216    0    0     0     0 2110 1850 97  3  0  0  0  0
  6  0      0 811880  52104 2410216    0    0     0    64 2098 1911 98  2  0  0  0  0
-```text
+```
+
 | Колонка | Что значит | Тревога |
 |---------|------------|---------|
 | `r` | Runnable: выполняются **или ждут** CPU | Стабильно больше числа ядер → CPU saturation |
@@ -183,26 +187,26 @@ procs -----------memory---------- ---swap-- -----io---- -system-- -------cpu----
 
 ### 4.4. `mpstat -P ALL 1` — баланс по ядрам
 
-```text
+```
 # пример вывода
 02:03:15 PM  CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
 02:03:16 PM  all   51.50    0.00    1.00    0.00    0.00    0.50    0.00    0.00    0.00   47.00
 02:03:16 PM    0    2.00    0.00    1.00    0.00    0.00    1.00    0.00    0.00    0.00   96.00
 02:03:16 PM    1  100.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00
-```text
+```
 «В среднем 50%» при одном ядре в полке — **однопоточное узкое место** (однопоточный
 процесс, Redis, Node.js, большой lock). `%soft` высокий на одном ядре — сетевые прерывания
 на одной очереди NIC. `%steal` — CPU забирает гипервизор (тема 02).
 
 ### 4.5. `pidstat 1` — кто ест CPU, без мелькания `top`
 
-```text
+```
 # пример вывода
 02:03:20 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
 02:03:21 PM  1000      4312   61.00    1.00    0.00   37.00   62.00     1  python3
 02:03:21 PM  1000      4390   63.00    0.00    0.00   36.00   63.00     0  stress-ng-cpu
 02:03:21 PM  1000      4391   62.00    1.00    0.00   36.00   63.00     0  stress-ng-cpu
-```text
+```
 Печатает сводку каждую секунду, не перерисовывая экран, — удобно копировать в тикет.
 **`%wait`** — доля времени, когда задача была готова работать, но **ждала CPU** в очереди:
 прямая метрика CPU saturation по процессу. `%CPU` 100 = одно ядро целиком. Здесь три
@@ -210,49 +214,50 @@ CPU-bound процесса делят 2 ядра: каждый работает 
 
 ### 4.6. `iostat -xz 1` — диски
 
-```text
+```
 # пример вывода (урезано до главных колонок)
 Device     r/s    rkB/s  r_await   w/s    wkB/s  w_await  aqu-sz  %util
 vda       2.00    16.00     0.80  3.00    40.00     1.20    0.01   0.60
 vdb     410.00  3280.00    38.20  0.00     0.00     0.00   15.66  99.60
-```text
+```
 `-x` — расширенная статистика, `-z` — скрыть простаивающие устройства. Смотришь на
 **latency** (`r_await`/`w_await`, мс) и **очередь** (`aqu-sz`), а не только на `%util`.
 Здесь vdb: 410 чтений/с по 8 КиБ, каждое ждёт 38 мс, в очереди ~16 запросов — диск насыщен
-мелким случайным чтением. Все колонки и подвох с `%util` — [03_disk_io.md](/performance/03-disk-io).
+мелким случайным чтением. Все колонки и подвох с `%util` — [03. Диск и I/O: latency, page cache и «куда делось место»](/performance/03-disk-io).
 
 ### 4.7. `free -m` — память
 
-```text
+```
 # пример вывода, VM 4 ГБ
                total        used        free      shared  buff/cache   available
 Mem:            3915        3602          98           4         214         151
 Swap:              0           0           0
-```text
+```
 Смотришь на **`available`** — сколько можно выделить без свопа, с учётом освобождаемого
 кэша. Здесь 151 МиБ из 3,9 ГиБ, кэш выжат до 214 МиБ, свопа нет → OOM близко.
-Подробно — [02_cpu_memory.md](/performance/02-cpu-memory).
+Подробно — [02. CPU и память: perf, flame graphs, OOM killer](/performance/02-cpu-memory).
 
 ### 4.8. `sar -n DEV 1` — пропускная способность интерфейсов
 
-```text
+```
 # пример вывода
 02:04:01 PM     IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
 02:04:02 PM      eth0  81234.00  80112.00 118420.00 116980.00      0.00      0.00      0.00     97.01
-```text
+```
 `rxkB/s`/`txkB/s` сравнивают со скоростью линка (`ethtool eth0 | grep Speed`); `%ifutil` —
 то же в процентах (если драйвер сообщает скорость). ~118 МБ/с на гигабитном линке — полка.
 
 ### 4.9. `sar -n TCP,ETCP 1` — TCP-активность и ретрансмиты
 
-```text
+```
 # пример вывода
 02:04:10 PM  active/s passive/s    iseg/s    oseg/s
 02:04:11 PM      2.00    840.00   9120.00   9870.00
 
 02:04:10 PM  atmptf/s  estres/s retrans/s isegerr/s   orsts/s
 02:04:11 PM      0.00      3.00    412.00      0.00     25.00
-```text
+```
+
 | Колонка | Смысл |
 |---------|-------|
 | `active/s` | Исходящие соединения в секунду (`connect()`) — сервер как клиент БД/апстримов |
@@ -266,7 +271,7 @@ Swap:              0           0           0
 
 После девяти команд `top` проверяет картину целиком: сходится ли `%CPU` процессов с `us/sy`,
 нет ли процессов в состоянии `D` (колонка `S`) или зомби. Клавиши — в
-[../Linux/14_process_utilization.md](/linux/14-process-utilization).
+[Linux: 14. Мониторинг процессов и cron](/linux/14-process-utilization).
 
 ### Скрипт: снять картину в файл
 
@@ -289,12 +294,13 @@ out=~/perf/60s-$(hostname)-$(date +%F_%H%M%S).txt
   echo "### top";        top -b -n 1 | head -25
 } > "$out" 2>&1
 echo "сохранено: $out"
-```text
+```
+
 ---
 
 ## 5. Load average: что на самом деле считается
 
-```text
+```text:no-line-numbers
 $ cat /proc/loadavg
 2.27 2.62 2.25 5/3313 340192
  │    │    │   │  │     └─ последний выданный PID
@@ -303,17 +309,19 @@ $ cat /proc/loadavg
  │    │    └─ 15 минут ┐
  │    └─ 5 минут       ├─ экспоненциально сглаженное среднее, пересчёт каждые ~5 секунд
  └─ 1 минута           ┘
-```text
+```
+
 **Что входит:** число задач в состоянии **R** (выполняются или ждут CPU) **плюс** в
 состоянии **D** (uninterruptible sleep — диск, NFS, некоторые блокировки ядра). Так в Linux
 с 1993 года; в других Unix LA — только очередь к CPU. Поэтому в Linux LA — это
 «нагрузка на систему», а не «нагрузка на CPU».
 
-```text
+```text:no-line-numbers
                  LA ≈ R (на CPU + в очереди) + D (ждут I/O и ядро)
                          │                        │
                сравнивай с nproc            CPU тут не поможет
-```text
+```
+
 Как интерпретировать — всегда вместе с `nproc`, `vmstat` и `%idle`:
 
 | Картина | Диагноз |
@@ -330,14 +338,16 @@ ps -eo state,pid,ppid,comm,wchan:32 | awk '$1 ~ /^[RD]/'     # кто в R и D 
 vmstat 1 5                                                   # r против b
 sar -q 1 3                                                   # runq-sz, blocked
 cat /proc/pressure/cpu /proc/pressure/io                     # PSI: доля времени ожидания
-```text
-```text
+```
+
+```text:no-line-numbers
 # пример вывода: высокий LA при простаивающем CPU
 S   PID  PPID COMMAND  WCHAN
 D  3870  3861 rsync    rpc_wait_bit_killable
 D  3871  3870 rsync    rpc_wait_bit_killable
 D  3874  3702 du       rpc_wait_bit_killable        ← все ждут ответа NFS-сервера
-```text
+```
+
 > ⚠️ **iowait — это разновидность idle.** CPU считается «в iowait», только когда ему нечего
 > делать и при этом есть незавершённый блочный I/O. На загруженном CPU iowait падает до нуля,
 > даже если диск тормозит; D-state на NFS или блокировках ядра может вообще не давать iowait.
@@ -345,7 +355,7 @@ D  3874  3702 du       rpc_wait_bit_killable        ← все ждут отве
 
 > 💡 PSI (`/proc/pressure/*`) — более честная метрика saturation, чем LA: доля времени,
 > когда хотя бы одна задача ждала ресурс (`some`) или ждали все (`full`). Подробно —
-> [06_cgroups_containers.md](/performance/06-cgroups-containers).
+> [06. cgroups v2 и контейнеры](/performance/06-cgroups-containers).
 
 ---
 
@@ -360,10 +370,11 @@ D  3874  3702 du       rpc_wait_bit_killable        ← все ждут отве
 Связь через очередь: чем ближе утилизация к 100%, тем быстрее растёт время ожидания.
 Простейшая модель очереди (M/M/1): **время ответа ≈ время обслуживания / (1 − U)**.
 
-```text
+```text:no-line-numbers
  U = 50%  → ×2      U = 90% → ×10
  U = 80%  → ×5      U = 95% → ×20      ← «колено»: последние проценты загрузки самые дорогие
-```text
+```
+
 Поэтому «диск делает на 10% больше IOPS» может быть **хуже**: 5000 IOPS при `w_await` 2 мс
 против 5500 IOPS при 40 мс — throughput вырос, а пользователи страдают.
 
@@ -376,36 +387,38 @@ D  3874  3702 du       rpc_wait_bit_killable        ← все ждут отве
 - Среднее по ядрам прячет одно ядро в полке (раздел 4.4).
 - Среднее по времени прячет всплески (раздел 2).
 Лекарство — перцентили и гистограммы: `biolatency-bpfcc`, `runqlat-bpfcc`
-(тема [07_ebpf_bpftrace.md](/performance/07-ebpf-bpftrace)), p99 в мониторинге.
+(тема [07. eBPF, bcc и bpftrace: вопросы прямо к ядру](/performance/07-ebpf-bpftrace)), p99 в мониторинге.
 
 ---
 
 ## 7. Научный метод: гипотеза → замер → одно изменение
 
-```text
+```text:no-line-numbers
  вопрос ──► гипотеза ──► предсказание ──► замер ──► подтвердилась? ──► одно изменение ──► замер «после»
                ▲                                        │ нет
                └────────────────────────────────────────┘
-```text
+```
+
 Правила:
 1. **Baseline до изменений.** Без «было» нельзя доказать «стало лучше».
 2. **Предсказание до замера.** «Если это accept queue, `ListenOverflows` будет расти
    во время всплеска» — такую гипотезу можно опровергнуть. «Что-то с сетью» — нельзя.
 3. **Одно изменение за раз**, и обратимое. Три sysctl сразу — и ты не знаешь, что сработало.
 4. **Тот же инструмент и окно** для «до» и «после».
-5. **Журнал с временем** — готовый таймлайн для постмортема ([../SRE/05_postmortems.md](/sre/05-postmortems)).
+5. **Журнал с временем** — готовый таймлайн для постмортема ([SRE: 05. Постмортемы](/sre/05-postmortems)).
 
-```text
+```text:no-line-numbers
 # пример журнала расследования
 14:02  симптом: p99 /api 2,3 с (норма 200 мс) с 13:40; RPS без изменений
 14:03  60 с: LA 12 на 4 vCPU; us 20 sy 5 id 10 wa 65 → подозрение на I/O
 14:05  H1: диск vdb насыщен. Предсказание: aqu-sz > 1, w_await ≫ 5 мс
 14:06  iostat -xz: vdb w_await 180 мс, aqu-sz 36, w/s 190 → подтверждено
 14:08  кто пишет: pidstat -d 1 → backup.sh (tar) 95 МБ/с, postgres (WAL) 2 МБ/с
-14:10  изменение: ionice -c3 -p &lt;PID tar&gt;  (одно, обратимое)
+14:10  изменение: ionice -c3 -p <PID tar>  (одно, обратимое)
 14:13  vdb w_await 12 мс, p99 /api 250 мс → причина доказана
 14:20  action item: бэкап — с реплики и с ionice в юните (IOSchedulingClass=idle)
-```text
+```
+
 > 💡 Отрицательный результат — тоже результат: «H1 не подтвердилась, диск чистый» сужает
 > поиск. Запиши и иди к следующей гипотезе.
 
@@ -413,7 +426,7 @@ D  3874  3702 du       rpc_wait_bit_killable        ← все ждут отве
 
 ## 8. sar-история: «что было в 03:00»
 
-Как включить и базовые ключи — в [../Linux/14_process_utilization.md](/linux/14-process-utilization).
+Как включить и базовые ключи — в [Linux: 14. Мониторинг процессов и cron](/linux/14-process-utilization).
 Глубже — как это устроено на Ubuntu 24.04:
 
 | Что | Где / как |
@@ -442,15 +455,16 @@ sar -A          -f $F > /tmp/sar-all.txt               # вообще всё
 
 sadf -d $F -- -q > q.csv        # CSV (разделитель «;») — в таблицу
 sadf -g $F -- -q > q.svg        # SVG-график — открыть в браузере
-```text
-```text
+```
+
+```text:no-line-numbers
 # пример: sar -q за ночь — что-то началось в 03:00
 02:50:01 AM   runq-sz  plist-sz   ldavg-1   ldavg-5  ldavg-15   blocked
 03:00:01 AM         1       412      0.41      0.38      0.30         0
 03:10:01 AM         2       431      9.87      6.12      2.74        11   ← blocked 11: D-state
 03:20:01 AM         1       429     11.02      9.40      5.51        12
 03:30:01 AM         0       414      1.12      4.33      4.60         0
-```text
+```
 Дальше по цепочке: `sar -d -p` в то же окно (чей `await` вырос?) → что запускалось в 03:00:
 `systemctl list-timers --all`, `grep CRON` в `journalctl --since "03:00" --until "03:30"`.
 
@@ -532,13 +546,16 @@ sadf -g $F -- -q > q.svg        # SVG-график — открыть в бра�
 10. Гипотеза с предсказанием → замер → одно обратимое изменение → замер тем же инструментом.
 11. sar отвечает на «что было в 03:00»; для TCP в истории нужен `-S XALL`, для процессов — atop.
 
-➡️ Дальше: [02_cpu_memory.md](/performance/02-cpu-memory) · задачи: 01_methodology_tasks.md
+---
 
+## Задачи
+
+> Стенд: VM `perf-lab` из [Performance](/performance/); ⚠️ ломающие задачи — только на VM,
+> перед темой `vagrant snapshot save before_perf_01`. Скрипт `~/perf/60s.sh` — из раздела 4 конспекта.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Назови четыре анти-метода траблшутинга. Чем каждый плох?
 
@@ -659,6 +676,7 @@ CPU считается в iowait, только когда ему нечего в
 
 Throughput — операций в единицу времени (RPS, IOPS, МБ/с), latency — время одной операции.
 По модели M/M/1 время ответа ≈ время обслуживания / (1 − U): при 50% — ×2, 80% — ×5, 90% — ×10,
+95% — ×20. Рост throughput у колена часто оплачивается резким ростом latency.
 
 </details>
 
@@ -709,283 +727,128 @@ Throughput — операций в единицу времени (RPS, IOPS, М�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```
 B1.  # VM 4 vCPU
-```text
-<details><summary>Ответ</summary>
+     $ uptime
+      09:14:02 up 40 days,  2:11,  1 user,  load average: 0.95, 3.80, 9.10
 
-LA падает: 9,1 за 15 минут → 0,95 за минуту. Проблема была и почти прошла; ты пришёл
+B2.  # VM 4 vCPU, LA ≈ 15
+     $ vmstat 1
+      r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st gu
+      1 14      0 402112  81220 2210032    0    0     4     0  310  402  2  1 88  9  0  0
+      0 15      0 402100  81220 2210040    0    0     0     0  298  388  1  1 89  9  0  0
+
+B3.  $ mpstat -P ALL 1          # 4 vCPU
+     CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
+     all   25.10    0.00    0.20    0.00    0.00    0.00    0.00    0.00    0.00   74.70
+       0    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00  100.00
+       1    0.40    0.00    0.80    0.00    0.00    0.00    0.00    0.00    0.00   98.80
+       2    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00  100.00
+       3  100.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00
+
+B4.  # «смотри, какой своп и I/O!» — прислал коллега, запустив vmstat один раз
+     $ vmstat
+      r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st gu
+      0  0 204800 512000  90112 1802200  150  300  9000  4200  900 1400  8  3 85  4  0  0
+
+B5.  # «память кончилась, надо добавить RAM»
+     $ free -m
+                    total        used        free      shared  buff/cache   available
+     Mem:            3915         810         120           6        2985        3050
+     Swap:              0           0           0
+
+B6.  # «NVMe в полке, срочно менять диск»
+     Device       r/s     rkB/s  r_await  w/s  wkB/s  w_await  aqu-sz  %util
+     nvme0n1  42000.00 168000.00     0.12 0.00   0.00     0.00    5.04  100.00
+
+B7.  # два сервера, sar -n TCP,ETCP 1
+     server-a:  oseg/s 12000   retrans/s   0.50
+     server-b:  oseg/s  9000   retrans/s 810.00
+
+B8.  # VM 2 vCPU, «java ест всего 35%, CPU свободен»
+     $ pidstat 1
+        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+       1000      2190   33.00    2.00    0.00   61.00   35.00     1  java
+
+B9.  # облачная VM, код не меняли, «всё стало медленнее»
+     $ mpstat 1
+     CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
+     all   48.00    0.00    6.00    0.00    0.00    1.00   35.00    0.00    0.00   10.00
+
+B10. # «ночью в 03:10 CPU был перегружен» — вывод коллеги по sar -q
+     03:00:01 AM   runq-sz  plist-sz   ldavg-1   ldavg-5  ldavg-15   blocked
+     03:10:01 AM         1       431      9.87      6.12      2.74        11
+
+B11. # журнал «расследования»
+     14:10  поставил net.core.somaxconn=65535, vm.swappiness=1, tcp_tw_reuse=1
+     14:11  перезапустил приложение
+     14:15  вроде стало лучше, закрываю
+
+B12. $ sar -n TCP,ETCP -f /var/log/sysstat/sa24
+     Requested activities not available in file /var/log/sysstat/sa24
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** LA падает: 9,1 за 15 минут → 0,95 за минуту. Проблема была и почти прошла; ты пришёл
 к хвосту. Смотреть историю (sar, мониторинг) и `dmesg` — что было 10–15 минут назад.
 
-</details>
-
-```text:no-line-numbers
-     $ uptime
-```text
-```text:no-line-numbers
-      09:14:02 up 40 days,  2:11,  1 user,  load average: 0.95, 3.80, 9.10
-```text
-```text:no-line-numbers
-B2.  # VM 4 vCPU, LA ≈ 15
-```text
-<details><summary>Ответ</summary>
-
-`b` 14–15, `r` ≈ 1, `%idle` 88 на 4 vCPU: LA ≈ 15 создают задачи в D-state, CPU не при чём.
+**B2.** `b` 14–15, `r` ≈ 1, `%idle` 88 на 4 vCPU: LA ≈ 15 создают задачи в D-state, CPU не при чём.
 `wa` 9% не очень высокий — часть задач может ждать не блочный I/O (NFS, заморозка ФС).
 Дальше: `ps -eo state,pid,comm,wchan:32 | awk '$1=="D"'`, `iostat -xz 1`, `dmesg` (hung task).
 
-</details>
-
-```text:no-line-numbers
-     $ vmstat 1
-```text
-```text:no-line-numbers
-      r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st gu
-```text
-```text:no-line-numbers
-      1 14      0 402112  81220 2210032    0    0     4     0  310  402  2  1 88  9  0  0
-```text
-```text:no-line-numbers
-      0 15      0 402100  81220 2210040    0    0     0     0  298  388  1  1 89  9  0  0
-```text
-```text:no-line-numbers
-B3.  $ mpstat -P ALL 1          # 4 vCPU
-```text
-<details><summary>Ответ</summary>
-
-Среднее 25% скрывает, что CPU3 загружен на 100% user-кодом, а остальные простаивают:
+**B3.** Среднее 25% скрывает, что CPU3 загружен на 100% user-кодом, а остальные простаивают:
 однопоточное узкое место. Найти процесс (`pidstat 1`), дальше — `perf top -p` (тема 02).
 Масштабировать ядрами бесполезно; нужен параллелизм или шардирование.
 
-</details>
-
-```text:no-line-numbers
-     CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
-```text
-```text:no-line-numbers
-     all   25.10    0.00    0.20    0.00    0.00    0.00    0.00    0.00    0.00   74.70
-```text
-```text:no-line-numbers
-       0    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00  100.00
-```text
-```text:no-line-numbers
-       1    0.40    0.00    0.80    0.00    0.00    0.00    0.00    0.00    0.00   98.80
-```text
-```text:no-line-numbers
-       2    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00  100.00
-```text
-```text:no-line-numbers
-       3  100.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00
-```text
-```text:no-line-numbers
-B4.  # «смотри, какой своп и I/O!» — прислал коллега, запустив vmstat один раз
-```text
-<details><summary>Ответ</summary>
-
-`vmstat` без интервала печатает одну строку — средние с загрузки. Цифры `si`/`so`/`bi`
+**B4.** `vmstat` без интервала печатает одну строку — средние с загрузки. Цифры `si`/`so`/`bi`
 ничего не говорят о текущем моменте. Нужно `vmstat 1 5` и смотреть со второй строки.
 
-</details>
-
-```text:no-line-numbers
-     $ vmstat
-```text
-```text:no-line-numbers
-      r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st gu
-```text
-```text:no-line-numbers
-      0  0 204800 512000  90112 1802200  150  300  9000  4200  900 1400  8  3 85  4  0  0
-```text
-```text:no-line-numbers
-B5.  # «память кончилась, надо добавить RAM»
-```text
-<details><summary>Ответ</summary>
-
-Память не кончилась: `available` 3050 МиБ из 3915; маленький `free` — потому что
+**B5.** Память не кончилась: `available` 3050 МиБ из 3915; маленький `free` — потому что
 почти всё занято page cache (2985 МиБ), который ядро отдаст по требованию. Добавлять RAM
 не нужно, свопа и давления нет.
 
-</details>
-
-```text:no-line-numbers
-     $ free -m
-```text
-```text:no-line-numbers
-                    total        used        free      shared  buff/cache   available
-```text
-```text:no-line-numbers
-     Mem:            3915         810         120           6        2985        3050
-```text
-```text:no-line-numbers
-     Swap:              0           0           0
-```text
-```text:no-line-numbers
-B6.  # «NVMe в полке, срочно менять диск»
-```text
-<details><summary>Ответ</summary>
-
-Не обязательно. NVMe обрабатывает много запросов параллельно; `%util` = доля времени,
+**B6.** Не обязательно. NVMe обрабатывает много запросов параллельно; `%util` = доля времени,
 когда был хоть один запрос, и упирается в 100% задолго до предела устройства. `r_await` 0,12 мс
 при 42 000 IOPS и очереди ~5 — отличная латентность. Проверка Литтлом: 42 000 × 0,12 / 1000 ≈ 5,04 ✓.
 Решает latency приложения, а не `%util`.
 
-</details>
-
-```text:no-line-numbers
-     Device       r/s     rkB/s  r_await  w/s  wkB/s  w_await  aqu-sz  %util
-```text
-```text:no-line-numbers
-     nvme0n1  42000.00 168000.00     0.12 0.00   0.00     0.00    5.04  100.00
-```text
-```text:no-line-numbers
-B7.  # два сервера, sar -n TCP,ETCP 1
-```text
-<details><summary>Ответ</summary>
-
-server-a: 0,5 / 12 000 ≈ 0,004% — норма. server-b: 810 / 9000 ≈ 9% ретрансмитов — потери
+**B7.** server-a: 0,5 / 12 000 ≈ 0,004% — норма. server-b: 810 / 9000 ≈ 9% ретрансмитов — потери
 пакетов или перегрузка на пути/интерфейсе. Дальше: `ss -ti` (retrans по соединениям), `ip -s link`
 (dropped), `nstat`, `tcpretrans-bpfcc` (тема 04).
 
-</details>
-
-```text:no-line-numbers
-     server-a:  oseg/s 12000   retrans/s   0.50
-```text
-```text:no-line-numbers
-     server-b:  oseg/s  9000   retrans/s 810.00
-```text
-```text:no-line-numbers
-B8.  # VM 2 vCPU, «java ест всего 35%, CPU свободен»
-```text
-<details><summary>Ответ</summary>
-
-`%wait` 61%: java 61% времени готова работать, но ждёт CPU в очереди, — CPU насыщен
+**B8.** `%wait` 61%: java 61% времени готова работать, но ждёт CPU в очереди, — CPU насыщен
 другими задачами. «35%» — это utilization, а не свобода. Смотреть `vmstat` (`r`), кто ещё
 в `pidstat`, не ограничен ли процесс cgroup-квотой (тема 06).
 
-</details>
-
-```text:no-line-numbers
-     $ pidstat 1
-```text
-```text:no-line-numbers
-        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
-```text
-```text:no-line-numbers
-       1000      2190   33.00    2.00    0.00   61.00   35.00     1  java
-```text
-```text:no-line-numbers
-B9.  # облачная VM, код не меняли, «всё стало медленнее»
-```text
-<details><summary>Ответ</summary>
-
-35% времени CPU забирает гипервизор (steal): VM получает меньше процессора, чем думает.
+**B9.** 35% времени CPU забирает гипервизор (steal): VM получает меньше процессора, чем думает.
 Код тот же, а работает медленнее. Решение на стороне облака: другой тип инстанса (не burstable/
 shared), выделенные хосты, миграция, проверка CPU credits у burstable-типов.
 
-</details>
-
-```text:no-line-numbers
-     $ mpstat 1
-```text
-```text:no-line-numbers
-     CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
-```text
-```text:no-line-numbers
-     all   48.00    0.00    6.00    0.00    0.00    1.00   35.00    0.00    0.00   10.00
-```text
-```text:no-line-numbers
-B10.  # «ночью в 03:10 CPU был перегружен» — вывод коллеги по sar -q
-```text
-<details><summary>Ответ</summary>
-
-Вывод неверный: `runq-sz` 1, а `blocked` 11 — LA 9,87 создан задачами в D-state, CPU
+**B10.** Вывод неверный: `runq-sz` 1, а `blocked` 11 — LA 9,87 создан задачами в D-state, CPU
 был свободен. Смотреть `sar -d -p` за то же окно (чей `await` вырос) и что запускалось в 03:00
 (`systemctl list-timers --all`, `journalctl --since 03:00`).
 
-</details>
-
-```text:no-line-numbers
-     03:00:01 AM   runq-sz  plist-sz   ldavg-1   ldavg-5  ldavg-15   blocked
-```text
-```text:no-line-numbers
-     03:10:01 AM         1       431      9.87      6.12      2.74        11
-```text
-```text:no-line-numbers
-B11.  # журнал «расследования»
-```text
-<details><summary>Ответ</summary>
-
-Три изменения сразу, без гипотезы, baseline и замера «после»; рестарт приложения сам
+**B11.** Три изменения сразу, без гипотезы, baseline и замера «после»; рестарт приложения сам
 по себе мог временно «помочь» (сброс утечки, кэшей, соединений). Непонятно, что сработало,
 и есть риск вреда (`swappiness=1`, `tcp_tw_reuse=1` без нужды). Нужно откатить до известного
 состояния и идти по одной гипотезе.
 
-</details>
-
-```text:no-line-numbers
-     14:10  поставил net.core.somaxconn=65535, vm.swappiness=1, tcp_tw_reuse=1
-```text
-```text:no-line-numbers
-     14:11  перезапустил приложение
-```text
-```text:no-line-numbers
-     14:15  вроде стало лучше, закрываю
-```text
-```text:no-line-numbers
-B12.  $ sar -n TCP,ETCP -f /var/log/sysstat/sa24
-```text
-<details><summary>Ответ</summary>
-
-В файле нет TCP-активности: sadc собирает по умолчанию `-S DISK`, а TCP относится
+**B12.** В файле нет TCP-активности: sadc собирает по умолчанию `-S DISK`, а TCP относится
 к SNMP-группе. Включить `SADC_OPTIONS="-S XALL"` в `/etc/sysstat/sysstat`; сработает с нового
 суточного файла.
 
 </details>
 
-```text:no-line-numbers
-     Requested activities not available in file /var/log/sysstat/sa24
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Baseline на спокойной VM
-**1.** Создай `~/perf/60s.sh` из конспекта и запусти на ненагруженной VM.
-
-<details><summary>Ответ</summary>
-
-На спокойной 2 vCPU VM ориентиры: LA < 0,5; `r` 0–1, `b` 0; `%idle` > 95% на обоих ядрах;
-`available` ≈ 3,4–3,6 ГиБ из 3,9; `w_await` на vda — единицы мс; `retrans/s` ≈ 0. Выводы вида
-«CPU — ок: idle 97%, очереди нет».
-
-</details>
-
-**2.** Выпиши «нормальные» значения: LA, `r`, `b`, `cs`, `%idle` по ядрам, `available`,
+#### C1. 🔑 Baseline на спокойной VM
+1. Создай `~/perf/60s.sh` из конспекта и запусти на ненагруженной VM.
+2. Выпиши «нормальные» значения: LA, `r`, `b`, `cs`, `%idle` по ядрам, `available`,
    `await` на vda, `retrans/s`. Это твой baseline для всех следующих задач.
-
-<details><summary>Ответ</summary>
-
-,7 при `aqu-sz` 2,71). `wareq-sz` = `wkB/s` / `w/s` — средний размер записи в КиБ.
-
-</details>
-
-**3.** Сделай вывод за 1 предложение по каждому ресурсу: «CPU — ок, потому что …».
-
-<details><summary>Ответ</summary>
-
-LA растёт к ~4 (+фон) при `%idle` ≈ 100 и `%iowait` ≈ 0; в `vmstat` `b` = 4, `r` ≈ 0;
-в `ps` четыре процесса `sh` в состоянии D, `wchan` вида `percpu_rwsem_wait` (ожидание
-заморозки ФС). После `fsfreeze -u` записи сразу завершаются, фоновые задачи выходят, LA начинает
-плавно падать (1-минутный быстрее 15-минутного). Вывод: высокий LA при простаивающем CPU и нулевом
-iowait — D-state не из-за диска.
-
-</details>
-
-### C2. 🔑 CPU saturation своими глазами
-**1.** `stress-ng --cpu 4 --timeout 180s &` на VM с 2 vCPU.
+3. Сделай вывод за 1 предложение по каждому ресурсу: «CPU — ок, потому что …».
 
 <details><summary>Ответ</summary>
 
@@ -995,60 +858,31 @@ iowait — D-state не из-за диска.
 
 </details>
 
-**2.** Через 60 секунд: `uptime`, `vmstat 1 5`, `pidstat 1 3`, `mpstat -P ALL 1 3`, `cat /proc/pressure/cpu`.
+#### C2. 🔑 CPU saturation своими глазами
+1. `stress-ng --cpu 4 --timeout 180s &` на VM с 2 vCPU.
+2. Через 60 секунд: `uptime`, `vmstat 1 5`, `pidstat 1 3`, `mpstat -P ALL 1 3`, `cat /proc/pressure/cpu`.
+3. Какой LA ты ожидаешь через 3 минуты? Какие `r` и `%wait` у воркеров? Сверь с предсказанием.
 
 <details><summary>Ответ</summary>
 
-,7 при `aqu-sz` 2,71). `wareq-sz` = `wkB/s` / `w/s` — средний размер записи в КиБ.
+4 воркера на 2 ядрах: через минуту LA-1 ≈ 3 и растёт к ~4 к третьей минуте (сглаживание);
+`r` 4–5; `%idle` 0; у каждого воркера `%CPU` ≈ 50 и `%wait` ≈ 50; в `/proc/pressure/cpu` `some avg10`
+высокий (десятки процентов). Предсказание «LA → 4» подтверждается.
 
 </details>
 
-**3.** Какой LA ты ожидаешь через 3 минуты? Какие `r` и `%wait` у воркеров? Сверь с предсказанием.
-
-<details><summary>Ответ</summary>
-
-LA растёт к ~4 (+фон) при `%idle` ≈ 100 и `%iowait` ≈ 0; в `vmstat` `b` = 4, `r` ≈ 0;
-в `ps` четыре процесса `sh` в состоянии D, `wchan` вида `percpu_rwsem_wait` (ожидание
-заморозки ФС). После `fsfreeze -u` записи сразу завершаются, фоновые задачи выходят, LA начинает
-плавно падать (1-минутный быстрее 15-минутного). Вывод: высокий LA при простаивающем CPU и нулевом
-iowait — D-state не из-за диска.
-
-</details>
-
-### C3. 🔑 Высокий LA при простаивающем CPU
+#### C3. 🔑 Высокий LA при простаивающем CPU
 ⚠️ Только на VM. Воспроизводим D-state без диска — замороженной файловой системой:
-```text:no-line-numbers
+```bash
 mkdir -p ~/perf && truncate -s 512M ~/perf/fs.img && mkfs.ext4 -q ~/perf/fs.img
-```text
-```text:no-line-numbers
 sudo mkdir -p /mnt/frz && sudo mount -o loop ~/perf/fs.img /mnt/frz
-```text
-```text:no-line-numbers
 sudo fsfreeze -f /mnt/frz                       # все записи в ФС будут ждать
-```text
-```text:no-line-numbers
 for i in 1 2 3 4; do sudo sh -c "echo x > /mnt/frz/f$i" & done
-```text
-**1.** Через 1–2 минуты: `uptime`, `vmstat 1 3`, `ps -eo state,pid,comm,wchan:32 | awk '$1=="D"'`,
+```
+1. Через 1–2 минуты: `uptime`, `vmstat 1 3`, `ps -eo state,pid,comm,wchan:32 | awk '$1=="D"'`,
    `mpstat 1 1`. Что с LA, `b`, `%idle` и `%iowait`?
-
-<details><summary>Ответ</summary>
-
-На спокойной 2 vCPU VM ориентиры: LA < 0,5; `r` 0–1, `b` 0; `%idle` > 95% на обоих ядрах;
-`available` ≈ 3,4–3,6 ГиБ из 3,9; `w_await` на vda — единицы мс; `retrans/s` ≈ 0. Выводы вида
-«CPU — ок: idle 97%, очереди нет».
-
-</details>
-
-**2.** `sudo fsfreeze -u /mnt/frz` — что произошло с процессами и LA?
-
-<details><summary>Ответ</summary>
-
-,7 при `aqu-sz` 2,71). `wareq-sz` = `wkB/s` / `w/s` — средний размер записи в КиБ.
-
-</details>
-
-**3.** Уборка: `sudo umount /mnt/frz`.
+2. `sudo fsfreeze -u /mnt/frz` — что произошло с процессами и LA?
+3. Уборка: `sudo umount /mnt/frz`.
 
 <details><summary>Ответ</summary>
 
@@ -1060,65 +894,10 @@ iowait — D-state не из-за диска.
 
 </details>
 
-### C4. Одно ядро в полке
-**1.** `stress-ng --cpu 1 --timeout 90s &`.
-
-<details><summary>Ответ</summary>
-
-На спокойной 2 vCPU VM ориентиры: LA < 0,5; `r` 0–1, `b` 0; `%idle` > 95% на обоих ядрах;
-`available` ≈ 3,4–3,6 ГиБ из 3,9; `w_await` на vda — единицы мс; `retrans/s` ≈ 0. Выводы вида
-«CPU — ок: idle 97%, очереди нет».
-
-</details>
-
-**2.** Сравни `mpstat 1 3` (только `all`) и `mpstat -P ALL 1 3`. Почему на 32-ядерном сервере
+#### C4. Одно ядро в полке
+1. `stress-ng --cpu 1 --timeout 90s &`.
+2. Сравни `mpstat 1 3` (только `all`) и `mpstat -P ALL 1 3`. Почему на 32-ядерном сервере
    такой процесс в `all` был бы почти не виден?
-
-<details><summary>Ответ</summary>
-
-,7 при `aqu-sz` 2,71). `wareq-sz` = `wkB/s` / `w/s` — средний размер записи в КиБ.
-
-</details>
-
-### C5. USE-таблица своей VM
-Заполни таблицу реальными значениями с командами, которыми их получил: CPU, память,
-диск (I/O и место), сеть и программные ресурсы — fd (`cat /proc/sys/fs/file-nr`),
-conntrack (`nf_conntrack_count`/`max`), эфемерные порты (`ss -tan | wc -l` против
-`ip_local_port_range`). Для каждой строки — вывод «норма / тревога».
-
-### C6. 🔑 «Что было час назад» через sar
-**1.** Проверь, что сбор идёт: `systemctl list-timers | grep sysstat`, `ls /var/log/sysstat/`.
-
-<details><summary>Ответ</summary>
-
-На спокойной 2 vCPU VM ориентиры: LA < 0,5; `r` 0–1, `b` 0; `%idle` > 95% на обоих ядрах;
-`available` ≈ 3,4–3,6 ГиБ из 3,9; `w_await` на vda — единицы мс; `retrans/s` ≈ 0. Выводы вида
-«CPU — ок: idle 97%, очереди нет».
-
-</details>
-
-**2.** Запиши время и запусти `stress-ng --cpu 4 --timeout 600s` (10 минут — чтобы попасть
-   хотя бы в один 10-минутный интервал).
-
-<details><summary>Ответ</summary>
-
-,7 при `aqu-sz` 2,71). `wareq-sz` = `wkB/s` / `w/s` — средний размер записи в КиБ.
-
-</details>
-
-**3.** Через полчаса найди нагрузку в истории: `sar -q` и `sar -u` с `-s`/`-e` вокруг этого времени.
-
-<details><summary>Ответ</summary>
-
-LA растёт к ~4 (+фон) при `%idle` ≈ 100 и `%iowait` ≈ 0; в `vmstat` `b` = 4, `r` ≈ 0;
-в `ps` четыре процесса `sh` в состоянии D, `wchan` вида `percpu_rwsem_wait` (ожидание
-заморозки ФС). После `fsfreeze -u` записи сразу завершаются, фоновые задачи выходят, LA начинает
-плавно падать (1-минутный быстрее 15-минутного). Вывод: высокий LA при простаивающем CPU и нулевом
-iowait — D-state не из-за диска.
-
-</details>
-
-**4.** Выгрузи график: `sadf -g /var/log/sysstat/sa$(date +%d) -- -q > ~/perf/q.svg` и открой на хосте.
 
 <details><summary>Ответ</summary>
 
@@ -1127,67 +906,85 @@ iowait — D-state не из-за диска.
 
 </details>
 
-### C7. Журнал расследования
+#### C5. USE-таблица своей VM
+Заполни таблицу реальными значениями с командами, которыми их получил: CPU, память,
+диск (I/O и место), сеть и программные ресурсы — fd (`cat /proc/sys/fs/file-nr`),
+conntrack (`nf_conntrack_count`/`max`), эфемерные порты (`ss -tan | wc -l` против
+`ip_local_port_range`). Для каждой строки — вывод «норма / тревога».
+
+<details><summary>Ответ</summary>
+
+Пример строк: CPU U — `mpstat` idle 97% (норма); память U — `available` 3,5 ГиБ (норма),
+S — `si`/`so` 0; диск — `aqu-sz` 0,01, `w_await` 1 мс; место — `df -h` 18%, `df -i` 6%;
+сеть — `sar -n DEV` десятки КБ/с; fd — `file-nr` «1600 0 …» при огромном максимуме; conntrack —
+`nf_conntrack_count` десятки против `max`; порты — `ss -tan | wc -l` десятки против 28 232
+доступных. Всё «норма» — это и есть baseline.
+
+</details>
+
+#### C6. 🔑 «Что было час назад» через sar
+1. Проверь, что сбор идёт: `systemctl list-timers | grep sysstat`, `ls /var/log/sysstat/`.
+2. Запиши время и запусти `stress-ng --cpu 4 --timeout 600s` (10 минут — чтобы попасть
+   хотя бы в один 10-минутный интервал).
+3. Через полчаса найди нагрузку в истории: `sar -q` и `sar -u` с `-s`/`-e` вокруг этого времени.
+4. Выгрузи график: `sadf -g /var/log/sysstat/sa$(date +%d) -- -q > ~/perf/q.svg` и открой на хосте.
+
+<details><summary>Ответ</summary>
+
+В `sar -q` в интервале с нагрузкой `ldavg-1` ≈ 4, `runq-sz` 3–4; в `sar -u` `%idle` около 0.
+Ключи: `sar -q -s ЧЧ:ММ:00 -e ЧЧ:ММ:00`. `sadf -g` даёт SVG со всеми полями `-q`. Если интервалов
+нет — таймер не включён или нагрузка шла меньше 10 минут и растворилась в среднем.
+
+</details>
+
+#### C7. Журнал расследования
 Оформи задачу C3 как журнал из раздела 7 конспекта: время, симптом, гипотеза с предсказанием,
 замер, вывод, одно изменение, замер «после». Минимум две гипотезы, одна должна быть опровергнута.
 
-### C8. Проверка чтения iostat законом Литтла
-**1.** `stress-ng --hdd 1 --hdd-bytes 512M --timeout 60s &`.
-
 <details><summary>Ответ</summary>
 
-На спокойной 2 vCPU VM ориентиры: LA < 0,5; `r` 0–1, `b` 0; `%idle` > 95% на обоих ядрах;
-`available` ≈ 3,4–3,6 ГиБ из 3,9; `w_await` на vda — единицы мс; `retrans/s` ≈ 0. Выводы вида
-«CPU — ок: idle 97%, очереди нет».
+Пример: «H1: диск vdb насыщен → предсказание: `aqu-sz` > 1, `await` растёт → iostat: vdb
+пустой, `aqu-sz` 0 → опровергнута. H2: задачи в D ждут ФС → предсказание: `b` = 4, `wchan`
+про блокировку ФС → подтверждено. Изменение: `fsfreeze -u`. После: `b` 0, LA падает».
 
 </details>
 
-**2.** `iostat -xz 1 5`: для vda посчитай `(r/s·r_await + w/s·w_await)/1000` и сравни с `aqu-sz`.
+#### C8. Проверка чтения iostat законом Литтла
+1. `stress-ng --hdd 1 --hdd-bytes 512M --timeout 60s &`.
+2. `iostat -xz 1 5`: для vda посчитай `(r/s·r_await + w/s·w_await)/1000` и сравни с `aqu-sz`.
+3. Проверь, что `wareq-sz ≈ wkB/s / w/s`.
 
 <details><summary>Ответ</summary>
 
-,7 при `aqu-sz` 2,71). `wareq-sz` = `wkB/s` / `w/s` — средний размер записи в КиБ.
+Формула совпадает с `aqu-sz` с точностью до округления (например, w/s 180, w_await 15 →
+2,7 при `aqu-sz` 2,71). `wareq-sz` = `wkB/s` / `w/s` — средний размер записи в КиБ.
 
 </details>
 
-**3.** Проверь, что `wareq-sz ≈ wkB/s / w/s`.
-
-<details><summary>Ответ</summary>
-
-LA растёт к ~4 (+фон) при `%idle` ≈ 100 и `%iowait` ≈ 0; в `vmstat` `b` = 4, `r` ≈ 0;
-в `ps` четыре процесса `sh` в состоянии D, `wchan` вида `percpu_rwsem_wait` (ожидание
-заморозки ФС). После `fsfreeze -u` записи сразу завершаются, фоновые задачи выходят, LA начинает
-плавно падать (1-минутный быстрее 15-минутного). Вывод: высокий LA при простаивающем CPU и нулевом
-iowait — D-state не из-за диска.
-
-</details>
-
-### C9. Загадка «что грузит VM»
+#### C9. Загадка «что грузит VM»
 Попроси кого-нибудь (или скрипт) запустить случайную нагрузку и очистить экран:
-```text:no-line-numbers
+```bash
 case $((RANDOM % 3)) in
-```text
-```text:no-line-numbers
   0) stress-ng --cpu 2 --timeout 180s ;;
-```text
-```text:no-line-numbers
   1) stress-ng --hdd 2 --hdd-bytes 1G --timeout 180s ;;
-```text
-```text:no-line-numbers
   2) stress-ng --vm 1 --vm-bytes 85% --vm-keep --timeout 180s ;;
-```text
-```text:no-line-numbers
 esac >/dev/null 2>&1 &
-```text
-```text:no-line-numbers
 clear
-```text
+```
 За 2 минуты определи ресурс только «60 секундами» и назови метрику-доказательство.
+
+<details><summary>Ответ</summary>
+
+CPU: `vmstat` `us` ~100, `r` ≥ 2, `pidstat` — `stress-ng-cpu`. Диск: `wa`/`b` > 0,
+`iostat` — высокий `w/s`/`wkB/s` и `aqu-sz` на vda, `pidstat -d` — `stress-ng-hdd`. Память:
+`free` → `available` резко упал, `used` ≈ 85%, в `pidstat -r 1` (или `top` по `M`) — большой RSS
+у `stress-ng-vm`.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Алерт «LA > 30» на 16-ядерном сервере. Пользователи не жалуются, `%idle` — 70%.
 Что происходит и что делаешь?
@@ -1278,15 +1075,14 @@ Steal 25% — VM недополучает CPU от гипервизора: шу�
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое USE-метод?
 
 <details><summary>Ответ</summary>
 
 Метод проверки каждого ресурса (CPU, память, диск, сеть, программные — fd, пулы, лимиты)
-   по трём вопросам: utilization — насколько занят, saturation — есть ли очередь, errors — есть
-   ли ошибки. Обхожу в порядке ошибки → очередь → загрузка: так быстро находится узкое место
-   и так же быстро исключаются здоровые ресурсы.
+по трём вопросам: utilization — насколько занят, saturation — есть ли очередь, errors — есть
+ли ошибки. Обхожу в порядке ошибки → очередь → загрузка: так быстро находится узкое место
+и так же быстро исключаются здоровые ресурсы.
 
 </details>
 
@@ -1295,9 +1091,9 @@ Steal 25% — VM недополучает CPU от гипервизора: шу�
 <details><summary>Ответ</summary>
 
 Десять команд Брендана Грегга: `uptime` (LA и тренд), `dmesg -T | tail` (OOM, I/O, conntrack),
-   `vmstat 1` (r, b, своп, us/sy/wa/st), `mpstat -P ALL 1` (дисбаланс ядер, steal), `pidstat 1`
-   (кто ест и кто ждёт CPU), `iostat -xz 1` (await, aqu-sz), `free -m` (available), `sar -n DEV 1`
-   (трафик против линка), `sar -n TCP,ETCP 1` (соединения/с, ретрансмиты), `top`.
+`vmstat 1` (r, b, своп, us/sy/wa/st), `mpstat -P ALL 1` (дисбаланс ядер, steal), `pidstat 1`
+(кто ест и кто ждёт CPU), `iostat -xz 1` (await, aqu-sz), `free -m` (available), `sar -n DEV 1`
+(трафик против линка), `sar -n TCP,ETCP 1` (соединения/с, ретрансмиты), `top`.
 
 </details>
 
@@ -1306,7 +1102,7 @@ Steal 25% — VM недополучает CPU от гипервизора: шу�
 <details><summary>Ответ</summary>
 
 Сглаженное среднее числа задач в состояниях R и D за 1/5/15 минут. Сравниваю с числом ядер
-   и смотрю тренд; чтобы понять, CPU это или I/O, смотрю `vmstat` (r против b) и `%idle`.
+и смотрю тренд; чтобы понять, CPU это или I/O, смотрю `vmstat` (r против b) и `%idle`.
 
 </details>
 
@@ -1315,8 +1111,8 @@ Steal 25% — VM недополучает CPU от гипервизора: шу�
 <details><summary>Ответ</summary>
 
 Задачи в D-state: ждут диск, NFS, заморозку ФС, блокировки ядра. Проверяю `vmstat` b,
-   `ps` по `D` с `wchan`, `iostat -x`, `dmesg` на hung task, для конкретного процесса —
-   `/proc/PID/stack`.
+`ps` по `D` с `wchan`, `iostat -x`, `dmesg` на hung task, для конкретного процесса —
+`/proc/PID/stack`.
 
 </details>
 
@@ -1325,8 +1121,8 @@ Steal 25% — VM недополучает CPU от гипервизора: шу�
 <details><summary>Ответ</summary>
 
 Доля времени, когда CPU простаивал при незавершённом блочном I/O. Это разновидность idle:
-   на загруженном CPU iowait исчезает при медленном диске, а на пустой машине бывает высоким
-   без проблем. Про диск честнее говорят `await` и `aqu-sz`.
+на загруженном CPU iowait исчезает при медленном диске, а на пустой машине бывает высоким
+без проблем. Про диск честнее говорят `await` и `aqu-sz`.
 
 </details>
 
@@ -1335,8 +1131,8 @@ Steal 25% — VM недополучает CPU от гипервизора: шу�
 <details><summary>Ответ</summary>
 
 Throughput — сколько операций в секунду, latency — сколько длится одна. У колена очереди
-   throughput растёт слабо, а latency — резко (×10 при 90% загрузки по M/M/1). Пользователь
-   чувствует latency.
+throughput растёт слабо, а latency — резко (×10 при 90% загрузки по M/M/1). Пользователь
+чувствует latency.
 
 </details>
 
@@ -1345,8 +1141,8 @@ Throughput — сколько операций в секунду, latency — с
 <details><summary>Ответ</summary>
 
 sar из sysstat пишет историю раз в 10 минут: `sar -q/-u/-r/-d/-n DEV -f /var/log/sysstat/saDD
-   -s … -e …`. Для TCP в истории нужен `-S XALL`, для процессов — atop с журналом. Плюс
-   `journalctl` за окно и `systemctl list-timers` — что запускалось.
+-s … -e …`. Для TCP в истории нужен `-S XALL`, для процессов — atop с журналом. Плюс
+`journalctl` за окно и `systemctl list-timers` — что запускалось.
 
 </details>
 
@@ -1355,8 +1151,8 @@ sar из sysstat пишет историю раз в 10 минут: `sar -q/-u/-
 <details><summary>Ответ</summary>
 
 Масштаб и влияние (RED/SLO: все или один хост), «что изменилось», затем на хосте «60 секунд»
-   и USE по ресурсам в порядке errors → saturation → utilization, включая программные ресурсы.
-   Дальше — drill-down инструментом под найденный ресурс; всё с журналом времени.
+и USE по ресурсам в порядке errors → saturation → utilization, включая программные ресурсы.
+Дальше — drill-down инструментом под найденный ресурс; всё с журналом времени.
 
 </details>
 
@@ -1365,8 +1161,8 @@ sar из sysstat пишет историю раз в 10 минут: `sar -q/-u/-
 <details><summary>Ответ</summary>
 
 Гипотеза с проверяемым предсказанием, baseline, замер, одно обратимое изменение и замер
-   «после» тем же инструментом. Причина доказана, когда её можно воспроизвести и показать цифру
-   до и после фикса.
+«после» тем же инструментом. Причина доказана, когда её можно воспроизвести и показать цифру
+до и после фикса.
 
 </details>
 
@@ -1375,10 +1171,8 @@ sar из sysstat пишет историю раз в 10 минут: `sar -q/-u/-
 <details><summary>Ответ</summary>
 
 Saturation — работа, которая ждёт в очереди к ресурсу (run queue, `aqu-sz`, accept queue,
-    throttling, PSI). Очередь означает, что кто-то уже ждёт — latency страдает, тогда как высокая
-    utilization без очереди — просто эффективная загрузка.
-
----
+throttling, PSI). Очередь означает, что кто-то уже ждёт — latency страдает, тогда как высокая
+utilization без очереди — просто эффективная загрузка.
 
 </details>
 

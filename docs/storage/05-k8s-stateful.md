@@ -1,14 +1,14 @@
 ---
 title: "05. Stateful в Kubernetes: CSI, StatefulSet, Rook-Ceph, снапшоты"
-description: "Блок → Хранилища и stateful → тема 05. Опирается на"
+description: "CSI, StorageClass, StatefulSet, Rook-Ceph, VolumeSnapshot, Pending/Multi-Attach"
 ---
 
 # 05. Stateful в Kubernetes: CSI, StatefulSet, Rook-Ceph, снапшоты
 
 > Блок → Хранилища и stateful → тема 05. Опирается на
-> [../Kubernetes/14_storage.md](/kubernetes/14-storage) (PV/PVC/SC, access modes, reclaimPolicy),
-> [../Kubernetes/06_daemonset_statefulset.md](/kubernetes/06-daemonset-statefulset) (гарантии
-> StatefulSet, headless Service) и [04_ceph.md](/storage/04-ceph) (RBD, CephFS, pools).
+> [Kubernetes: 14. Хранилище: PV, PVC, StorageClass](/kubernetes/14-storage) (PV/PVC/SC, access modes, reclaimPolicy),
+> [Kubernetes: 06. DaemonSet и StatefulSet](/kubernetes/06-daemonset-statefulset) (гарантии
+> StatefulSet, headless Service) и [04. Ceph: распределённое хранилище](/storage/04-ceph) (RBD, CephFS, pools).
 > Базовые YAML и таблицы оттуда здесь не повторяются — идём глубже.
 >
 > **После темы ты умеешь:** объяснить, что делает каждый компонент CSI при создании и монтировании
@@ -21,7 +21,7 @@ description: "Блок → Хранилища и stateful → тема 05. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  PVC ──► external-provisioner ──CreateVolume──► хранилище (Ceph, LVM, облако, NFS)
   │                                                   │
   │  Bound ◄──────────── PV ◄─────────────────────────┘
@@ -33,12 +33,13 @@ description: "Блок → Хранилища и stateful → тема 05. Оп�
  ───────────────────────────────────────────────────────────────────────────────────────
  вокруг: StatefulSet (свой PVC на под) · VolumeSnapshot · expansion · Rook-оператор
  инциденты: Pending PVC · Multi-Attach · Terminating PVC · «данные остались на мёртвой ноде»
-```text
+```
+
 ---
 
 ## 1. CSI изнутри: кто что делает
 
-В [../Kubernetes/14_storage.md](/kubernetes/14-storage) CSI — это «controller + node».
+В [Kubernetes: 14. Хранилище: PV, PVC, StorageClass](/kubernetes/14-storage) CSI — это «controller + node».
 Внутри controller-части — набор стандартных sidecar-контейнеров от kubernetes-csi, каждый
 следит за своими объектами API и дёргает gRPC-метод драйвера:
 
@@ -54,20 +55,22 @@ description: "Блок → Хранилища и stateful → тема 05. Оп�
 Общий для кластера **snapshot-controller** (не sidecar) превращает VolumeSnapshot
 в VolumeSnapshotContent — без него снапшоты не работают вовсе (раздел 8).
 
-```text
+```text:no-line-numbers
 Путь тома на ноде (полезно при отладке «куда смонтировалось»):
-/var/lib/kubelet/plugins/kubernetes.io/csi/&lt;driver&gt;/&lt;hash&gt;/globalmount   ← NodeStage (раз на ноду)
-/var/lib/kubelet/pods/&lt;pod-uid&gt;/volumes/kubernetes.io~csi/&lt;pv&gt;/mount      ← NodePublish (на каждый под)
-```text
+/var/lib/kubelet/plugins/kubernetes.io/csi/<driver>/<hash>/globalmount   ← NodeStage (раз на ноду)
+/var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~csi/<pv>/mount      ← NodePublish (на каждый под)
+```
+
 Служебные объекты:
 
 ```bash
 kubectl get csidrivers                    # attachRequired, podInfoOnMount, fsGroupPolicy
-kubectl get csinode &lt;node&gt; -o yaml        # drivers[].allocatable.count — лимит томов на ноду
+kubectl get csinode <node> -o yaml        # drivers[].allocatable.count — лимит томов на ноду
 kubectl get volumeattachments             # какой PV к какой ноде прицеплен (ATTACHED true/false)
 kubectl -n rook-ceph get deploy | grep -i rbd                     # controller-часть RBD-драйвера
-kubectl -n rook-ceph logs deploy/&lt;rbd-ctrlplugin&gt; -c csi-provisioner   # логи конкретного sidecar
-```text
+kubectl -n rook-ceph logs deploy/<rbd-ctrlplugin> -c csi-provisioner   # логи конкретного sidecar
+```
+
 > 💡 Ошибки в событиях PVC пишет provisioner, ошибки attach — attacher (в событиях пода
 > `FailedAttachVolume`), ошибки mount — kubelet (`FailedMount`). По тексту события сразу
 > понятно, в какую часть цепочки смотреть.
@@ -91,11 +94,12 @@ allowedTopologies:                      # выдавать тома только
   - matchLabelExpressions:
       - key: topology.kubernetes.io/zone
         values: [dc1-a, dc1-b]
-```text
+```
+
 - `parameters`, `provisioner`, `reclaimPolicy`, `volumeBindingMode` **неизменяемы** — чтобы
   поменять, создают новый класс и переносят данные.
 - `reclaimPolicy` копируется в PV в момент создания. Поменять у готового тома:
-  `kubectl patch pv &lt;pv&gt; -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"&#125;&#125;'` — первое, что
+  <code v-pre>kubectl patch pv &lt;pv&gt; -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'</code> — первое, что
   делают, когда «случайно поставили Delete для базы».
 - Default-класс — аннотация `storageclass.kubernetes.io/is-default-class: "true"`. Если
   default-классов два, берётся самый свежий — источник сюрпризов после установки нового CSI.
@@ -105,7 +109,7 @@ allowedTopologies:                      # выдавать тома только
 
 ## 3. Жизненный цикл PV и PVC
 
-```text
+```text:no-line-numbers
             создан/выделен            PVC удалён
  PV:  Available ──► Bound ─────────────────────────┬─► reclaimPolicy Delete: удалить том в хранилище
                      ▲                             │      (ошибка удаления ──► Failed)
@@ -113,12 +117,13 @@ allowedTopologies:                      # выдавать тома только
                      │                                    (данные целы, claimRef держит старый PVC)
                      └──────── убрать claimRef ◄──────────┘   ← ручное «переиспользование»
  PVC: Pending ──► Bound ──► (PV пропал) Lost
-```text
+```
+
 Вернуть данные из `Released`-тома (например, после случайного `kubectl delete pvc`):
 
 ```bash
 kubectl patch pv pvc-8f3a... --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'   # → Available
-```text
+```
 ```yaml
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -128,7 +133,8 @@ spec:
   volumeName: pvc-8f3a...        # ⭐ привязать к конкретному PV
   accessModes: [ReadWriteOnce]
   resources: { requests: { storage: 10Gi } }   # не больше размера PV
-```text
+```
+
 Защита от удаления «на ходу» — финализаторы:
 `kubernetes.io/pvc-protection` (PVC используется подом — удаление ждёт, статус `Terminating`),
 `kubernetes.io/pv-protection` (PV привязан). Это не баг, а страховка.
@@ -147,12 +153,13 @@ spec:
 ```bash
 # 1. расширить каждый PVC (класс с allowVolumeExpansion: true)
 for i in 0 1 2; do
-  kubectl -n db patch pvc data-postgres-$i -p '{"spec":{"resources":{"requests":{"storage":"20Gi"&#125;&#125;&#125;&#125;'
+  kubectl -n db patch pvc data-postgres-$i -p '{"spec":{"resources":{"requests":{"storage":"20Gi"}}}}'
 done
 # 2. пересоздать объект StatefulSet без удаления подов, уже с новым размером в шаблоне
 kubectl -n db delete sts postgres --cascade=orphan
 kubectl -n db apply -f postgres-sts.yaml        # volumeClaimTemplates …storage: 20Gi
-```text
+```
+
 **Судьба PVC при удалении и уменьшении** (GA с 1.32):
 
 ```yaml
@@ -160,7 +167,8 @@ spec:
   persistentVolumeClaimRetentionPolicy:
     whenDeleted: Retain     # удалили StatefulSet → PVC остаются (по умолчанию)
     whenScaled: Retain      # scale 3→2 → data-postgres-2 остаётся (по умолчанию)
-```text
+```
+
 `Delete` удобен для эфемерных кластеров (CI, тесты), но для БД — ловушка: scale down
 удалит данные реплики, scale up создаст **пустой** том.
 
@@ -184,11 +192,12 @@ spec:
 |---|---|---|
 | Как задать | ничего | аннотация PVC `volumeType: local` или аннотация SC `defaultVolumeType: local` |
 | Как kubelet монтирует | путь ноды прямо в контейнер | bind-mount в каталог пода `/var/lib/kubelet/pods/...` |
-| Velero FSB (Kopia) | ❌ не видит | ✅ работает ([07_velero_dr.md](/storage/07-velero-dr)) |
+| Velero FSB (Kopia) | ❌ не видит | ✅ работает ([07. Velero и disaster recovery](/storage/07-velero-dr)) |
 
 ```bash
-kubectl get pv &lt;pv&gt; -o jsonpath='{.spec.nodeAffinity}'; echo   # к какой ноде прибит том
-```text
+kubectl get pv <pv> -o jsonpath='{.spec.nodeAffinity}'; echo   # к какой ноде прибит том
+```
+
 Следствия, которые надо проговаривать на собесе:
 - умерла нода — умерли данные (реплик нет); под с этим PVC будет `Pending` с
   `volume node affinity conflict`, пока нода не вернётся или PVC не пересоздать;
@@ -207,14 +216,14 @@ kubectl get pv &lt;pv&gt; -o jsonpath='{.spec.nodeAffinity}'; echo   # к как
 | TopoLVM / OpenEBS LocalPV-LVM | локальный LVM через CSI, учёт свободного места | нет | в пределах ноды | данные недоступны | БД-операторы с собственной репликацией |
 | Longhorn | распределённый блочный, реплики тома на других нодах | через NFS share-manager | да + бэкап в S3 | переживает | небольшой on-prem, простота |
 | Rook-Ceph | Ceph RBD / CephFS / RGW | да (CephFS) | да | переживает | серьёзный on-prem, много данных |
-| NFS CSI | каталоги на NFS-сервере | да | ограниченно | зависит от NFS (SPOF) | общие файлы, legacy ([03_nfs_minio.md](/storage/03-nfs-minio)) |
+| NFS CSI | каталоги на NFS-сервере | да | ограниченно | зависит от NFS (SPOF) | общие файлы, legacy ([03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio)) |
 | CSI облака | диск провайдера | обычно нет | да | переподключится в той же зоне | облако |
 
 ---
 
 ## 7. Rook-Ceph: Ceph как оператор
 
-```text
+```text:no-line-numbers
  Rook operator (Deployment) ──смотрит──► CephCluster CR
       │ создаёт и лечит
       ├─► mon-a/b/c (Deployment на разных нодах)   mgr   osd-0/1/2 (по OSD на диск)
@@ -222,7 +231,8 @@ kubectl get pv &lt;pv&gt; -o jsonpath='{.spec.nodeAffinity}'; echo   # к как
       └─► CephBlockPool / CephFilesystem / CephObjectStore CR ──► пулы в Ceph
  StorageClass rook-ceph-block ──► RBD-образ на каждый PVC (RWO)
  StorageClass rook-cephfs     ──► подкаталог CephFS на каждый PVC (RWX)
-```text
+```
+
 **Требования (реалистично):** Kubernetes 1.31–1.37 (Rook v1.20.7), 3 ноды, на каждой **сырой
 диск без разделов и ФС** (`lsblk -f` — пустой FSTYPE), модуль `rbd` (`modprobe rbd`), udev.
 Память: 3 × 4 ГБ — минимум «на грани», 3 × 6 ГБ — комфортно (OSD по умолчанию целится в
@@ -239,9 +249,10 @@ kubectl get pv &lt;pv&gt; -o jsonpath='{.spec.nodeAffinity}'; echo   # к как
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --node-ip=192.168.61.11 --flannel-iface=eth1" sh -
 sudo cat /var/lib/rancher/k3s/server/node-token
 # ceph2, ceph3 — агенты (--node-ip своей ноды)
-curl -sfL https://get.k3s.io | K3S_URL=https://192.168.61.11:6443 K3S_TOKEN=&lt;token&gt; \
+curl -sfL https://get.k3s.io | K3S_URL=https://192.168.61.11:6443 K3S_TOKEN=<token> \
   INSTALL_K3S_EXEC="agent --node-ip=192.168.61.12 --flannel-iface=eth1" sh -
-```text
+```
+
 Установка (манифесты; Helm — чарты `rook-release/rook-ceph` и `rook-release/rook-ceph-cluster`):
 
 ```bash
@@ -250,7 +261,8 @@ cd rook/deploy/examples
 kubectl create -f crds.yaml -f common.yaml -f csi-operator.yaml
 kubectl create -f operator.yaml
 kubectl -n rook-ceph get pod -w              # ждём rook-ceph-operator Running
-```text
+```
+
 ```yaml
 # my-cluster.yaml — вместо cluster.yaml, ужатый под лабу
 apiVersion: ceph.rook.io/v1
@@ -270,7 +282,8 @@ spec:
   cephConfig:
     osd:
       osd_memory_target: "2147483648"      # 2 ГиБ — ниже Ceph не рекомендует; для 4-гиговых VM
-```text
+```
+
 ```bash
 kubectl create -f my-cluster.yaml
 kubectl -n rook-ceph get cephcluster -w      # PHASE Ready, HEALTH HEALTH_OK (5–15 минут)
@@ -280,7 +293,8 @@ kubectl create -f csi/cephfs/storageclass.yaml   # SC rook-cephfs — RWX
 kubectl create -f toolbox.yaml
 kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph status
 kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- ceph osd tree
-```text
+```
+
 Ключевые поля SC `rook-ceph-block`: `provisioner: rook-ceph.rbd.csi.ceph.com`, `clusterID: rook-ceph`,
 `pool: replicapool`, `imageFormat: "2"`, `imageFeatures: layering`, секреты
 `rook-csi-rbd-provisioner` (provisioner / controller-expand / controller-publish) и
@@ -307,7 +321,8 @@ git clone --depth 1 --branch v8.5.0 https://github.com/kubernetes-csi/external-s
 cd external-snapshotter
 kubectl kustomize client/config/crd | kubectl create -f -
 kubectl -n kube-system kustomize deploy/kubernetes/snapshot-controller | kubectl create -f -
-```text
+```
+
 ```yaml
 apiVersion: snapshot.storage.k8s.io/v1
 kind: VolumeSnapshotClass
@@ -334,27 +349,30 @@ spec:
   dataSource: { name: data-snap-1, kind: VolumeSnapshot, apiGroup: snapshot.storage.k8s.io }
   accessModes: [ReadWriteOnce]
   resources: { requests: { storage: 5Gi } }    # не меньше исходного
-```text
+```
+
 ```bash
 kubectl -n app get volumesnapshot     # READYTOUSE true, RESTORESIZE
 kubectl get volumesnapshotcontent
-```text
+```
+
 Клон без снапшота — `dataSource: {kind: PersistentVolumeClaim, name: data}` (тот же namespace и класс).
 
 > ⚠️ CSI-снапшот **crash-consistent**: как выдернутый шнур. БД после такого восстановится
 > (через WAL), но гарантий уровня приложения нет, а снапшот живёт **в том же хранилище** —
 > умер Ceph, умерли и снапшоты. Это быстрый откат, а не бэкап. Бэкап — вынос в другое место
-> ([06_db_backup_replication.md](/storage/06-db-backup-replication), [07_velero_dr.md](/storage/07-velero-dr)).
+> ([06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication), [07. Velero и disaster recovery](/storage/07-velero-dr)).
 
 ---
 
 ## 9. Расширение тома
 
-```text
+```text:no-line-numbers
 patch PVC 10Gi → 20Gi ──► external-resizer: ControllerExpandVolume (растёт RBD-образ/диск)
                       ──► kubelet: NodeExpandVolume (resize2fs / xfs_growfs) — онлайн, если драйвер умеет
 kubectl get pvc -w        CAPACITY меняется после роста ФС; условия — в status.conditions
-```text
+```
+
 - Уменьшить нельзя. С **1.34 (RecoverVolumeExpansionFailure, GA)** можно *понизить запрос*
   после неудачного расширения (попросили 100Ti, хранилище отказало — вернуть 30Gi), но не
   меньше исходного размера.
@@ -366,7 +384,7 @@ kubectl get pvc -w        CAPACITY меняется после роста ФС; 
 
 ## 10. Инциденты: Pending PVC и Multi-Attach
 
-```text
+```text:no-line-numbers
 PVC Pending ──► kubectl describe pvc — что в Events?
  ├─ "waiting for first consumer to be created before binding" → норма для WaitForFirstConsumer
  ├─ "no persistent volumes available for this claim and no storage class is set" → нет default SC
@@ -375,7 +393,8 @@ PVC Pending ──► kubectl describe pvc — что в Events?
  │        → provisioner лежит: kubectl get pods -A | grep csi; логи csi-provisioner
  ├─ ProvisioningFailed: quota / insufficient capacity / pool full → место, ResourceQuota
  └─ под Pending: "volume node affinity conflict" → локальный том на другой (мёртвой) ноде
-```text
+```
+
 **`Multi-Attach error for volume ... Volume is already exclusively attached to one node`** —
 RWO-том ещё числится за другой нодой:
 
@@ -383,7 +402,7 @@ RWO-том ещё числится за другой нодой:
 |---------|-----------|
 | Deployment с RWO и `RollingUpdate`: новый под на другой ноде, старый ещё жив | `strategy: Recreate` или StatefulSet |
 | Несколько реплик с одним RWO-томом | StatefulSet с `volumeClaimTemplates` или RWX |
-| Нода умерла, VolumeAttachment висит | attach-detach controller сам сделает force detach через 6 минут (`maxWaitForUnmountDuration`); быстрее — убедиться, что нода **реально выключена**, и `kubectl taint nodes &lt;node&gt; node.kubernetes.io/out-of-service=nodeshutdown:NoExecute` (non-graceful shutdown, GA 1.28) |
+| Нода умерла, VolumeAttachment висит | attach-detach controller сам сделает force detach через 6 минут (`maxWaitForUnmountDuration`); быстрее — убедиться, что нода **реально выключена**, и `kubectl taint nodes <node> node.kubernetes.io/out-of-service=nodeshutdown:NoExecute` (non-graceful shutdown, GA 1.28) |
 
 > ⚠️ Taint `out-of-service` на ноде, которая на самом деле жива и пишет в том, — прямой путь
 > к двум писателям на одном блочном устройстве и порче ФС. Сначала выключи ноду (IPMI,
@@ -401,7 +420,7 @@ VolumeAttachment не удаляется после удаления ноды �
 Тема 06 контроллеров дала позицию «managed, иначе зрелый оператор». Здесь — как это решать
 на практике.
 
-```text
+```text:no-line-numbers
 Есть managed-БД у провайдера и она устраивает? ──да──► managed
              │ нет (on-prem, требования к данным в стране — частый случай в KZ)
              ▼
@@ -410,22 +429,24 @@ VolumeAttachment не удаляется после удаления ноды �
              ▼ да
 Оператор с бэкапом в S3, проверенным PITR, мониторингом и switchover ──► в кластер
 Нужен предсказуемый I/O на выделенном железе, большие объёмы ──► VM/железо + Patroni
-```text
+```
+
 **Shared-nothing — главный архитектурный довод.** Оператор (CloudNativePG, Zalando на Patroni)
 сам держит 3 копии через репликацию PostgreSQL. Если под ними ещё и Ceph с `size: 3`:
 
-```text
+```
 3 инстанса PG × 3 реплики Ceph = 9 копий данных, запись идёт по сети дважды,
 латентность fsync = сеть + Ceph. Для БД-оператора лучше локальные тома (TopoLVM,
 LocalPV-LVM, local PV на NVMe) + anti-affinity по нодам: копии даёт сама БД.
 Сетевой том (Ceph/Longhorn) уместен для одиночного инстанса без своей репликации.
-```text
+```
+
 | Оператор | Для чего | Бэкапы | Замечание |
 |----------|----------|--------|-----------|
 | CloudNativePG | PostgreSQL | barman-cloud (плагин) в S3 | без Patroni: failover делает сам оператор |
 | Zalando postgres-operator | PostgreSQL | WAL-G (образ Spilo) | внутри Patroni |
 | Crunchy PGO, Percona Operator | PostgreSQL | pgBackRest | Percona — Patroni внутри |
-| Strimzi | Kafka | — (репликация + MirrorMaker 2) | см. [../Left/05_Queues/00_INDEX.md](/queues/) |
+| Strimzi | Kafka | — (репликация + MirrorMaker 2) | см. [Очереди](/queues/) |
 
 Чек-лист перед «тащим базу в кластер»: тест `fio` на выбранном StorageClass; PDB и
 anti-affinity; `reclaimPolicy: Retain`; бэкап вне кластера и **проведённое** восстановление
@@ -461,7 +482,7 @@ anti-affinity; `reclaimPolicy: Retain`; бэкап вне кластера и **
   (`kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.8`) — до того, как
   база встанет.
 - Rook-Ceph в on-prem — это два сервиса на поддержке: Kubernetes и Ceph. Дежурному нужен и
-  `kubectl`, и `ceph health detail` ([04_ceph.md](/storage/04-ceph)).
+  `kubectl`, и `ceph health detail` ([04. Ceph: распределённое хранилище](/storage/04-ceph)).
 - Снапшот перед миграцией схемы/апгрейдом оператора — быстрый откат; бэкап в S3 — страховка.
 
 ---
@@ -472,7 +493,7 @@ anti-affinity; `reclaimPolicy: Retain`; бэкап вне кластера и **
 |------|-----|
 | Драйверы и лимиты томов | `kubectl get csidrivers`, `kubectl get csinode NODE -o yaml` |
 | Кто к какой ноде прицеплен | `kubectl get volumeattachments` |
-| Оставить данные у существующего PV | `kubectl patch pv PV -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"&#125;&#125;'` |
+| Оставить данные у существующего PV | <code v-pre>kubectl patch pv PV -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'</code> |
 | Переиспользовать `Released` PV | убрать `spec.claimRef` + PVC с `volumeName` |
 | Судьба PVC StatefulSet | `persistentVolumeClaimRetentionPolicy: {whenDeleted, whenScaled}` |
 | Расширить тома StatefulSet | patch каждого PVC → `delete sts --cascade=orphan` → apply |
@@ -500,13 +521,17 @@ anti-affinity; `reclaimPolicy: Retain`; бэкап вне кластера и **
 9. Multi-Attach на мёртвой ноде лечится выключением ноды и taint `out-of-service`, а не `--force`.
 10. БД-оператор с собственной репликацией лучше ставить на локальные тома, а не на Ceph size 3.
 
-➡️ Дальше: [06_db_backup_replication.md](/storage/06-db-backup-replication) · задачи: 05_k8s_stateful_tasks.md
+---
 
+## Задачи
+
+> Стенд: kind-кластер `devops` из блока Kubernetes (SC `standard`, local-path) — всё, где не
+> написано «Rook». «Rook» — три VM `~/Projects/devops/stands/ceph-lab` (ceph1..3) с k3s и
+> Rook-Ceph из раздела 7 конспекта. ⚠️ Rook и затирание дисков — только на этих учебных VM.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Какие sidecar-контейнеры входят в controller-часть CSI-драйвера и что делает каждый?
 
@@ -524,9 +549,9 @@ external-provisioner (PVC → `CreateVolume`/`DeleteVolume`), external-attacher
 <details><summary>Ответ</summary>
 
 `NodeStage` готовит устройство один раз на ноду (подключить, при необходимости
-отформатировать, смонтировать в `…/plugins/kubernetes.io/csi/&lt;driver&gt;/&lt;hash&gt;/globalmount`).
+отформатировать, смонтировать в `…/plugins/kubernetes.io/csi/<driver>/<hash>/globalmount`).
 `NodePublish` делает bind-mount в каталог конкретного пода:
-`/var/lib/kubelet/pods/&lt;uid&gt;/volumes/kubernetes.io~csi/&lt;pv&gt;/mount`.
+`/var/lib/kubelet/pods/<uid>/volumes/kubernetes.io~csi/<pv>/mount`.
 
 </details>
 
@@ -545,7 +570,7 @@ controller в kube-controller-manager, обрабатывает external-attache
 <details><summary>Ответ</summary>
 
 `provisioner`, `parameters`, `reclaimPolicy`, `volumeBindingMode` (менять — новый класс
-и перенос данных). У PV: `kubectl patch pv PV -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"&#125;&#125;'`.
+и перенос данных). У PV: <code v-pre>kubectl patch pv PV -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'</code>.
 
 </details>
 
@@ -565,7 +590,7 @@ PV пропал. `Released` PV держит `claimRef` на старый PVC, н
 
 Убедиться, что PV `Released` и данные на месте; снять `spec.claimRef`
 (`kubectl patch pv … --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'`) — PV станет
-`Available`; создать PVC с `volumeName: &lt;pv&gt;`, тем же классом, режимом доступа и размером
+`Available`; создать PVC с `volumeName: <pv>`, тем же классом, режимом доступа и размером
 не больше PV.
 
 </details>
@@ -666,254 +691,127 @@ external-snapshotter не получает работы, и снапшот не 
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```yaml
 B1.  # Deployment, replicas: 1, стратегия по умолчанию (RollingUpdate), PVC RWO на rook-ceph-block.
-```text
-<details><summary>Ответ</summary>
+     # Релиз: новый под запланирован на другую ноду.
 
-⚠️ `Multi-Attach error`: новый под на другой ноде не может подключить RWO-том, пока
+B2.  # StorageClass для кластера PostgreSQL в двух зонах
+     reclaimPolicy: Delete
+     volumeBindingMode: Immediate
+
+B3.  kubectl -n db edit sts postgres     # меняем volumeClaimTemplates …storage: 10Gi → 20Gi
+
+B4.  persistentVolumeClaimRetentionPolicy: { whenDeleted: Retain, whenScaled: Delete }
+     # у StatefulSet postgres на 3 реплики: scale 3 → 1, через час обратно 1 → 3
+
+B5.  # PVC без статических PV в кластере
+     spec: { storageClassName: "", accessModes: [ReadWriteOnce], resources: { requests: { storage: 1Gi } } }
+
+B6.  # CRD снапшотов поставили, snapshot-controller — нет; создали VolumeSnapshot
+
+B7.  # исходный PVC 5Gi, восстановление из его снапшота
+     resources: { requests: { storage: 3Gi } }
+     dataSource: { name: data-snap-1, kind: VolumeSnapshot, apiGroup: snapshot.storage.k8s.io }
+
+B8.  # CephCluster на нодах, где кроме vdb есть пустой диск vdc «под будущий бэкап»
+     storage: { useAllNodes: true, useAllDevices: true }
+
+B9.  kubectl taint nodes worker2 node.kubernetes.io/out-of-service=nodeshutdown:NoExecute
+     # worker2 не отвечает из-за сетевой изоляции, но VM работает
+
+B10. # Deployment на 3 реплики, общий каталог
+     storageClassName: rook-ceph-block
+     accessModes: [ReadWriteMany]      # volumeMode по умолчанию Filesystem
+
+B11. # PVC на local-path создан и привязан к PV на ноде devops-worker;
+     # в поде добавили nodeSelector: kubernetes.io/hostname: devops-worker2
+
+B12. kubectl -n app delete pvc data   # под app-0 всё ещё использует этот PVC
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ `Multi-Attach error`: новый под на другой ноде не может подключить RWO-том, пока
 старый жив (RollingUpdate сначала создаёт новый). Нужен `strategy: Recreate` или StatefulSet.
 
-</details>
-
-```text:no-line-numbers
-     # Релиз: новый под запланирован на другую ноду.
-```text
-```text:no-line-numbers
-B2.  # StorageClass для кластера PostgreSQL в двух зонах
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `Delete` сотрёт данные при удалении PVC/namespace; `Immediate` создаст диск в
+**B2.** ⚠️ `Delete` сотрёт данные при удалении PVC/namespace; `Immediate` создаст диск в
 случайной зоне, и под может стать непланируемым. Для БД — `Retain` + `WaitForFirstConsumer`.
 
-</details>
-
-```text:no-line-numbers
-     reclaimPolicy: Delete
-```text
-```text:no-line-numbers
-     volumeBindingMode: Immediate
-```text
-```text:no-line-numbers
-B3.  kubectl -n db edit sts postgres     # меняем volumeClaimTemplates …storage: 10Gi → 20Gi
-```text
-<details><summary>Ответ</summary>
-
-⚠️ API отклонит: `volumeClaimTemplates` неизменяемы (Forbidden: updates to statefulset
+**B3.** ⚠️ API отклонит: `volumeClaimTemplates` неизменяемы (Forbidden: updates to statefulset
 spec for fields other than …). Решение — A8.
 
-</details>
-
-```text:no-line-numbers
-B4.  persistentVolumeClaimRetentionPolicy: { whenDeleted: Retain, whenScaled: Delete }
-```text
-<details><summary>Ответ</summary>
-
-⚠️ При scale 3 → 1 PVC `data-postgres-1` и `-2` удалятся вместе с данными; при 1 → 3
+**B4.** ⚠️ При scale 3 → 1 PVC `data-postgres-1` и `-2` удалятся вместе с данными; при 1 → 3
 реплики получат пустые тома и будут заново копировать данные с primary (если это умеет
 приложение/оператор).
 
-</details>
+**B5.** ⚠️ `Pending` навсегда: пустой класс означает «только статический PV», а подходящих PV нет.
 
-```text:no-line-numbers
-     # у StatefulSet postgres на 3 реплики: scale 3 → 1, через час обратно 1 → 3
-```text
-```text:no-line-numbers
-B5.  # PVC без статических PV в кластере
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `Pending` навсегда: пустой класс означает «только статический PV», а подходящих PV нет.
-
-</details>
-
-```text:no-line-numbers
-     spec: { storageClassName: "", accessModes: [ReadWriteOnce], resources: { requests: { storage: 1Gi } } }
-```text
-```text:no-line-numbers
-B6.  # CRD снапшотов поставили, snapshot-controller — нет; создали VolumeSnapshot
-```text
-<details><summary>Ответ</summary>
-
-⚠️ VolumeSnapshot висит без статуса (`READYTOUSE` пусто), VolumeSnapshotContent не
+**B6.** ⚠️ VolumeSnapshot висит без статуса (`READYTOUSE` пусто), VolumeSnapshotContent не
 создаётся — нет контроллера. Поставить snapshot-controller той же версии, что CRD.
 
-</details>
+**B7.** ⚠️ Размер меньше `restoreSize` снапшота — provisioner откажет. Запросить ≥ 5Gi.
 
-```text:no-line-numbers
-B7.  # исходный PVC 5Gi, восстановление из его снапшота
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Размер меньше `restoreSize` снапшота — provisioner откажет. Запросить ≥ 5Gi.
-
-</details>
-
-```text:no-line-numbers
-     resources: { requests: { storage: 3Gi } }
-```text
-```text:no-line-numbers
-     dataSource: { name: data-snap-1, kind: VolumeSnapshot, apiGroup: snapshot.storage.k8s.io }
-```text
-```text:no-line-numbers
-B8.  # CephCluster на нодах, где кроме vdb есть пустой диск vdc «под будущий бэкап»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Rook заберёт и `vdc` под OSD — «диск под бэкап» станет частью Ceph. Нужен
+**B8.** ⚠️ Rook заберёт и `vdc` под OSD — «диск под бэкап» станет частью Ceph. Нужен
 `useAllDevices: false` + `deviceFilter: "^vdb$"` (или явный список `nodes[].devices`).
 
-</details>
-
-```text:no-line-numbers
-     storage: { useAllNodes: true, useAllDevices: true }
-```text
-```text:no-line-numbers
-B9.  kubectl taint nodes worker2 node.kubernetes.io/out-of-service=nodeshutdown:NoExecute
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Kubernetes форсированно отцепит тома и перезапустит поды на других нодах, а старые
+**B9.** ⚠️ Kubernetes форсированно отцепит тома и перезапустит поды на других нодах, а старые
 поды на изолированной, но живой ноде продолжат писать — два писателя на RWO-томе, риск порчи
 ФС. Taint — только после гарантированного выключения ноды.
 
-</details>
-
-```text:no-line-numbers
-     # worker2 не отвечает из-за сетевой изоляции, но VM работает
-```text
-```text:no-line-numbers
-B10.  # Deployment на 3 реплики, общий каталог
-```text
-<details><summary>Ответ</summary>
-
-⚠️ ceph-csi RBD не выдаёт RWX в режиме Filesystem (блочная ФС не кластерная) —
+**B10.** ⚠️ ceph-csi RBD не выдаёт RWX в режиме Filesystem (блочная ФС не кластерная) —
 provisioning упадёт. Для общего каталога — `rook-cephfs`; RWX RBD возможен только с
 `volumeMode: Block` и приложением, которое само координирует доступ.
 
-</details>
-
-```text:no-line-numbers
-     storageClassName: rook-ceph-block
-```text
-```text:no-line-numbers
-     accessModes: [ReadWriteMany]      # volumeMode по умолчанию Filesystem
-```text
-```text:no-line-numbers
-B11.  # PVC на local-path создан и привязан к PV на ноде devops-worker;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Под `Pending`: `volume node affinity conflict` — local-path PV прибит к
+**B11.** ⚠️ Под `Pending`: `volume node affinity conflict` — local-path PV прибит к
 `devops-worker`, а nodeSelector требует `devops-worker2`.
 
-</details>
-
-```text:no-line-numbers
-     # в поде добавили nodeSelector: kubernetes.io/hostname: devops-worker2
-```text
-```text:no-line-numbers
-B12.  kubectl -n app delete pvc data   # под app-0 всё ещё использует этот PVC
-```text
-<details><summary>Ответ</summary>
-
-⚠️ PVC уйдёт в `Terminating` и будет висеть, пока под его использует (финализатор
+**B12.** ⚠️ PVC уйдёт в `Terminating` и будет висеть, пока под его использует (финализатор
 `pvc-protection`); данные целы. После удаления пода PVC удалится, а с ним по `reclaimPolicy` — PV.
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Проследить CSI-цепочку (Rook)
+#### C1. 🔑 Проследить CSI-цепочку (Rook)
 Создай PVC на `rook-ceph-block` и под с ним. Найди по шагам: событие provisioner'а в PVC,
 PV и его `spec.csi.volumeHandle` / `volumeAttributes.imageName`, RBD-образ в Ceph (toolbox:
 `rbd ls replicapool`), VolumeAttachment, точку монтирования на ноде (globalmount и каталог пода).
 
-### C2. 🔑 Спасение `Released` PV (kind)
-**1.** Создай SC `standard-retain`: provisioner `rancher.io/local-path`, `reclaimPolicy: Retain`,
-   `volumeBindingMode: WaitForFirstConsumer`.
-
 <details><summary>Ответ</summary>
 
 Порядок: `kubectl describe pvc` (Events: `Provisioning` → `ProvisioningSucceeded` от
-`rook-ceph.rbd.csi.ceph.com`) → `kubectl get pv &lt;pv&gt; -o jsonpath='{.spec.csi.volumeAttributes.imageName}'`
+`rook-ceph.rbd.csi.ceph.com`) → `kubectl get pv <pv> -o jsonpath='{.spec.csi.volumeAttributes.imageName}'`
 (имя вида `csi-vol-…`) → в toolbox `rbd ls replicapool` и `rbd info replicapool/csi-vol-…` →
-`kubectl get volumeattachments | grep &lt;pv&gt;` (ATTACHED true, нода) → на ноде
-`findmnt | grep &lt;pv&gt;` и `lsblk` (устройство `/dev/rbd0`, globalmount и каталог пода).
+`kubectl get volumeattachments | grep <pv>` (ATTACHED true, нода) → на ноде
+`findmnt | grep <pv>` и `lsblk` (устройство `/dev/rbd0`, globalmount и каталог пода).
 
 </details>
 
-**2.** PVC + под, запиши файл в том. Удали под и PVC.
+#### C2. 🔑 Спасение `Released` PV (kind)
+1. Создай SC `standard-retain`: provisioner `rancher.io/local-path`, `reclaimPolicy: Retain`,
+   `volumeBindingMode: WaitForFirstConsumer`.
+2. PVC + под, запиши файл в том. Удали под и PVC.
+3. Верни данные в новый PVC `data-restored` и проверь файл.
 
 <details><summary>Ответ</summary>
 
 ```bash
 kubectl get pv                                    # PV standard-retain в статусе Released
-kubectl patch pv &lt;pv&gt; --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'
-kubectl get pv &lt;pv&gt;                               # Available
-# PVC data-restored: storageClassName standard-retain, volumeName &lt;pv&gt;, тот же размер/режим
-```text
+kubectl patch pv <pv> --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'
+kubectl get pv <pv>                               # Available
+# PVC data-restored: storageClassName standard-retain, volumeName <pv>, тот же размер/режим
+```
 Под с `data-restored` должен попасть на ту же ноду (PV прибит `nodeAffinity`) — local-path
 учтёт это сам. Файл на месте.
 
 </details>
 
-**3.** Верни данные в новый PVC `data-restored` и проверь файл.
-
-<details><summary>Ответ</summary>
-
-Проверь `kubectl get sc rook-ceph-block -o jsonpath='{.allowVolumeExpansion}'` = true;
-patch `data-web-0/1/2` до 2Gi; дождись `CAPACITY 2Gi` (`kubectl get pvc -w`, RBD растит ФС
-онлайн); `kubectl delete sts web --cascade=orphan`; поправь шаблон на 2Gi и `kubectl apply`;
-`kubectl scale sts web --replicas=4` — `data-web-3` создастся на 2Gi.
-
-</details>
-
-### C3. 🔑 Расширить тома StatefulSet (Rook)
+#### C3. 🔑 Расширить тома StatefulSet (Rook)
 StatefulSet `web` на 3 реплики с `volumeClaimTemplates` 1Gi на `rook-ceph-block`. Увеличь
 тома до 2Gi без удаления подов и так, чтобы новые реплики тоже получали 2Gi.
 
-### C4. Retention policy на практике (kind)
-StatefulSet на 3 реплики с `whenScaled: Delete`. Сделай scale 3 → 1 → 3, наблюдай
-`kubectl get pvc -w`. Повтори с `Retain`. Что изменилось в данных реплик 1 и 2?
-
-### C5. 🔑 RWO и RWX на Rook
-**1.** Подними CephCluster, CephBlockPool + SC `rook-ceph-block`, CephFilesystem + SC `rook-cephfs`.
-
-<details><summary>Ответ</summary>
-
-Порядок: `kubectl describe pvc` (Events: `Provisioning` → `ProvisioningSucceeded` от
-`rook-ceph.rbd.csi.ceph.com`) → `kubectl get pv &lt;pv&gt; -o jsonpath='{.spec.csi.volumeAttributes.imageName}'`
-(имя вида `csi-vol-…`) → в toolbox `rbd ls replicapool` и `rbd info replicapool/csi-vol-…` →
-`kubectl get volumeattachments | grep &lt;pv&gt;` (ATTACHED true, нода) → на ноде
-`findmnt | grep &lt;pv&gt;` и `lsblk` (устройство `/dev/rbd0`, globalmount и каталог пода).
-
-</details>
-
-**2.** Deployment на 3 реплики с anti-affinity по нодам и общим PVC на `rook-cephfs` (RWX):
-   каждая реплика дописывает свою строку в общий файл.
-
-<details><summary>Ответ</summary>
-
-```bash
-kubectl get pv                                    # PV standard-retain в статусе Released
-kubectl patch pv &lt;pv&gt; --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'
-kubectl get pv &lt;pv&gt;                               # Available
-# PVC data-restored: storageClassName standard-retain, volumeName &lt;pv&gt;, тот же размер/режим
-```text
-Под с `data-restored` должен попасть на ту же ноду (PV прибит `nodeAffinity`) — local-path
-учтёт это сам. Файл на месте.
-
-</details>
-
-**3.** То же с PVC RWO на `rook-ceph-block` — что увидишь?
-
 <details><summary>Ответ</summary>
 
 Проверь `kubectl get sc rook-ceph-block -o jsonpath='{.allowVolumeExpansion}'` = true;
@@ -923,52 +821,93 @@ patch `data-web-0/1/2` до 2Gi; дождись `CAPACITY 2Gi` (`kubectl get pvc
 
 </details>
 
-### C6. Снапшот и восстановление (Rook)
-Поставь CRD и snapshot-controller, VolumeSnapshotClass. Запиши данные → снапшот → испорти
-данные → восстанови в новый PVC → смонтируй в под и сравни.
-
-### C7. Зоопарк Pending PVC (kind)
-Создай три «сломанных» PVC: с несуществующим классом, с `storageClassName: ""`, с `standard`
-без пода. По Events каждого определи причину и что с ней делать.
-
-### C8. Multi-Attach и мёртвая нода (Rook)
-**1.** Deployment с RWO-томом; смени `nodeSelector` на другую ноду — поймай `Multi-Attach error`.
-   Почини через `strategy: Recreate`.
+#### C4. Retention policy на практике (kind)
+StatefulSet на 3 реплики с `whenScaled: Delete`. Сделай scale 3 → 1 → 3, наблюдай
+`kubectl get pvc -w`. Повтори с `Retain`. Что изменилось в данных реплик 1 и 2?
 
 <details><summary>Ответ</summary>
 
-Порядок: `kubectl describe pvc` (Events: `Provisioning` → `ProvisioningSucceeded` от
-`rook-ceph.rbd.csi.ceph.com`) → `kubectl get pv &lt;pv&gt; -o jsonpath='{.spec.csi.volumeAttributes.imageName}'`
-(имя вида `csi-vol-…`) → в toolbox `rbd ls replicapool` и `rbd info replicapool/csi-vol-…` →
-`kubectl get volumeattachments | grep &lt;pv&gt;` (ATTACHED true, нода) → на ноде
-`findmnt | grep &lt;pv&gt;` и `lsblk` (устройство `/dev/rbd0`, globalmount и каталог пода).
+С `whenScaled: Delete` при 3 → 1 PVC `data-…-1` и `-2` удаляются (после удаления подов),
+при 1 → 3 создаются новые пустые. С `Retain` PVC остаются и при 1 → 3 поды подключают свои
+старые тома с данными.
 
 </details>
 
-**2.** Выключи VM с подом StatefulSet (`virsh destroy &lt;domain&gt;` на хосте). Замерь, когда под
+#### C5. 🔑 RWO и RWX на Rook
+1. Подними CephCluster, CephBlockPool + SC `rook-ceph-block`, CephFilesystem + SC `rook-cephfs`.
+2. Deployment на 3 реплики с anti-affinity по нодам и общим PVC на `rook-cephfs` (RWX):
+   каждая реплика дописывает свою строку в общий файл.
+3. То же с PVC RWO на `rook-ceph-block` — что увидишь?
+
+<details><summary>Ответ</summary>
+
+С `rook-cephfs` все три пода на разных нодах `Running`, файл содержит три строки.
+С RWO на `rook-ceph-block` один под `Running`, остальные на других нодах висят в
+`ContainerCreating` с `Multi-Attach error` (а если anti-affinity нет и все попали на одну
+ноду — работают, RWO ограничивает ноду, а не под).
+
+</details>
+
+#### C6. Снапшот и восстановление (Rook)
+Поставь CRD и snapshot-controller, VolumeSnapshotClass. Запиши данные → снапшот → испорти
+данные → восстанови в новый PVC → смонтируй в под и сравни.
+
+<details><summary>Ответ</summary>
+
+Установка CRD и контроллера — раздел 8 конспекта; VolumeSnapshot до `READYTOUSE true`;
+«порча» — `kubectl exec … -- sh -c 'echo broken > /data/file'`; PVC из снапшота с `dataSource`;
+новый под с этим PVC показывает старое содержимое. В toolbox видно `rbd snap ls` / клон
+образа.
+
+</details>
+
+#### C7. Зоопарк Pending PVC (kind)
+Создай три «сломанных» PVC: с несуществующим классом, с `storageClassName: ""`, с `standard`
+без пода. По Events каждого определи причину и что с ней делать.
+
+<details><summary>Ответ</summary>
+
+Несуществующий класс — `storageclass.storage.k8s.io "…" not found` (исправить имя);
+`storageClassName: ""` — `no persistent volumes available for this claim and no storage class is set`
+(нужен статический PV или класс); `standard` без пода — `waiting for first consumer to be created
+before binding` (норма, появится под — появится PV).
+
+</details>
+
+#### C8. Multi-Attach и мёртвая нода (Rook)
+1. Deployment с RWO-томом; смени `nodeSelector` на другую ноду — поймай `Multi-Attach error`.
+   Почини через `strategy: Recreate`.
+2. Выключи VM с подом StatefulSet (`virsh destroy <domain>` на хосте). Замерь, когда под
    переедет; повтори с taint `out-of-service`.
 
 <details><summary>Ответ</summary>
 
-```bash
-kubectl get pv                                    # PV standard-retain в статусе Released
-kubectl patch pv &lt;pv&gt; --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'
-kubectl get pv &lt;pv&gt;                               # Available
-# PVC data-restored: storageClassName standard-retain, volumeName &lt;pv&gt;, тот же размер/режим
-```text
-Под с `data-restored` должен попасть на ту же ноду (PV прибит `nodeAffinity`) — local-path
-учтёт это сам. Файл на месте.
+1\) Смена `nodeSelector` с RollingUpdate: новый под на другой ноде — `Multi-Attach error`,
+пока старый не удалён; с `Recreate` старый удаляется первым, ошибка уходит (цена — короткий
+простой). 2) Без taint под на мёртвой ноде висит `Terminating`/`Unknown`; через ~5 минут
+(tolerations `not-ready`/`unreachable` 300 с) поды помечаются к выселению, том force-detach
+через 6 минут `maxWaitForUnmountDuration`; для StatefulSet новый под не создастся, пока старый
+не удалён. С taint `out-of-service` после выключения ноды поды удаляются и тома отцепляются
+сразу — под переезжает за десятки секунд.
 
 </details>
 
-### C9. hostPath против local (kind)
+#### C9. hostPath против local (kind)
 Создай два PVC на `standard`: обычный и с аннотацией `volumeType: local`. Сравни `spec`
 обоих PV и найди на ноде (`docker exec devops-worker …`), где смонтирован каждый том.
+
+<details><summary>Ответ</summary>
+
+У обычного PV `spec.hostPath.path: /opt/local-path-provisioner/pvc-…`, у второго —
+`spec.local.path` и `nodeAffinity`. На ноде: `docker exec devops-worker findmnt | grep pvc-` —
+для `local` видна точка монтирования в `/var/lib/kubelet/pods/<uid>/volumes/kubernetes.io~local-volume/…`,
+для `hostPath` отдельной точки нет — путь проброшен напрямую.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После замены ноды `postgres-0` висит в `Pending`: `volume node affinity conflict`. Класс — local-path.
 
@@ -998,7 +937,7 @@ RollingUpdate + RWO: новый под ждёт, пока старый осво�
 <details><summary>Ответ</summary>
 
 Быстро: освободить место внутри (старые логи, `pg_wal` от брошенного слота — см.
-[../Left/01_Databases/06_replication.md](/databases/06-replication)), не удалять файлы
+[Базы данных: 06. Репликация PostgreSQL](/databases/06-replication)), не удалять файлы
 данных. Для роста: `allowVolumeExpansion` в существующем классе включить можно (это поле
 изменяемо), если драйвер умеет расширение; иначе — новый класс, новый PVC большего размера,
 перенос данных (pg_basebackup/restore из бэкапа) и переключение. После — алерт на 80% заполнения.
@@ -1035,7 +974,7 @@ OSD по умолчанию целится в `osd_memory_target` 4 ГиБ, а �
 Не баг: снапшот crash-consistent. PostgreSQL проиграл WAL, который успел попасть на диск
 к моменту снапшота, а всё после снапшота в него не попало по определению. RPO снапшота =
 интервал между снапшотами. Для «до секунды» нужен PITR из базовой копии + WAL
-([06_db_backup_replication.md](/storage/06-db-backup-replication)).
+([06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication)).
 
 </details>
 
@@ -1066,14 +1005,13 @@ Longhorn поставил свой класс default, и default-классов
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое CSI и из чего состоит драйвер?
 
 <details><summary>Ответ</summary>
 
 Стандарт интерфейса между Kubernetes и хранилищем. Controller-часть (Deployment):
-   драйвер + sidecar'ы provisioner, attacher, resizer, snapshotter; node-часть (DaemonSet):
-   драйвер + node-driver-registrar. Объекты CSIDriver, CSINode, VolumeAttachment.
+драйвер + sidecar'ы provisioner, attacher, resizer, snapshotter; node-часть (DaemonSet):
+драйвер + node-driver-registrar. Объекты CSIDriver, CSINode, VolumeAttachment.
 
 </details>
 
@@ -1082,9 +1020,9 @@ Longhorn поставил свой класс default, и default-классов
 <details><summary>Ответ</summary>
 
 PVC → external-provisioner вызывает `CreateVolume` → PV, `Bound` (при WaitForFirstConsumer —
-   после выбора ноды) → attach-detach controller создаёт VolumeAttachment → external-attacher
-   `ControllerPublish` → kubelet: `NodeStage` (форматирование, globalmount) и `NodePublish`
-   (bind-mount в под) → контейнер пишет.
+после выбора ноды) → attach-detach controller создаёт VolumeAttachment → external-attacher
+`ControllerPublish` → kubelet: `NodeStage` (форматирование, globalmount) и `NodePublish`
+(bind-mount в под) → контейнер пишет.
 
 </details>
 
@@ -1093,7 +1031,7 @@ PVC → external-provisioner вызывает `CreateVolume` → PV, `Bound` (п
 <details><summary>Ответ</summary>
 
 Класс с `allowVolumeExpansion`; patch каждого PVC; дождаться роста ФС; `delete sts --cascade=orphan`
-   и apply с новым размером в `volumeClaimTemplates` (он неизменяем).
+и apply с новым размером в `volumeClaimTemplates` (он неизменяем).
 
 </details>
 
@@ -1102,7 +1040,7 @@ PVC → external-provisioner вызывает `CreateVolume` → PV, `Bound` (п
 <details><summary>Ответ</summary>
 
 По умолчанию PVC остаются в обоих случаях; с `persistentVolumeClaimRetentionPolicy`
-   (GA 1.32) можно удалять — для БД не надо. Остатки PVC стоят денег — чистить осознанно.
+(GA 1.32) можно удалять — для БД не надо. Остатки PVC стоят денег — чистить осознанно.
 
 </details>
 
@@ -1111,7 +1049,7 @@ PVC → external-provisioner вызывает `CreateVolume` → PV, `Bound` (п
 <details><summary>Ответ</summary>
 
 Снимок тома через CSI (VolumeSnapshot/Content/Class), из него создают PVC. Не бэкап:
-   crash-consistent и в том же хранилище; годится для быстрого отката и клонирования.
+crash-consistent и в том же хранилище; годится для быстрого отката и клонирования.
 
 </details>
 
@@ -1120,7 +1058,7 @@ PVC → external-provisioner вызывает `CreateVolume` → PV, `Bound` (п
 <details><summary>Ответ</summary>
 
 CephFS через Rook (`rook-cephfs`), NFS через csi-driver-nfs, Longhorn (RWX через NFS
-   share-manager). Но сначала спросить, не лучше ли объектное хранилище.
+share-manager). Но сначала спросить, не лучше ли объектное хранилище.
 
 </details>
 
@@ -1129,8 +1067,8 @@ CephFS через Rook (`rook-cephfs`), NFS через csi-driver-nfs, Longhorn 
 <details><summary>Ответ</summary>
 
 Оператор, разворачивающий Ceph в Kubernetes через CRD (CephCluster, CephBlockPool,
-   CephFilesystem, CephObjectStore) плюс ceph-csi. Нужны ≥ 3 ноды, сырые диски без ФС,
-   модуль `rbd`, память (≈ 4 ГБ на OSD в проде), нормальная сеть.
+CephFilesystem, CephObjectStore) плюс ceph-csi. Нужны ≥ 3 ноды, сырые диски без ФС,
+модуль `rbd`, память (≈ 4 ГБ на OSD в проде), нормальная сеть.
 
 </details>
 
@@ -1139,8 +1077,8 @@ CephFS через Rook (`rook-cephfs`), NFS через csi-driver-nfs, Longhorn 
 <details><summary>Ответ</summary>
 
 `kubectl describe pvc` → Events: WaitForFirstConsumer (норма), нет default-класса, опечатка в
-   классе, provisioner лежит (поды CSI и логи sidecar), нет места/квоты, для локальных томов —
-   node affinity. Дальше — `kubectl get sc`, логи CSI.
+классе, provisioner лежит (поды CSI и логи sidecar), нет места/квоты, для локальных томов —
+node affinity. Дальше — `kubectl get sc`, логи CSI.
 
 </details>
 
@@ -1149,8 +1087,8 @@ CephFS через Rook (`rook-cephfs`), NFS через csi-driver-nfs, Longhorn 
 <details><summary>Ответ</summary>
 
 RWO-том числится за другой нодой: RollingUpdate с RWO, несколько реплик с одним томом,
-   мёртвая нода с висящим VolumeAttachment. Решения: `Recreate`/StatefulSet/RWX; для мёртвой
-   ноды — выключить её и taint `out-of-service` (или ждать force detach 6 минут).
+мёртвая нода с висящим VolumeAttachment. Решения: `Recreate`/StatefulSet/RWX; для мёртвой
+ноды — выключить её и taint `out-of-service` (или ждать force detach 6 минут).
 
 </details>
 
@@ -1159,10 +1097,8 @@ RWO-том числится за другой нодой: RollingUpdate с RWO, 
 <details><summary>Ответ</summary>
 
 Managed, если есть и подходит. Иначе в кластер — только через зрелый оператор (CNPG) с
-    бэкапом в S3 вне кластера, проверенным PITR, мониторингом, PDB, локальными томами и
-    anti-affinity; при больших объёмах и жёстких требованиях к I/O — VM + Patroni.
-
----
+бэкапом в S3 вне кластера, проверенным PITR, мониторингом, PDB, локальными томами и
+anti-affinity; при больших объёмах и жёстких требованиях к I/O — VM + Patroni.
 
 </details>
 

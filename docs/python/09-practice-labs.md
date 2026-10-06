@@ -1,6 +1,6 @@
 ---
 title: "09. Практика: 5 лаб по Python для DevOps"
-description: "Блок → Python для DevOps → практика."
+description: "5 лаб: бэкап в MinIO, health-checker, анализатор логов, уборщик подов, exporter + CI"
 ---
 
 # 09. Практика: 5 лаб по Python для DevOps
@@ -21,7 +21,7 @@ description: "Блок → Python для DevOps → практика."
 | 4 | ⭐ Kube-«уборщик» подов с dry-run | темы 04, 07 (k8s), 08 (образ) | `pod_janitor.py` + RBAC + CronJob |
 | 5 | Свой exporter + упаковка и CI | темы 07 (prometheus), 08 | пакет `ops-exporter`, Dockerfile, `.gitlab-ci.yml` |
 
-Стенд — в [00_INDEX.md](/python/), раздел «Стенд»: MinIO, kind, httpbin, по желанию Prometheus из блока мониторинга.
+Стенд — в [Python](/python/), раздел «Стенд»: MinIO, kind, httpbin, по желанию Prometheus из блока мониторинга.
 
 ---
 
@@ -45,7 +45,8 @@ s3:
   keep_days: 14
 metrics_file: /var/lib/node_exporter/textfile/backup_nginx.prom
 # ключи S3 — только из окружения: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-```text
+```
+
 ### Требования
 - [ ] Подкоманды: `run`, `list`, `restore KEY DST`, `rotate`; у `run` и `rotate` есть `--dry-run`
 - [ ] Архив `tar.gz` собирается во временном каталоге (`tempfile`), имя с UTC-временем
@@ -66,11 +67,12 @@ metrics_file: /var/lib/node_exporter/textfile/backup_nginx.prom
 ./backup.py --config backup.yaml run --dry-run          # план без изменений
 ./backup.py --config backup.yaml run; echo "код: $?"
 ./backup.py --config backup.yaml list | tail -3
-./backup.py --config backup.yaml restore &lt;key&gt; /tmp/restore && diff -r /etc/nginx /tmp/restore/nginx
+./backup.py --config backup.yaml restore <key> /tmp/restore && diff -r /etc/nginx /tmp/restore/nginx
 cat /var/lib/node_exporter/textfile/backup_nginx.prom
 AWS_SECRET_ACCESS_KEY=wrong ./backup.py --config backup.yaml run; echo "код: $?"   # 1, понятная ошибка
 systemctl list-timers | grep backup
-```text
+```
+
 ### Вопросы себе
 - Что будет, если выгрузка оборвётся на середине? Не удалит ли ротация последнюю хорошую копию?
 - Как я узнаю, что бэкап не делался трое суток, если скрипт вообще перестал запускаться?
@@ -99,7 +101,8 @@ targets:
   - name: public-site
     url: https://example.com
     expect_text: "Example Domain"
-```text
+```
+
 ### Требования
 - [ ] Параллельная проверка (`ThreadPoolExecutor`), таймаут на каждую цель
 - [ ] Проверки: код ответа, опционально подстрока в теле, время ответа
@@ -118,7 +121,8 @@ targets:
 docker stop httpbin      # через ≤ 2 интервала — сообщение DOWN в Telegram, одно
 docker start httpbin     # сообщение RECOVERED с длительностью простоя
 docker stop -t 30 healthcheck && docker logs healthcheck | tail -3   # остановка за секунду, «остановлен» в логе
-```text
+```
+
 ### Вопросы себе
 - Чем мой скрипт хуже связки blackbox_exporter + Alertmanager и когда пора на неё переходить?
 - Что будет с уведомлениями, если упадёт сам health-checker? Кто проверит проверяющего?
@@ -151,7 +155,8 @@ python3 gen_log.py 1000000 > access.log && gzip -k access.log
 zcat access.log.gz | ./top_nginx.py --csv > report.csv && head -3 report.csv
 ./top_nginx.py access.log --max-error-rate 0.01; echo "код: $?"
 pytest -q tests/test_parser.py
-```text
+```
+
 ### Вопросы себе
 - Как поменяется код, если перевести nginx на JSON-лог? Что станет проще?
 - Где граница, после которой разбирать логи скриптом — неправильно, и нужен Loki/ELK?
@@ -220,7 +225,8 @@ spec:
               image: pod-janitor:dev
               imagePullPolicy: IfNotPresent
               args: ["--exclude-ns", "kube-system", "--min-restarts", "5", "--older-than", "6h"]
-```text
+```
+
 ### Критерии приёмки
 ```bash
 kubectl --context kind-py create deployment crash --image=busybox -- sh -c 'sleep 5; exit 1'
@@ -232,7 +238,8 @@ kubectl --context kind-py create namespace ops && kubectl --context kind-py appl
 kubectl --context kind-py -n ops create job --from=cronjob/pod-janitor manual-1
 kubectl --context kind-py -n ops logs job/manual-1
 kubectl --context kind-py auth can-i delete pods --as=system:serviceaccount:ops:pod-janitor -A
-```text
+```
+
 ### Вопросы себе
 - Что произойдёт, если в фильтре ошибка и под него попадают все поды? Что меня остановит?
 - Почему перезапуск пода в CrashLoopBackOff почти никогда не лечит причину? Что должен делать человек?
@@ -247,13 +254,14 @@ kubectl --context kind-py auth can-i delete pods --as=system:serviceaccount:ops:
 упакован, покрыт тестами, собирается в образ и проверяется в GitLab CI.
 
 ### Метрики
-```text
+```
 ops_backup_last_object_timestamp_seconds{bucket, prefix}   время последнего объекта в префиксе
 ops_backup_objects{bucket, prefix}                          число объектов
 ops_probe_up{target}                                        1/0 по результату проверки
 ops_probe_duration_seconds{target}                          время ответа
 ops_exporter_errors_total{source}                           ошибки опроса (s3, http)
-```text
+```
+
 ### Требования
 - [ ] src-layout, `pyproject.toml`, entry point `ops-exporter`, `uv.lock`
 - [ ] Опрос S3 и URL в фоновом цикле (раз в 60 с), `/metrics` отдаёт кэш — scrape быстрый
@@ -265,7 +273,7 @@ ops_exporter_errors_total{source}                           ошибки опр�
 - [ ] Dockerfile: slim, зависимости отдельным слоем, non-root, exec-форма
 - [ ] `.gitlab-ci.yml`: lint → test (junit) → build образа на основной ветке
 - [ ] Job в Prometheus + два алерта: «бэкап старше 26 часов» и «цель недоступна 2 минуты»
-      (стенд — [лабы блока мониторинга](/softskills/08-practice-labs))
+      (стенд — [лабы блока мониторинга](/monitoring/08-practice-labs))
 
 ### Критерии приёмки
 ```bash
@@ -276,7 +284,8 @@ curl -s localhost:9101/metrics | grep '^ops_'
 time curl -s localhost:9101/metrics > /dev/null        # быстро, без походов в S3 на каждый scrape
 promtool check rules rules/ops.yml
 docker stop ops-exporter                               # останавливается сразу
-```text
+```
+
 ### Вопросы себе
 - Почему здесь фоновый цикл, а не custom collector с запросами в S3 на каждый scrape?
 - Сколько временных рядов даёт мой exporter и как это число растёт с конфигом?
@@ -285,7 +294,7 @@ docker stop ops-exporter                               # останавлива�
 
 ## 🏁 Что должно остаться после блока
 
-```text
+```text:no-line-numbers
 ops-tools/                          # один репозиторий, один pyproject, общий CI
 ├── src/ops_tools/
 │   ├── backup.py                   # лаба 1: бэкап → MinIO, ротация, textfile-метрики
@@ -300,8 +309,7 @@ ops-tools/                          # один репозиторий, один 
 ├── Dockerfile
 ├── .gitlab-ci.yml                  # ruff → pytest → build
 └── README.md                       # что делает каждая утилита, какие права и переменные нужны
-```text
+```
+
 Это тот артефакт, который превращает на собесе ответ «ну, я немного пишу на Python» в
 «вот мои утилиты: бэкапы с проверкой и метриками, уборщик подов с RBAC и dry-run, exporter, CI с тестами».
-
-➡️ Дальше: [10_interview.md](/python/10-interview)

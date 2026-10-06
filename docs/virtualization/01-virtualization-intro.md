@@ -1,14 +1,14 @@
 ---
 title: "01. Виртуализация: зачем, как устроена, кто на рынке"
-description: "Блок → Виртуализация on-prem → тема 01. Опирается на"
+description: "Type-1/2, VT-x/AMD-V, EPT/NPT, стек KVM+QEMU+libvirt, virtio, VM vs LXC vs Docker, VMware после Broadcom"
 ---
 
 # 01. Виртуализация: зачем, как устроена, кто на рынке
 
 > Блок → Виртуализация on-prem → тема 01. Опирается на
-> [../Linux/12_kernel.md](/linux/12-kernel) (кольца защиты, модули ядра),
-> [../Docker/01_containers_intro.md](/docker/01-containers-intro) (namespaces и cgroups)
-> и стенд [../Linux/00_vagrant.md](/linux/00-vagrant) (libvirt/KVM уже стоит).
+> [Linux: 12. Ядро Linux](/linux/12-kernel) (кольца защиты, модули ядра),
+> [Docker: 01. Контейнеры и архитектура Docker](/docker/01-containers-intro) (namespaces и cgroups)
+> и стенд [Linux: 00. Стенд: Vagrant + libvirt/KVM](/linux/00-vagrant) (libvirt/KVM уже стоит).
 >
 > **После темы ты умеешь:** объяснить, зачем бизнесу виртуализация, чем type-1 отличается
 > от type-2, что делают VT-x/AMD-V и EPT/NPT, как делят работу KVM, QEMU и libvirt, что такое
@@ -19,7 +19,7 @@ description: "Блок → Виртуализация on-prem → тема 01. �
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  ЖЕЛЕЗО: CPU с VT-x/AMD-V + EPT/NPT, IOMMU (VT-d/AMD-Vi), RAM, диски, NIC
     │
     ▼
@@ -37,7 +37,8 @@ description: "Блок → Виртуализация on-prem → тема 01. �
     └── OpenStack Nova, oVirt                   ← платформы
                                                     Proxmox VE ── свои qm/pct поверх KVM/QEMU и LXC,
                                                                   libvirt НЕ использует
-```text
+```
+
 ---
 
 ## 1. Зачем виртуализация
@@ -57,7 +58,7 @@ description: "Блок → Виртуализация on-prem → тема 01. �
 
 > 💡 Облако — это та же виртуализация, только чужая и с API. Когда создаёшь инстанс в облаке,
 > под капотом гипервизор режет физический сервер провайдера
-> ([../Left/04_Cloud/01_cloud_models.md](/cloud/01-cloud-models), IaaS).
+> ([Облака: 01. Модели облаков: IaaS, PaaS, SaaS](/cloud/01-cloud-models), IaaS).
 
 ---
 
@@ -66,7 +67,7 @@ description: "Блок → Виртуализация on-prem → тема 01. �
 **Гипервизор** (VMM, virtual machine monitor) — софт, который создаёт VM и делит между
 ними CPU, память и устройства.
 
-```text
+```text:no-line-numbers
       TYPE-1 (bare-metal)                      TYPE-2 (hosted)
  ┌────────┬────────┬────────┐          ┌────────┬────────┐
  │  VM 1  │  VM 2  │  VM 3  │          │  VM 1  │  VM 2  │
@@ -78,7 +79,8 @@ description: "Блок → Виртуализация on-prem → тема 01. �
                                        ├─────────────────┤
                                        │     ЖЕЛЕЗО      │
                                        └─────────────────┘
-```text
+```
+
 | | Type-1 | Type-2 |
 |---|--------|--------|
 | Где работает | Прямо на железе | Как приложение внутри ОС |
@@ -95,10 +97,10 @@ description: "Блок → Виртуализация on-prem → тема 01. �
 
 ## 3. Аппаратная виртуализация: VT-x/AMD-V и EPT/NPT
 
-Вспомни кольца защиты из [../Linux/12_kernel.md](/linux/12-kernel): ядро — ring 0,
+Вспомни кольца защиты из [Linux: 12. Ядро Linux](/linux/12-kernel): ядро — ring 0,
 программы — ring 3. Гостевое ядро тоже хочет ring 0, но ring 0 уже занят ядром хоста.
 
-```text
+```text:no-line-numbers
  ДО 2005: программные трюки                ПОСЛЕ: аппаратная поддержка
  ────────────────────────────              ──────────────────────────────────────
  trap-and-emulate, binary translation      VT-x (Intel) / AMD-V (AMD):
@@ -108,7 +110,8 @@ description: "Блок → Виртуализация on-prem → тема 01. �
                                            опасная инструкция → VM exit в гипервизор,
  Xen: паравиртуализация — гостевое         тот обрабатывает → VM entry обратно.
  ядро переписано под гипервизор
-```text
+```
+
 **Память.** У гостя свои «физические» адреса, которые на самом деле — виртуальные адреса
 хоста. Раньше гипервизор держал *shadow page tables* и перехватывал каждое изменение таблиц
 страниц гостя — дорого. **EPT** (Intel) / **NPT** (AMD, он же RVI) — вторая аппаратная
@@ -136,7 +139,8 @@ virt-host-validate qemu                 # из libvirt, проверяет вс�
 #   QEMU: Checking if device /dev/vhost-net exists      : PASS
 #   QEMU: Checking for cgroup 'devices' controller ...  : WARN   ← норм для cgroup v2
 #   QEMU: Checking if IOMMU is enabled by kernel        : PASS / WARN
-```text
+```
+
 > ⚠️ `grep vmx` пустой, а процессор современный → виртуализация выключена в BIOS/UEFI
 > (Intel Virtualization Technology / SVM Mode). WARN про cgroup `devices` на cgroup v2 —
 > не проблема: там доступ к устройствам управляется через eBPF, отдельного контроллера нет.
@@ -149,7 +153,8 @@ virt-host-validate qemu                 # из libvirt, проверяет вс�
 ```bash
 cat /sys/module/kvm_intel/parameters/nested   # Y или 1 — включено (Intel)
 cat /sys/module/kvm_amd/parameters/nested     # 1 — включено (AMD)
-```text
+```
+
 С ядра 4.20 nested включён по умолчанию для обоих модулей (дистрибутив может переопределить).
 Если выключен:
 
@@ -157,10 +162,11 @@ cat /sys/module/kvm_amd/parameters/nested     # 1 — включено (AMD)
 echo "options kvm_intel nested=1" | sudo tee /etc/modprobe.d/kvm-nested.conf   # AMD: kvm_amd
 # выгрузить модуль можно только при выключенных VM:
 sudo modprobe -r kvm_intel && sudo modprobe kvm_intel
-```text
+```
+
 И второе условие — **CPU mode `host-passthrough`** у VM-гипервизора: гость получает CPU
 хоста как есть, со всеми флагами, включая `vmx`/`svm`. В XML libvirt это
-`&lt;cpu mode='host-passthrough'/&gt;`, в virt-install — `--cpu host-passthrough`, в Vagrant —
+`<cpu mode='host-passthrough'/>`, в virt-install — `--cpu host-passthrough`, в Vagrant —
 `libvirt.cpu_mode = "host-passthrough"` + `libvirt.nested = true`. Цена — VM нельзя живьём
 мигрировать на хост с другим процессором (тема 02).
 
@@ -185,7 +191,8 @@ ps -o pid,nlwp,rss,cmd -C qemu-system-x86_64 | cut -c1-150
 top -H -p 4242                  # потоки "CPU 0/KVM", "CPU 1/KVM" — это и есть vCPU
 virsh list --all                # то же глазами libvirt
 virsh qemu-monitor-command vm1 --hmp 'info kvm'   # kvm support: enabled
-```text
+```
+
 **Почему это важно девопсу:** VM грузит хост как процесс. Её CPU видно в `top`, память —
 в RSS, диск — в `iotop` по PID QEMU. Все инструменты из Linux-блока работают и для VM.
 
@@ -226,7 +233,8 @@ lspci | grep -i virtio          # Virtio network device, Virtio block device ...
 lsmod | grep virtio             # virtio_net, virtio_blk, virtio_pci ...
 ethtool -i enp1s0 | head -1     # driver: virtio_net
 lsblk                           # vda — virtio-blk, sda — virtio-scsi/SATA (имена — ../Linux/09_devices.md)
-```text
+```
+
 > 💡 Linux знает virtio из коробки. Windows — нет: при установке подключают ISO
 > `virtio-win` с драйверами, иначе установщик не увидит virtio-диск.
 
@@ -234,7 +242,7 @@ lsblk                           # vda — virtio-blk, sda — virtio-scsi/SATA (
 
 ## 6. VM, системный контейнер (LXC) и контейнер приложения (Docker)
 
-Как устроены namespaces и cgroups — в [../Docker/01_containers_intro.md](/docker/01-containers-intro).
+Как устроены namespaces и cgroups — в [Docker: 01. Контейнеры и архитектура Docker](/docker/01-containers-intro).
 Здесь — сравнение трёх вариантов, которые встретишь on-prem.
 
 | | VM (KVM) | Системный контейнер (LXC) | Контейнер приложения (Docker) |
@@ -270,7 +278,7 @@ lsblk                           # vda — virtio-blk, sda — virtio-scsi/SATA (
 
 ### VMware после Broadcom — что важно знать
 
-```text
+```text:no-line-numbers
  22.11.2023  Broadcom закрыл сделку по VMware
  12.2023     конец продаж вечных лицензий → только подписка;
              сотни продуктов сведены в несколько бандлов (VCF, VVF и др.)
@@ -281,7 +289,8 @@ lsblk                           # vda — virtio-blk, sda — virtio-scsi/SATA (
  04.2025     бесплатный ESXi вернули (8.0 Update 3e): без поддержки,
              нельзя подключить к vCenter, до 8 vCPU на VM
  06.2025     VMware Cloud Foundation 9.0
-```text
+```
+
 Итог для рынка: у многих клиентов счёт за продление вырос в разы, и «миграция с VMware»
 стала типовым проектом. По прогнозу Gartner, к 2028 году около 35% нынешних VMware-нагрузок
 будут работать на других платформах. Куда уходят: Proxmox VE (в нём с 8.2 есть мастер
@@ -361,10 +370,10 @@ lsblk                           # vda — virtio-blk, sda — virtio-scsi/SATA (
 | Включён ли nested | `cat /sys/module/kvm_{intel,amd}/parameters/nested` |
 | Модули KVM | `lsmod \| grep kvm` |
 | Куда подключён virsh | `virsh uri` |
-| Процессы VM на хосте | `ps -ef \| grep qemu-system`, `top -H -p &lt;pid&gt;` |
+| Процессы VM на хосте | `ps -ef \| grep qemu-system`, `top -H -p <pid>` |
 | Работает ли VM на KVM, а не TCG | `virsh dumpxml vm \| grep "domain type"` |
-| Какие устройства virtio в госте | `lspci \| grep -i virtio`, `ethtool -i &lt;iface&gt;` |
-| Отдать гостю CPU с флагами | `--cpu host-passthrough` / `&lt;cpu mode='host-passthrough'/&gt;` |
+| Какие устройства virtio в госте | `lspci \| grep -i virtio`, `ethtool -i <iface>` |
+| Отдать гостю CPU с флагами | `--cpu host-passthrough` / `<cpu mode='host-passthrough'/>` |
 
 ---
 
@@ -381,13 +390,17 @@ lsblk                           # vda — virtio-blk, sda — virtio-scsi/SATA (
 9. Proxmox VE — Debian + KVM/QEMU + LXC со своими инструментами, без libvirt.
 10. После Broadcom VMware стал дорогим, и миграции на Proxmox/KVM — типовая задача 2025–2026.
 
-➡️ Дальше: [02_kvm_qemu_libvirt.md](/virtualization/02-kvm-qemu-libvirt) · задачи: 01_virtualization_intro_tasks.md
+---
 
+## Задачи
+
+> Стенд: хост с libvirt/KVM из [Linux: 00. Стенд: Vagrant + libvirt/KVM](/linux/00-vagrant) и VM
+> `learn-linux` (или любая другая VM). Проверки из [Виртуализация](/virtualization/), раздел «Стенд»,
+> уже пройдены.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Назови пять причин, по которым бизнес виртуализирует серверы.
 
@@ -512,6 +525,8 @@ VM — своё ядро, аппаратная изоляция, старт де
 
 Сделка закрыта в ноябре 2023; конец продаж вечных лицензий — только подписка;
 продукты сведены в несколько бандлов (VCF, VVF и др.); лицензирование по ядрам с минимумом
+16 ядер на процессор; бесплатный ESXi убрали в феврале 2024 и вернули в апреле 2025 с
+ограничениями. Итог — рост цен у многих клиентов и волна миграций.
 
 </details>
 
@@ -533,7 +548,7 @@ Red Hat Virtualization (коммерческий oVirt) уходит: подде
 Debian + ядро с KVM + QEMU (управление `qm`) + LXC (`pct`) + веб-интерфейс и REST API +
 кластер (corosync, pmxcfs в `/etc/pve`) + плагины хранилищ (LVM-thin, ZFS, Ceph, NFS) + бэкапы
 (vzdump, PBS). libvirt не использует: VM описываются своими конфигами
-`/etc/pve/qemu-server/&lt;vmid&gt;.conf`, а не XML libvirt.
+`/etc/pve/qemu-server/<vmid>.conf`, а не XML libvirt.
 
 </details>
 
@@ -550,188 +565,98 @@ Azure — доработанный Hyper-V.
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
 ```text:no-line-numbers
 B1.  # новый сервер, свежий Xeon
-```text
-<details><summary>Ответ</summary>
+     $ grep -cE 'vmx|svm' /proc/cpuinfo
+     0
 
-⚠️ Флагов нет, значит, виртуализация выключена в BIOS/UEFI (Intel Virtualization
+B2.  $ virsh list --all
+      Id   Name   State
+     --------------------
+     # а в virt-manager видны три работающие VM
+
+B3.  $ virsh dumpxml web1 | grep "domain type"
+     <domain type='qemu'>
+
+B4.  # хост: cat /sys/module/kvm_intel/parameters/nested → N
+     # VM pve1: <cpu mode='host-model'/>
+     # в Proxmox внутри pve1 запускают VM с настройками по умолчанию
+
+B5.  «Поставим Windows Server 2025 в LXC-контейнер на Proxmox, так легче»
+
+B6.  # у VM 8 vCPU; на хосте в top:
+       PID USER          %CPU  COMMAND
+      4242 libvirt+     790.0  qemu-system-x86
+
+B7.  # установка Windows в VM с диском bus=virtio:
+     «Не найдено ни одного диска для установки»
+
+B8.  «Контейнеры изолированы так же хорошо, как VM. Запустим код клиентов
+      разных компаний в Docker на одном общем хосте»
+
+B9.  $ sudo modprobe -r kvm_intel
+     modprobe: FATAL: Module kvm_intel is in use.
+
+B10. $ virt-host-validate qemu
+       QEMU: Checking for cgroup 'devices' controller support : WARN (...)
+     # «хост не готов к виртуализации, нужно переустанавливать»
+
+B11. «Купим VMware по вечной лицензии, как в 2019-м, и пять лет не будем думать»
+
+B12. # на хосте с работающими KVM-VM запускают VirtualBox:
+     VT-x is being used by another hypervisor (VERR_VMX_IN_VMX_ROOT_MODE)
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Флагов нет, значит, виртуализация выключена в BIOS/UEFI (Intel Virtualization
 Technology). Включить и перезагрузить; проверить `kvm-ok`.
 
-</details>
-
-```text:no-line-numbers
-     $ grep -cE 'vmx|svm' /proc/cpuinfo
-```text
-```text:no-line-numbers
-     0
-```text
-```text:no-line-numbers
-B2.  $ virsh list --all
-```text
-<details><summary>Ответ</summary>
-
-⚠️ virsh подключён к `qemu:///session`, а virt-manager — к `qemu:///system`.
+**B2.** ⚠️ virsh подключён к `qemu:///session`, а virt-manager — к `qemu:///system`.
 `virsh uri`, затем `virsh -c qemu:///system list --all` или `LIBVIRT_DEFAULT_URI`.
 
-</details>
-
-```text:no-line-numbers
-      Id   Name   State
-```text
-```text:no-line-numbers
-     --------------------
-```text
-```text:no-line-numbers
-     # а в virt-manager видны три работающие VM
-```text
-```text:no-line-numbers
-B3.  $ virsh dumpxml web1 | grep "domain type"
-```text
-<details><summary>Ответ</summary>
-
-⚠️ VM работает на TCG без KVM — медленно. Причины: нет `/dev/kvm` (модуль, BIOS,
+**B3.** ⚠️ VM работает на TCG без KVM — медленно. Причины: нет `/dev/kvm` (модуль, BIOS,
 nested) или VM так создали (`--virt-type qemu`). Поправить в `virsh edit` на `type='kvm'`,
 предварительно починив KVM.
 
-</details>
-
-```text:no-line-numbers
-     &lt;domain type='qemu'&gt;
-```text
-```text:no-line-numbers
-B4.  # хост: cat /sys/module/kvm_intel/parameters/nested → N
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без nested на хосте у pve1 нет `vmx` — Proxmox не даст запустить VM с KVM
+**B4.** ⚠️ Без nested на хосте у pve1 нет `vmx` — Proxmox не даст запустить VM с KVM
 («KVM virtualisation configured, but not available»). Включить nested, дать pve1
 `host-passthrough`, перезапустить pve1.
 
-</details>
+**B5.** ⚠️ Контейнер использует ядро хоста — Linux. Windows в LXC невозможен, нужна VM.
 
-```text:no-line-numbers
-     # VM pve1: &lt;cpu mode='host-model'/&gt;
-```text
-```text:no-line-numbers
-     # в Proxmox внутри pve1 запускают VM с настройками по умолчанию
-```text
-```text:no-line-numbers
-B5.  «Поставим Windows Server 2025 в LXC-контейнер на Proxmox, так легче»
-```text
-<details><summary>Ответ</summary>
+**B6.** ✅ Это не авария: 790% = почти 8 полностью загруженных ядер, то есть гость грузит все
+8 vCPU. Вопрос в том, нормально ли это для этой VM и хватает ли ядер соседям (steal time).
 
-⚠️ Контейнер использует ядро хоста — Linux. Windows в LXC невозможен, нужна VM.
-
-</details>
-
-```text:no-line-numbers
-B6.  # у VM 8 vCPU; на хосте в top:
-```text
-<details><summary>Ответ</summary>
-
-✅ Это не авария: 790% = почти 8 полностью загруженных ядер, то есть гость грузит все
-
-</details>
-
-```text:no-line-numbers
-       PID USER          %CPU  COMMAND
-```text
-```text:no-line-numbers
-      4242 libvirt+     790.0  qemu-system-x86
-```text
-```text:no-line-numbers
-B7.  # установка Windows в VM с диском bus=virtio:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ В установщике Windows нет драйверов virtio. Подключить ISO `virtio-win` и
+**B7.** ⚠️ В установщике Windows нет драйверов virtio. Подключить ISO `virtio-win` и
 загрузить драйвер `viostor` (virtio-blk) или `vioscsi`, либо ставить на SATA и потом переключить.
 
-</details>
-
-```text:no-line-numbers
-     «Не найдено ни одного диска для установки»
-```text
-```text:no-line-numbers
-B8.  «Контейнеры изолированы так же хорошо, как VM. Запустим код клиентов
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Контейнеры делят ядро: эксплойт ядра пробивает всех соседей. Для недоверенного
+**B8.** ⚠️ Контейнеры делят ядро: эксплойт ядра пробивает всех соседей. Для недоверенного
 кода разных клиентов — отдельные VM или песочницы (Kata Containers, gVisor, Firecracker).
 
-</details>
-
-```text:no-line-numbers
-      разных компаний в Docker на одном общем хосте»
-```text
-```text:no-line-numbers
-B9.  $ sudo modprobe -r kvm_intel
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Модуль занят запущенными VM. Выключить все VM (и остановить то, что держит
+**B9.** ⚠️ Модуль занят запущенными VM. Выключить все VM (и остановить то, что держит
 `/dev/kvm`), потом выгружать. Быстрее — перезагрузить хост с новым файлом в `modprobe.d`.
 
-</details>
-
-```text:no-line-numbers
-     modprobe: FATAL: Module kvm_intel is in use.
-```text
-```text:no-line-numbers
-B10.  $ virt-host-validate qemu
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Неверный вывод. На cgroup v2 нет контроллера `devices` — доступом к устройствам
+**B10.** ⚠️ Неверный вывод. На cgroup v2 нет контроллера `devices` — доступом к устройствам
 управляет eBPF, libvirt это умеет. Это WARN, а не FAIL.
 
-</details>
-
-```text:no-line-numbers
-       QEMU: Checking for cgroup 'devices' controller support : WARN (...)
-```text
-```text:no-line-numbers
-     # «хост не готов к виртуализации, нужно переустанавливать»
-```text
-```text:no-line-numbers
-B11.  «Купим VMware по вечной лицензии, как в 2019-м, и пять лет не будем думать»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Вечные лицензии VMware больше не продаются — только подписка с ежегодными
+**B11.** ⚠️ Вечные лицензии VMware больше не продаются — только подписка с ежегодными
 платежами. Бюджет считать на подписку и заодно сравнить с альтернативами.
 
-</details>
-
-```text:no-line-numbers
-B12.  # на хосте с работающими KVM-VM запускают VirtualBox:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ VT-x уже занят KVM. Два гипервизора одновременно не работают: остановить KVM-VM
+**B12.** ⚠️ VT-x уже занят KVM. Два гипервизора одновременно не работают: остановить KVM-VM
 и выгрузить модуль или не использовать VirtualBox на этом хосте.
 
 </details>
 
-```text:no-line-numbers
-     VT-x is being used by another hypervisor (VERR_VMX_IN_VMX_ROOT_MODE)
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Паспорт хоста
+#### C1. 🔑 Паспорт хоста
 Собери в заметку «паспорт» своего хоста: модель CPU, флаги `vmx`/`svm`, `ept`/`npt`,
 состояние nested, модули KVM, права на `/dev/kvm`, вывод `virt-host-validate qemu`, версии
 libvirt и QEMU (`virsh version`). Отметь каждый WARN и объясни, критичен ли он.
 
-### C2. 🔑 VM — это процесс
-**1.** Подними любую VM (`vagrant up` в `learn-linux` подойдёт).
-
 <details><summary>Ответ</summary>
 
 Команды: `lscpu`, `grep -cE 'vmx|svm' /proc/cpuinfo`, `grep -owE 'ept|npt' /proc/cpuinfo | sort -u`,
@@ -742,67 +667,28 @@ secure guest (SEV/TDX — не нужен для стенда).
 
 </details>
 
-**2.** Найди PID её процесса QEMU. Сколько у него потоков? Сопоставь с числом vCPU (`virsh vcpucount`).
-
-<details><summary>Ответ</summary>
-
-`pgrep -af qemu-system` или `ps -ef | grep qemu`; `ps -o nlwp -p &lt;PID&gt;` — потоков больше,
-чем vCPU: плюс потоки ввода-вывода, главный цикл, vhost. В `top -H` видны `CPU 0/KVM`,
-`CPU 1/KVM` — загораются под нагрузкой. RSS меньше выделенной памяти, потому что гость ещё не
-тронул всю память (страницы выделяются при первом обращении), а balloon мог часть забрать.
-
-</details>
-
-**3.** В `top -H -p &lt;PID&gt;` найди потоки vCPU. Дай нагрузку внутри VM (`yes > /dev/null &` × 2)
+#### C2. 🔑 VM — это процесс
+1. Подними любую VM (`vagrant up` в `learn-linux` подойдёт).
+2. Найди PID её процесса QEMU. Сколько у него потоков? Сопоставь с числом vCPU (`virsh vcpucount`).
+3. В `top -H -p <PID>` найди потоки vCPU. Дай нагрузку внутри VM (`yes > /dev/null &` × 2)
    и посмотри, какие потоки загорелись.
+4. Сравни RSS процесса с памятью VM из `virsh dominfo`. Почему RSS может быть меньше?
 
 <details><summary>Ответ</summary>
 
-В провайдере libvirt: `v.nested = true`, `v.cpu_mode = "host-passthrough"`. Внутри:
-`grep -cE 'vmx|svm' /proc/cpuinfo` > 0, `ls -l /dev/kvm` существует, `kvm-ok` — «can be used».
-С дефолтным `host-model` флаги часто тоже есть (libvirt включает `vmx`/`svm`, если хост умеет
-nested), но `host-passthrough` даёт гарантию и полный набор инструкций.
+`pgrep -af qemu-system` или `ps -ef | grep qemu`; `ps -o nlwp -p <PID>` — потоков больше,
+чем vCPU: плюс потоки ввода-вывода, главный цикл, vhost. В `top -H` видны `CPU 0/KVM`,
+`CPU 1/KVM` — загораются под нагрузкой. RSS меньше выделенной памяти, потому что гость ещё не
+тронул всю память (страницы выделяются при первом обращении), а balloon мог часть забрать.
 
 </details>
 
-**4.** Сравни RSS процесса с памятью VM из `virsh dominfo`. Почему RSS может быть меньше?
-
-<details><summary>Ответ</summary>
-
-В госте: `lspci | grep -i virtio`, `lsmod | grep virtio`, `ethtool -i eth0` →
-`driver: virtio_net`, `lsblk` → `vda`. В XML: `&lt;interface ...&gt;&lt;model type='virtio'/&gt;` и
-`&lt;disk ...&gt;&lt;target dev='vda' bus='virtio'/&gt;`. Канал `org.qemu.guest_agent.0` —
-virtio-serial для `qemu-guest-agent`: через него хост узнаёт IP гостя, корректно выключает
-его, замораживает ФС перед снапшотом (тема 02).
-
-</details>
-
-### C3. Nested внутри Vagrant-VM
-**1.** Проверь nested на хосте.
-
-<details><summary>Ответ</summary>
-
-Команды: `lscpu`, `grep -cE 'vmx|svm' /proc/cpuinfo`, `grep -owE 'ept|npt' /proc/cpuinfo | sort -u`,
-`cat /sys/module/kvm_*/parameters/nested`, `lsmod | grep kvm`, `ls -l /dev/kvm`,
-`virt-host-validate qemu`, `virsh version`. Типичные WARN: cgroup `devices` (норма для v2),
-IOMMU (нужен только для passthrough — `intel_iommu=on`/`amd_iommu` в параметрах ядра),
-secure guest (SEV/TDX — не нужен для стенда).
-
-</details>
-
-**2.** В `Vagrantfile` учебной VM добавь `v.nested = true` и `v.cpu_mode = "host-passthrough"`,
+#### C3. Nested внутри Vagrant-VM
+1. Проверь nested на хосте.
+2. В `Vagrantfile` учебной VM добавь `v.nested = true` и `v.cpu_mode = "host-passthrough"`,
    выполни `vagrant reload`.
-
-<details><summary>Ответ</summary>
-
-`pgrep -af qemu-system` или `ps -ef | grep qemu`; `ps -o nlwp -p &lt;PID&gt;` — потоков больше,
-чем vCPU: плюс потоки ввода-вывода, главный цикл, vhost. В `top -H` видны `CPU 0/KVM`,
-`CPU 1/KVM` — загораются под нагрузкой. RSS меньше выделенной памяти, потому что гость ещё не
-тронул всю память (страницы выделяются при первом обращении), а balloon мог часть забрать.
-
-</details>
-
-**3.** Внутри VM докажи, что KVM доступен: флаги CPU, `/dev/kvm`, `kvm-ok`.
+3. Внутри VM докажи, что KVM доступен: флаги CPU, `/dev/kvm`, `kvm-ok`.
+4. Верни `cpu_mode` по умолчанию и проверь снова. Что изменилось?
 
 <details><summary>Ответ</summary>
 
@@ -813,92 +699,88 @@ nested), но `host-passthrough` даёт гарантию и полный на�
 
 </details>
 
-**4.** Верни `cpu_mode` по умолчанию и проверь снова. Что изменилось?
+#### C4. 🔑 virtio глазами гостя и хоста
+1. Внутри VM найди все virtio-устройства (`lspci`, `lsmod`, `ethtool -i`, `lsblk`).
+2. На хосте в `virsh dumpxml` найди, где задаются `model type='virtio'` для сети и `bus='virtio'`
+   для диска.
+3. Найди канал `org.qemu.guest_agent.0`. Для чего он?
 
 <details><summary>Ответ</summary>
 
 В госте: `lspci | grep -i virtio`, `lsmod | grep virtio`, `ethtool -i eth0` →
-`driver: virtio_net`, `lsblk` → `vda`. В XML: `&lt;interface ...&gt;&lt;model type='virtio'/&gt;` и
-`&lt;disk ...&gt;&lt;target dev='vda' bus='virtio'/&gt;`. Канал `org.qemu.guest_agent.0` —
+`driver: virtio_net`, `lsblk` → `vda`. В XML: `<interface ...><model type='virtio'/>` и
+`<disk ...><target dev='vda' bus='virtio'/>`. Канал `org.qemu.guest_agent.0` —
 virtio-serial для `qemu-guest-agent`: через него хост узнаёт IP гостя, корректно выключает
 его, замораживает ФС перед снапшотом (тема 02).
 
 </details>
 
-### C4. 🔑 virtio глазами гостя и хоста
-**1.** Внутри VM найди все virtio-устройства (`lspci`, `lsmod`, `ethtool -i`, `lsblk`).
-
-<details><summary>Ответ</summary>
-
-Команды: `lscpu`, `grep -cE 'vmx|svm' /proc/cpuinfo`, `grep -owE 'ept|npt' /proc/cpuinfo | sort -u`,
-`cat /sys/module/kvm_*/parameters/nested`, `lsmod | grep kvm`, `ls -l /dev/kvm`,
-`virt-host-validate qemu`, `virsh version`. Типичные WARN: cgroup `devices` (норма для v2),
-IOMMU (нужен только для passthrough — `intel_iommu=on`/`amd_iommu` в параметрах ядра),
-secure guest (SEV/TDX — не нужен для стенда).
-
-</details>
-
-**2.** На хосте в `virsh dumpxml` найди, где задаются `model type='virtio'` для сети и `bus='virtio'`
-   для диска.
-
-<details><summary>Ответ</summary>
-
-`pgrep -af qemu-system` или `ps -ef | grep qemu`; `ps -o nlwp -p &lt;PID&gt;` — потоков больше,
-чем vCPU: плюс потоки ввода-вывода, главный цикл, vhost. В `top -H` видны `CPU 0/KVM`,
-`CPU 1/KVM` — загораются под нагрузкой. RSS меньше выделенной памяти, потому что гость ещё не
-тронул всю память (страницы выделяются при первом обращении), а balloon мог часть забрать.
-
-</details>
-
-**3.** Найди канал `org.qemu.guest_agent.0`. Для чего он?
-
-<details><summary>Ответ</summary>
-
-В провайдере libvirt: `v.nested = true`, `v.cpu_mode = "host-passthrough"`. Внутри:
-`grep -cE 'vmx|svm' /proc/cpuinfo` > 0, `ls -l /dev/kvm` существует, `kvm-ok` — «can be used».
-С дефолтным `host-model` флаги часто тоже есть (libvirt включает `vmx`/`svm`, если хост умеет
-nested), но `host-passthrough` даёт гарантию и полный набор инструкций.
-
-</details>
-
-### C5. KVM против TCG своими глазами
+#### C5. KVM против TCG своими глазами
 Запусти ядро хоста в QEMU без диска (ядро дойдёт до паники «не могу смонтировать root» и выйдет)
 и засеки время с KVM и без:
-```text:no-line-numbers
+```bash
 sudo cp /boot/vmlinuz-$(uname -r) /tmp/vmlinuz && sudo chmod 644 /tmp/vmlinuz
-```text
-```text:no-line-numbers
 time qemu-system-x86_64 -accel kvm -m 512 -nographic -no-reboot \
-```text
-```text:no-line-numbers
   -kernel /tmp/vmlinuz -append "console=ttyS0 panic=-1" 2>&1 | tail -3
-```text
-```text:no-line-numbers
 time qemu-system-x86_64 -accel tcg -m 512 -nographic -no-reboot \
-```text
-```text:no-line-numbers
   -kernel /tmp/vmlinuz -append "console=ttyS0 panic=-1" 2>&1 | tail -3
-```text
+```
 Во сколько раз отличается? Почему облачная VM без KVM была бы бесполезна?
 
-### C6. 🔑 Выбери платформу
+<details><summary>Ответ</summary>
+
+С KVM ядро доходит до паники примерно за секунду-две, с TCG — в несколько раз
+(часто в 5–20) дольше, зависит от CPU. Облачная VM на TCG работала бы в разы медленнее железа
+при той же цене — никому не нужна.
+
+</details>
+
+#### C6. 🔑 Выбери платформу
 Для каждой нагрузки выбери VM, LXC или Docker и обоснуй одной фразой: прод-PostgreSQL;
 Windows Server с Active Directory; GitLab Runner для сборки образов; внутренний DNS-резолвер;
-**10.** микросервисов на Go; старое приложение, которому нужен свой модуль ядра; код, присланный
+10 микросервисов на Go; старое приложение, которому нужен свой модуль ядра; код, присланный
 клиентами на проверку.
-### C7. Рынок глазами вакансий
+
+<details><summary>Ответ</summary>
+
+PostgreSQL — VM (своё ядро, тюнинг, изоляция I/O; Docker возможен, но в VM).
+Windows AD — только VM. GitLab Runner — VM с Docker внутри (привилегированные сборки нельзя
+пускать на общий хост). DNS-резолвер — LXC (лёгкий долгоживущий сервис). Микросервисы —
+Docker/Kubernetes на VM-нодах. Свой модуль ядра — VM (в контейнере ядро чужое). Код клиентов —
+VM или песочница (Kata/Firecracker), не общий Docker.
+
+</details>
+
+#### C7. Рынок глазами вакансий
 Найди 5 вакансий DevOps/SRE в Казахстане (hh.kz или LinkedIn) с on-prem. Выпиши, какие
 платформы виртуализации упомянуты и какие задачи с ними связаны. Какие слова встречаются
 чаще всего?
 
-### C8. VMware против Proxmox по памяти
+<details><summary>Ответ</summary>
+
+Обычно встречаются VMware vSphere (часто с vCenter), Proxmox, KVM/libvirt, реже
+OpenStack и Hyper-V; задачи — «создание VM из шаблонов», «автоматизация через Terraform/Ansible»,
+«миграция с VMware», «резервное копирование», «сети VLAN». Вывод — какие темы блока
+приоритетнее для твоих целей.
+
+</details>
+
+#### C8. VMware против Proxmox по памяти
 Составь таблицу без подсказок: управление (vCenter ↔ ?), живая миграция, HA, кластер,
 бэкапы, контейнеры, лицензия. Потом сверься с темами 04 и 06.
+
+<details><summary>Ответ</summary>
+
+vCenter ↔ веб-интерфейс Proxmox (любой узел кластера); vMotion ↔ `qm migrate --online`;
+vSphere HA ↔ `ha-manager`; кластер ↔ corosync + pmxcfs; бэкапы — сторонние (Veeam и т.п.) ↔
+vzdump + Proxmox Backup Server; контейнеры — нет своих системных ↔ LXC; лицензия — подписка
+по ядрам ↔ open source, подписка за enterprise-репозиторий и поддержку.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После обновления BIOS на хосте VM не стартуют:
 `Could not access KVM kernel module: No such file or directory`. Что случилось и как проверить?
@@ -953,7 +835,7 @@ blacklist (`grep -r kvm /etc/modprobe.d/`), установлены ли моду
 
 Overcommit памяти: хост кончил RAM, и OOM-killer ядра хоста убил самый «толстый»
 процесс — QEMU этой VM. В госте логов нет, потому что его просто выключили. Искать в
-`journalctl -k | grep -i -E "oom|killed process"` на хосте и в `/var/log/libvirt/qemu/&lt;vm&gt;.log`.
+`journalctl -k | grep -i -E "oom|killed process"` на хосте и в `/var/log/libvirt/qemu/<vm>.log`.
 Лечить: не переподписывать RAM, balloon/KSM осознанно, лимиты, мониторинг свободной памяти хоста.
 
 </details>
@@ -987,13 +869,12 @@ seccomp, запрет привилегированных контейнеров.
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое гипервизор? Какие бывают типы?
 
 <details><summary>Ответ</summary>
 
 Гипервизор — софт, который создаёт VM и делит между ними ресурсы. Type-1 работает на железе
-   (ESXi, Hyper-V, Xen, KVM), type-2 — приложение в ОС (VirtualBox, Workstation).
+(ESXi, Hyper-V, Xen, KVM), type-2 — приложение в ОС (VirtualBox, Workstation).
 
 </details>
 
@@ -1002,8 +883,8 @@ seccomp, запрет привилегированных контейнеров.
 <details><summary>Ответ</summary>
 
 KVM — модуль ядра, исполняет гостя на CPU через VT-x/AMD-V; QEMU — процесс на VM, эмулирует
-   устройства; libvirt — API и XML-описание VM, сетей, хранилищ, им пользуются virsh,
-   virt-manager, Vagrant, Terraform, OpenStack.
+устройства; libvirt — API и XML-описание VM, сетей, хранилищ, им пользуются virsh,
+virt-manager, Vagrant, Terraform, OpenStack.
 
 </details>
 
@@ -1012,8 +893,8 @@ KVM — модуль ядра, исполняет гостя на CPU через
 <details><summary>Ответ</summary>
 
 У VM своё ядро и эмулированное железо — сильная изоляция, любая ОС, тяжелее. Контейнер —
-   процесс хоста в namespaces и cgroups на общем ядре — лёгкий и быстрый, но изоляция слабее
-   и только Linux на Linux.
+процесс хоста в namespaces и cgroups на общем ядре — лёгкий и быстрый, но изоляция слабее
+и только Linux на Linux.
 
 </details>
 
@@ -1022,8 +903,8 @@ KVM — модуль ядра, исполняет гостя на CPU через
 <details><summary>Ответ</summary>
 
 Паравиртуализация — гость знает, что он в VM, и работает с гипервизором через специальный
-   интерфейс. virtio — стандарт таких устройств (сеть, диск, balloon, serial): общие очереди
-   в памяти вместо эмуляции регистров, поэтому почти нативная скорость.
+интерфейс. virtio — стандарт таких устройств (сеть, диск, balloon, serial): общие очереди
+в памяти вместо эмуляции регистров, поэтому почти нативная скорость.
 
 </details>
 
@@ -1032,8 +913,8 @@ KVM — модуль ядра, исполняет гостя на CPU через
 <details><summary>Ответ</summary>
 
 Запуск гипервизора внутри VM: стенды Proxmox/OpenStack, CI для образов VM, облачные
-   инстансы с поддержкой вложенной виртуализации. Нужны `nested=1` на хосте и `host-passthrough`
-   у VM. Производительность вложенных VM ниже.
+инстансы с поддержкой вложенной виртуализации. Нужны `nested=1` на хосте и `host-passthrough`
+у VM. Производительность вложенных VM ниже.
 
 </details>
 
@@ -1042,7 +923,7 @@ KVM — модуль ядра, исполняет гостя на CPU через
 <details><summary>Ответ</summary>
 
 `grep -cE 'vmx|svm' /proc/cpuinfo`, `lscpu | grep Virtualization`, `kvm-ok`,
-   `virt-host-validate qemu`, существует ли `/dev/kvm`; если флагов нет — BIOS.
+`virt-host-validate qemu`, существует ли `/dev/kvm`; если флагов нет — BIOS.
 
 </details>
 
@@ -1051,8 +932,8 @@ KVM — модуль ядра, исполняет гостя на CPU через
 <details><summary>Ответ</summary>
 
 VMware vSphere, Proxmox VE, OpenStack, Hyper-V, oVirt, Nutanix AHV, XCP-ng, KubeVirt.
-   VMware после покупки Broadcom перешёл на подписку и бандлы, цены выросли — компании
-   мигрируют на Proxmox и другие платформы.
+VMware после покупки Broadcom перешёл на подписку и бандлы, цены выросли — компании
+мигрируют на Proxmox и другие платформы.
 
 </details>
 
@@ -1061,8 +942,8 @@ VMware vSphere, Proxmox VE, OpenStack, Hyper-V, oVirt, Nutanix AHV, XCP-ng, Kube
 <details><summary>Ответ</summary>
 
 VM дают изоляцию и гибкость: ноду пересоздают из шаблона кодом, железо делится между
-   кластерами и окружениями, есть снапшоты и миграции для обслуживания железа, проще
-   масштабировать. Голое железо берут под высокую производительность (GPU, БД, сеть).
+кластерами и окружениями, есть снапшоты и миграции для обслуживания железа, проще
+масштабировать. Голое железо берут под высокую производительность (GPU, БД, сеть).
 
 </details>
 
@@ -1071,7 +952,7 @@ VM дают изоляцию и гибкость: ноду пересоздаю�
 <details><summary>Ответ</summary>
 
 Выделено больше ресурсов, чем физически есть. CPU переподписывают умеренно (vCPU ждут
-   очереди — steal time), RAM опасно: закончилась — своп на хосте или OOM-killer убивает VM.
+очереди — steal time), RAM опасно: закончилась — своп на хосте или OOM-killer убивает VM.
 
 </details>
 
@@ -1080,10 +961,8 @@ VM дают изоляцию и гибкость: ноду пересоздаю�
 <details><summary>Ответ</summary>
 
 Типично: админы/инфраструктура отвечают за железо, гипервизоры, СХД и сеть хостов;
-    девопс — за VM из шаблонов, автоматизацию (Terraform/Ansible), сервисы внутри и их
-    мониторинг. В маленьких компаниях девопс делает всё, поэтому гипервизор знать нужно.
-
----
+девопс — за VM из шаблонов, автоматизацию (Terraform/Ansible), сервисы внутри и их
+мониторинг. В маленьких компаниях девопс делает всё, поэтому гипервизор знать нужно.
 
 </details>
 

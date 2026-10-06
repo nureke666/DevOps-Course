@@ -1,12 +1,12 @@
 ---
 title: "08. Практика: 5 лаб по хранилищам и stateful"
-description: "Блок → Хранилища и stateful → практика."
+description: "5 лаб: LVM + mdadm, MinIO для бэкапов, Ceph из 3 нод, PITR через WAL-G, Velero restore"
 ---
 
 # 08. Практика: 5 лаб по хранилищам и stateful
 
 > Блок → Хранилища и stateful → практика.
-> Лабы делаются руками на стендах из [00_INDEX.md](/storage/) (раздел «Стенд») и остаются
+> Лабы делаются руками на стендах из [Хранилища](/storage/) (раздел «Стенд») и остаются
 > в git: Vagrantfile, compose, скрипты, заметки с замерами. После них есть что рассказать на
 > собесе: «менял диск под нагрузкой через pvmove», «ронял OSD и смотрел recovery»,
 > «восстанавливал базу на секунду раньше DROP TABLE», «восстанавливал namespace Velero'ом».
@@ -16,7 +16,7 @@ description: "Блок → Хранилища и stateful → практика."
 > pgBackRest 2.59.1, MinIO-форк `pgsty/silo:RELEASE.2026-09-16T00-00-00Z`. Их и пинь.
 >
 > ⚠️ Всё разрушающее — только на доп. дисках учебных VM. Перед каждой лабой —
-> `vagrant snapshot save &lt;vm&gt; before_labN`.
+> `vagrant snapshot save <vm> before_labN`.
 
 ---
 
@@ -38,7 +38,7 @@ description: "Блок → Хранилища и stateful → практика."
 На `stor1` собираем том LVM из двух дисков, работаем с ним под нагрузкой: расширяем онлайн,
 делаем снапшот и откат, заменяем «стареющий» диск через `pvmove`, разбираем инцидент «диск
 расширили, а места нет» в двух вариантах. Затем собираем RAID1 на mdadm и проводим учения
-с отказом и заменой диска. Теория — [02_lvm_filesystems.md](/storage/02-lvm-filesystems).
+с отказом и заменой диска. Теория — [02. LVM, файловые системы и RAID на Linux](/storage/02-lvm-filesystems).
 
 ### Каркас
 ```bash
@@ -100,7 +100,8 @@ cat /proc/mdstat && sudo mdadm --detail /dev/md0      # [U_], degraded
 sudo mdadm /dev/md0 --remove /dev/vdf
 sudo mdadm /dev/md0 --add /dev/vdg                    # «новый диск»
 watch -n1 cat /proc/mdstat                            # recovery = 37.5% …
-```text
+```
+
 ### Требования
 - [ ] Перед каждой разрушающей командой — `lsblk` со SERIAL; ни одна команда не тронула `vda`
 - [ ] Том расширен онлайн **под нагрузкой**; объяснено, что делает `-r` и почему для XFS нельзя `resize2fs`
@@ -119,7 +120,8 @@ findmnt --verify                                                 # fstab без 
 cat /proc/mdstat                                                 # md0 : active raid1 vdg[2] vde[0] … [UU]
 sudo mdadm --detail /dev/md0 | grep -E 'State|Active|Failed'     # clean, 2 active, 0 failed
 sha256sum /srv/raid/blob                                         # совпадает с записанной
-```text
+```
+
 ### Вопросы себе
 - Почему `pvmove` можно делать под нагрузкой, а `lvreduce` для XFS нельзя вовсе?
 - Что будет с приложением, если thin pool заполнится на 100%? А обычный снапшот?
@@ -131,10 +133,10 @@ sha256sum /srv/raid/blob                                         # совпад�
 ## 🧪 Лаба 2. MinIO для бэкапов: версии, lifecycle, lock, минимальные права
 
 ### Что делаем
-Поднимаем MinIO из [00_INDEX.md](/storage/), готовим бакет `pg-backups` так, как готовят
+Поднимаем MinIO из [Хранилища](/storage/), готовим бакет `pg-backups` так, как готовят
 хранилище бэкапов: версионирование, lifecycle для старых версий, отдельный пользователь, который
 может писать и читать, но не может удалять; плюс бакет `locked` с object lock. Теория —
-[03_nfs_minio.md](/storage/03-nfs-minio).
+[03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio).
 
 ### Каркас
 ```json
@@ -150,7 +152,7 @@ sha256sum /srv/raid/blob                                         # совпад�
       "Resource": ["arn:aws:s3:::pg-backups/*"] }
   ]
 }
-```text
+```
 ```bash
 cd ~/labs/storage/minio && docker compose up -d
 alias mc='docker exec -i minio mcli'
@@ -179,7 +181,8 @@ mc mb --with-lock local/locked
 mc retention set --default GOVERNANCE "1d" local/locked
 mc cp /files/test.txt local/locked/test.txt
 mc ls --versions local/locked/test.txt
-```text
+```
+
 ### Требования
 - [ ] `pg-backups`: версионирование включено, правила lifecycle — удалять неактуальные версии через 7 дней и одинокие delete marker'ы
 - [ ] Пользователь `pg-backup` пишет и читает, но `mc rm` (и удаление конкретной версии) даёт Access Denied
@@ -198,7 +201,8 @@ mc admin user info local pg-backup                # PolicyName: pg-backup-rw
 mc rm pgb/pg-backups/test.txt; echo "exit=$?"     # Access Denied, exit≠0
 mc retention info local/locked/test.txt           # GOVERNANCE, до …
 mc admin info local | tail -2                     # 4 drives online, 0 drives offline, EC:2
-```text
+```
+
 ### Вопросы себе
 - Кто удаляет старые бэкапы, если у пользователя бэкапов нет права удаления? Чем это лучше?
 - Что увидит WAL-G, если его учётка не может удалять, а ты запустишь `wal-g delete retain`?
@@ -212,7 +216,7 @@ mc admin info local | tail -2                     # 4 drives online, 0 drives of
 ### Что делаем
 На `ceph-lab` поднимаем Ceph Tentacle через cephadm, создаём RBD-том, монтируем, пишем данные
 и проводим учения: остановка одного OSD, потеря ноды, потеря двух нод из трёх. Смотрим, как
-меняются состояния PG и что происходит с записью. Теория — [04_ceph.md](/storage/04-ceph).
+меняются состояния PG и что происходит с записью. Теория — [04. Ceph: распределённое хранилище](/storage/04-ceph).
 
 ### Каркас
 ```bash
@@ -231,14 +235,14 @@ install -m 0755 cephadm /usr/local/sbin/cephadm
 cephadm bootstrap --mon-ip 192.168.61.11 --skip-monitoring-stack   # сохрани пароль дашборда
 cephadm shell -- ceph -s
 cat /etc/ceph/ceph.pub                               # этот ключ — в authorized_keys root на ceph2/3
-```text
+```
 ```bash
 # на хосте: раздать ключ cephadm на ceph2 и ceph3
 PUB=$(vagrant ssh ceph1 -c 'sudo cat /etc/ceph/ceph.pub' | tr -d '\r')
 for n in ceph2 ceph3; do
   vagrant ssh $n -c "sudo mkdir -p /root/.ssh && echo '$PUB' | sudo tee -a /root/.ssh/authorized_keys"
 done
-```text
+```
 ```bash
 # на ceph1, внутри: cephadm shell
 ceph orch host add ceph2 192.168.61.12
@@ -251,7 +255,7 @@ ceph osd pool create rbd
 rbd pool init rbd
 rbd create rbd/vol1 --size 2G
 ceph osd pool get rbd size; ceph osd pool get rbd min_size   # 3 и 2
-```text
+```
 ```bash
 # на ceph1 вне контейнера: клиент ядра
 exit                                                 # из cephadm shell
@@ -260,7 +264,7 @@ rbd map rbd/vol1 && rbd showmapped                   # /dev/rbd0
 mkfs.xfs /dev/rbd0 && mkdir -p /mnt/rbd && mount /dev/rbd0 /mnt/rbd
 dd if=/dev/urandom of=/mnt/rbd/blob bs=1M count=500 status=none && sha256sum /mnt/rbd/blob
 while true; do date >> /mnt/rbd/writes.log; sync; sleep 1; done &   # «приложение пишет»
-```text
+```
 ```bash
 # учения (в cephadm shell на ceph1; в отдельном окне: watch -n2 ceph -s)
 ceph orch daemon stop osd.2                  # 1) один OSD
@@ -270,12 +274,13 @@ ceph orch daemon start osd.2                 #    вернули → recovery �
 # 2) потеря ноды: на хосте  vagrant halt ceph3 ; ждём > 10 минут (mon_osd_down_out_interval)
 # 3) две ноды из трёх:      vagrant halt ceph2 ceph3  → что с writes.log? (min_size 2)
 #    вернуть: vagrant up ceph2 ceph3 ; наблюдать peering → active+clean
-```text
+```
+
 **Вариант с Rook на k3s** (вместо cephadm, на пересозданных VM с 6 ГБ): k3s на трёх нодах
 (`--node-ip`, `--flannel-iface=eth1`), Rook v1.20.7 из `deploy/examples` (`crds.yaml`,
 `common.yaml`, `csi-operator.yaml`, `operator.yaml`, `cluster.yaml` с `deviceFilter: "^vdb$"`),
 пул `replicapool` + SC `rook-ceph-block`, toolbox для `ceph -s`. Под с PVC, удаление пода
-`rook-ceph-osd-N` и наблюдение recovery. Подробно — [05_k8s_stateful.md](/storage/05-k8s-stateful).
+`rook-ceph-osd-N` и наблюдение recovery. Подробно — [05. Stateful в Kubernetes: CSI, StatefulSet, Rook-Ceph, снапшоты](/storage/05-k8s-stateful).
 
 ### Требования
 - [ ] Кластер из 3 нод: 3 MON, 1–2 MGR, 3 OSD по одному на хост; `ceph -s` — HEALTH_OK
@@ -294,7 +299,8 @@ cephadm shell -- ceph osd tree              # 3 host, у каждого osd up
 cephadm shell -- ceph df                    # пул rbd, USED ≈ 3 × данные
 cephadm shell -- ceph orch ps --daemon-type osd
 rbd showmapped && sha256sum /mnt/rbd/blob   # совпадает
-```text
+```
+
 ### Вопросы себе
 - Почему в `ceph df` пул занимает втрое больше, чем записано, и сколько места останется при EC 2+1?
 - Что было бы при `min_size 1` в сценарии «две ноды из трёх» и чем это опасно?
@@ -309,8 +315,8 @@ rbd showmapped && sha256sum /mnt/rbd/blob   # совпадает
 На `stor1` ставим PostgreSQL 16, настраиваем непрерывную архивацию WAL и базовые бэкапы WAL-G в
 бакет `pg-backups` из лабы 2, создаём «продовую» нагрузку, удаляем таблицу и восстанавливаем
 базу **рядом с продом** на секунду раньше аварии. Теория —
-[06_db_backup_replication.md](/storage/06-db-backup-replication), основа PITR —
-[../Left/01_Databases/05_backup_restore.md](/databases/05-backup-restore).
+[06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication), основа PITR —
+[Базы данных: 05. Бэкап и восстановление](/databases/05-backup-restore).
 
 ### Каркас
 ```bash
@@ -323,7 +329,7 @@ mkdir -p /tmp/walg && curl -fsSL -o /tmp/walg.tgz \
   https://github.com/wal-g/wal-g/releases/download/v3.0.9/wal-g-pg-ubuntu-22.04-amd64.tar.gz
 tar -xzf /tmp/walg.tgz -C /tmp/walg && sudo install -m 0755 /tmp/walg/wal-g* /usr/local/bin/wal-g
 wal-g --version
-```text
+```
 ```json
 // /var/lib/postgresql/.walg.json  (владелец postgres, права 600)
 {
@@ -336,14 +342,14 @@ wal-g --version
   "WALG_COMPRESSION_METHOD": "zstd",
   "PGHOST": "/var/run/postgresql"
 }
-```text
+```
 ```conf
 # /etc/postgresql/16/main/conf.d/wal-g.conf
 wal_level = replica
 archive_mode = on                         # требует рестарта
 archive_command = 'wal-g wal-push %p'
 archive_timeout = 60                      # на стенде — сегмент минимум раз в минуту
-```text
+```
 ```bash
 sudo systemctl restart postgresql@16-main
 sudo -u postgres psql -c "CREATE DATABASE shop"
@@ -359,7 +365,7 @@ sudo -u postgres psql shop -c "SELECT now(), count(*) FROM orders"
 sudo -u postgres psql shop -c "DROP TABLE orders"
 sudo -u postgres psql -c "SELECT pg_switch_wal()"         # чтобы сегмент с DROP ушёл в архив
 sudo -u postgres psql -c "SELECT last_archived_wal, failed_count FROM pg_stat_archiver"
-```text
+```
 ```bash
 # восстановление РЯДОМ: отдельный кластер pitr на порту 5433
 sudo pg_createcluster 16 pitr -p 5433
@@ -378,7 +384,8 @@ sudo -u postgres psql -p 5433 shop -c "SELECT max(created_at), count(*) FROM ord
 
 # вернуть таблицу в прод
 sudo -u postgres pg_dump -p 5433 -t orders shop | sudo -u postgres psql -p 5432 shop
-```text
+```
+
 > Часовой пояс в `recovery_target_time` — явно (`+05` для Казахстана с марта 2024 года,
 > или `UTC`). Промахнулся — удали `pitr`, разверни копию заново и повтори с другой целью.
 
@@ -408,7 +415,8 @@ sudo -u postgres wal-g wal-verify integrity timeline
 mc ls --recursive local/pg-backups/stor1/ | head       # basebackups_005/ и wal_005/
 sudo -u postgres psql -p 5432 shop -c "SELECT count(*) FROM orders"   # таблица вернулась в прод
 pg_lsclusters                                           # main online, pitr online (потом — удалить)
-```text
+```
+
 ### Вопросы себе
 - Почему реплика не спасла бы от `DROP TABLE`, а PITR спасает?
 - Что будет с PITR, если `archive_command` неделю молча падал? Какой алерт это ловит?
@@ -422,7 +430,7 @@ pg_lsclusters                                           # main online, pitr onli
 ### Что делаем
 В kind-кластере `devops` поднимаем namespace с StatefulSet и томом, ставим Velero с MinIO,
 бэкапим namespace вместе с данными тома (Kopia), удаляем namespace и восстанавливаем. Потом —
-восстановление рядом (другой namespace) и расписание. Теория — [07_velero_dr.md](/storage/07-velero-dr).
+восстановление рядом (другой namespace) и расписание. Теория — [07. Velero и disaster recovery](/storage/07-velero-dr).
 
 ### Каркас
 ```yaml
@@ -462,7 +470,7 @@ spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: standard
         resources: { requests: { storage: 1Gi } }
-```text
+```
 ```bash
 kubectl apply -f lab5/shop.yaml && kubectl -n shop wait --for=condition=Ready pod/web-0
 kubectl get pv -o custom-columns=NAME:.metadata.name,LOCAL:.spec.local.path,HOSTPATH:.spec.hostPath.path
@@ -472,7 +480,7 @@ kubectl -n shop exec web-0 -- sh -c 'date > /data/stamp; head -c 50000000 /dev/u
 # MinIO: бакет и пользователь velero (политика — 07, раздел 5), сеть kind
 mc mb --with-versioning local/velero
 docker network connect kind minio 2>/dev/null || true
-MINIO_IP=$(docker inspect -f '&#123;&#123;(index .NetworkSettings.Networks "kind").IPAddress&#125;&#125;' minio)
+MINIO_IP=$(docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}' minio)
 
 # Velero: установка — команда из 07, раздел 5 (--use-node-agent, s3Url=http://$MINIO_IP:9000)
 velero backup-location get
@@ -486,7 +494,8 @@ kubectl -n shop exec web-0 -- sha256sum /data/blob          # сравни с la
 
 velero restore create shop-check --from-backup shop-1 --namespace-mappings shop:shop-check --wait
 velero schedule create shop-hourly --schedule="0 * * * *" --include-namespaces shop --ttl 24h0m0s
-```text
+```
+
 ### Требования
 - [ ] Пароль Kopia-репозитория (`velero-repo-credentials`) заменён **до** первого бэкапа и сохранён вне кластера
 - [ ] BSL `Available`; бэкап `shop-1` — `Completed`, в `describe --details` том `data` в Pod Volume Backups
@@ -506,7 +515,8 @@ velero restore get                                 # shop-r1, shop-check  Comple
 kubectl -n shop exec web-0 -- sha256sum /data/blob # = lab5/expected.txt
 mc ls local/velero/                                # backups/  kopia/
 ./restore-check.sh shop-1; echo "exit=$?"          # exit=0
-```text
+```
+
 ### Вопросы себе
 - Почему Velero'ом не бэкапят базу PostgreSQL как основной механизм?
 - Что изменится, если хранилище — Rook-Ceph с CSI-снапшотами: какой флаг обязателен, чтобы данные уехали в MinIO?
@@ -517,7 +527,7 @@ mc ls local/velero/                                # backups/  kopia/
 
 ## 🏁 Что должно остаться после блока
 
-```text
+```text:no-line-numbers
 storage-lab/                         # репозиторий стендов и лаб
 ├── stands/storage-lab/Vagrantfile   # stor1 с 6 доп. дисками
 ├── stands/ceph-lab/Vagrantfile      # ceph1..3 с сырыми дисками
@@ -528,9 +538,8 @@ storage-lab/                         # репозиторий стендов и 
 ├── lab4/pitr.md                     # PITR: цель, фактические RPO/RTO
 ├── lab5/shop.yaml, restore-check.sh
 └── docs/dr.md                       # DR-план с замерами
-```text
+```
+
 Это превращает ответ «знаю, что такое LVM, Ceph и Velero» в «вот как я менял диск под
 нагрузкой, вот таймлайн восстановления Ceph после отказа ноды, вот PITR с замеренным RPO
 и restore namespace с проверкой контрольной суммы».
-
-➡️ Дальше: [09_interview.md](/softskills/09-interview)

@@ -1,6 +1,6 @@
 ---
 title: "04. Admission и политики: ограждения, а не шлагбаумы"
-description: "Блок → Platform Engineering → тема 04. Вопросы собеса: «Чем ValidatingAdmissionPolicy"
+description: "Validating и mutating webhook на Python, ValidatingAdmissionPolicy на CEL, Kyverno со стороны платформы, failurePolicy и как не положить кластер"
 ---
 
 # 04. Admission и политики: ограждения, а не шлагбаумы
@@ -19,14 +19,14 @@ description: "Блок → Platform Engineering → тема 04. Вопросы 
 > VAP — GA 1.30, MAP — GA 1.36, **Kyverno 1.19.1** (чарт 3.9.1), FastAPI 0.141, uvicorn 0.54.
 
 Со стороны **безопасности** (PSA, выбор VAP/Kyverno/Gatekeeper, `:latest`, подписи, Falco) —
-[../Security/06_k8s_security.md](/security/06-k8s-security) §2, §5–7. Здесь — со стороны **платформы**:
-как ограждения помогают командам ехать по golden path ([01_platform_engineering.md](/platform/01-platform-engineering) §3).
+[Безопасность: 06. Безопасность Kubernetes](/security/06-k8s-security) §2, §5–7. Здесь — со стороны **платформы**:
+как ограждения помогают командам ехать по golden path ([01. Platform Engineering: платформа как продукт](/platform/01-platform-engineering) §3).
 
 ---
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  kubectl apply ─► authn ─► authz (RBAC) ─► [defaulting схемы]
                                               │
              ┌────────────────────────────────▼───────────────────────────────┐
@@ -42,12 +42,13 @@ description: "Блок → Platform Engineering → тема 04. Вопросы 
                                              etcd ──► Kyverno GeneratingPolicy (фоном):
                                                       NetworkPolicy, ResourceQuota в namespace
  отказ ─► сообщение: ЧТО не так + КАК исправить + ССЫЛКА на доки (§8)
-```text
+```
+
 ---
 
 ## 1. Цепочка admission: что важно платформе
 
-Путь запроса через API-сервер — [../Kubernetes/02_architecture.md](/kubernetes/02-architecture) §1.1.
+Путь запроса через API-сервер — [Kubernetes: 02. Архитектура кластера](/kubernetes/02-architecture) §1.1.
 Для платформенного инженера важны пять фактов:
 
 | Факт | Следствие |
@@ -106,14 +107,16 @@ spec:
   matchResources:
     namespaceSelector:                 # только namespace команд — kube-system и платформа не трогаем
       matchExpressions: [{ key: platform.example.com/team, operator: Exists }]
-```text
+```
+
 ```text
 $ kubectl -n team-a create deployment nolim --image=nginx:1.27-alpine
 error: failed to create deployment: deployments.apps "nolim" is forbidden: ValidatingAdmissionPolicy
 'require-limits' with binding 'require-limits' denied request: Deployment nolim: у контейнеров nginx
 нет resources.limits.memory. Пример и дефолты: https://platform.example.com/docs/resources
-```text
-**Пример 2 — `:latest` запрещён** — готовая политика в [../Security/06_k8s_security.md](/security/06-k8s-security) §5.
+```
+
+**Пример 2 — `:latest` запрещён** — готовая политика в [Безопасность: 06. Безопасность Kubernetes](/security/06-k8s-security) §5.
 
 **Пример 3 — HTTPRoute только в домене своей команды (binding с параметрами).** Домены —
 в ConfigMap **платформы** (в namespace команды его нельзя: команда сама себе поменяла бы домен),
@@ -161,7 +164,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata: { name: route-domains, namespace: platform }
 data: { team-a: team-a.example.com, team-b: team-b.example.com }
-```text
+```
+
 HTTPRoute от LinkdApp (тема 03) проверяется тем же правилом: оператор создаёт маршрут
 в namespace команды, и чужой домен в `spec.host` будет отклонён уже на детях.
 
@@ -209,7 +213,8 @@ spec:
   matchResources:
     namespaceSelector:
       matchExpressions: [{ key: platform.example.com/team, operator: Exists }]
-```text
+```
+
 | Нюанс MAP | Что знать |
 |-----------|-----------|
 | `patchType` | `ApplyConfiguration` — слияние как SSA (удобно для полей и map); `JSONPatch` — точечные операции над списками |
@@ -248,7 +253,6 @@ app = FastAPI()
 DOCS = "https://platform.example.com/docs/linkdapp"
 _api = None
 
-
 def api() -> client.CustomObjectsApi:
     global _api
     if _api is None:
@@ -258,7 +262,6 @@ def api() -> client.CustomObjectsApi:
             config.load_kube_config()
         _api = client.CustomObjectsApi()
     return _api
-
 
 def review(req: dict, allowed: bool, message: str = "", patch: list | None = None,
            warnings: list | None = None) -> dict:
@@ -273,10 +276,8 @@ def review(req: dict, allowed: bool, message: str = "", patch: list | None = Non
         resp["warnings"] = warnings                    # kubectl покажет «Warning: …»
     return {"apiVersion": "admission.k8s.io/v1", "kind": "AdmissionReview", "response": resp}
 
-
 def pointer(key: str) -> str:
     return key.replace("~", "~0").replace("/", "~1")  # JSON Pointer: «/» в ключе → «~1»
-
 
 @app.post("/mutate")
 def mutate(body: dict) -> dict:
@@ -285,12 +286,11 @@ def mutate(body: dict) -> dict:
     user = re.sub(r"[^A-Za-z0-9_.-]", "_", req["userInfo"]["username"])[:63].strip("_.-")
     wanted = {"app.kubernetes.io/part-of": "linkd-platform",
               "platform.example.com/created-by": user or "unknown"}
-    patch = [] if "labels" in meta else [{"op": "add", "path": "/metadata/labels", "value": {&#125;&#125;]
+    patch = [] if "labels" in meta else [{"op": "add", "path": "/metadata/labels", "value": {}}]
     for key, value in wanted.items():
         if meta.get("labels", {}).get(key) != value:
             patch.append({"op": "add", "path": f"/metadata/labels/{pointer(key)}", "value": value})
     return review(req, True, patch=patch)
-
 
 @app.post("/validate")
 def validate(body: dict) -> dict:
@@ -311,11 +311,11 @@ def validate(body: dict) -> dict:
         warnings.append(f"replicas=1: при выкатке и падении ноды будет простой; для прода — 2+ ({DOCS}#replicas)")
     return review(req, True, warnings=warnings)
 
-
 @app.get("/healthz")
 def healthz() -> dict:
     return {"ok": True}
-```text
+```
+
 Обработчики — обычные `def`: FastAPI выполнит их в пуле потоков, и синхронный вызов
 Kubernetes API не заблокирует event loop. Список всех LinkdApp на каждый запрос годится
 для сотен объектов; для тысяч — кэш через watch (informer) в фоне.
@@ -356,7 +356,8 @@ webhooks:
       matchExpressions: [{ key: kubernetes.io/metadata.name, operator: NotIn, values: [kube-system, platform] }]
 # MutatingWebhookConfiguration — так же: path /mutate, operations [CREATE],
 # reinvocationPolicy: IfNeeded, failurePolicy: Ignore (метки — не повод блокировать деплой)
-```text
+```
+
 Без cert-manager: `openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout tls.key -out tls.crt
 -subj "/CN=linkd-webhook" -addext "subjectAltName=DNS:linkd-webhook.platform.svc"`, Secret
 типа `tls`, а `caBundle: $(base64 -w0 tls.crt)` — руками (и не забыть про срок действия).
@@ -370,7 +371,8 @@ Warning: replicas=1: при выкатке и падении ноды будет
 linkdapp.platform.example.com/wh1 created          # labels: part-of=linkd-platform, created-by=kubernetes-admin
 Error from server: admission webhook "validate.linkdapps.platform.example.com" denied the request:
 host wh.team-a.example.com уже занят: team-a/wh1. Выберите другое имя — …#host
-```text
+```
+
 ---
 
 ## 5. ⭐ Как вебхук кладёт кластер и как его поднять
@@ -392,7 +394,8 @@ host wh.team-a.example.com уже занят: team-a/wh1. Выберите др�
 Error from server (InternalError): Internal error occurred: failed calling webhook
 "mutate.linkdapps.platform.example.com": failed to call webhook: Post "https://…/mutate?timeout=3s":
 dial tcp …:8443: connect: connection refused
-```text
+```
+
 **Runbook восстановления:**
 ```bash
 # 1. кто мешает: имя вебхука есть в тексте ошибки; список всех
@@ -404,7 +407,8 @@ kubectl patch validatingwebhookconfiguration linkd-webhook --type=json \
   -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]'
 # 3. починить вебхук (под, сертификат, Service), проверить, вернуть конфигурацию из git
 # 4. при GitOps: сначала выключить selfHeal у Application, иначе ArgoCD вернёт сломанное
-```text
+```
+
 **Профилактика:** исключения kube-system и своего namespace; HA + PDB; сертификаты с
 автопродлением (cert-manager) и алерт за 14 дней до истечения; метрики API-сервера
 `apiserver_admission_webhook_admission_duration_seconds` и `apiserver_admission_webhook_rejection_count`
@@ -415,7 +419,7 @@ kubectl patch validatingwebhookconfiguration linkd-webhook --type=json \
 
 ## 6. Kyverno со стороны платформы
 
-Установка, CEL-типы и legacy `ClusterPolicy` — [../Security/06_k8s_security.md](/security/06-k8s-security) §6.
+Установка, CEL-типы и legacy `ClusterPolicy` — [Безопасность: 06. Безопасность Kubernetes](/security/06-k8s-security) §6.
 Факты (проверь, сентябрь 2026): **Kyverno 1.19.1**, чарт `kyverno/kyverno` 3.9.1; CEL-типы
 `ValidatingPolicy`, `MutatingPolicy`, `GeneratingPolicy`, `ImageValidatingPolicy`, `DeletingPolicy`
 (плюс `Namespaced…` варианты) — в `policies.kyverno.io/v1` (хранятся пока в `v1beta1`,
@@ -443,7 +447,8 @@ spec:
       messageExpression: >-
         'контейнеры без readinessProbe: ' + variables.noProbe.join(', ') +
         '. Без неё трафик идёт в неготовый под. Как настроить: https://platform.example.com/docs/probes'
-```text
+```
+
 **Mutate — дефолтные requests** (для квоты и планировщика). ⚠️ Учти defaulting: если
 заданы только `limits`, `requests.memory` уже равен лимиту — проверяем именно `cpu`:
 ```yaml
@@ -469,7 +474,8 @@ spec:
               resources: Object.spec.containers.resources{ requests: {
                 "cpu": c.resources.?requests.?cpu.orValue("50m"),
                 "memory": c.resources.?requests.?memory.orValue("64Mi") } } }) } }
-```text
+```
+
 **Generate — базовый набор для каждого namespace команды** (NetworkPolicy + ResourceQuota):
 ```yaml
 apiVersion: policies.kyverno.io/v1
@@ -492,11 +498,11 @@ spec:
           { "apiVersion": dyn("networking.k8s.io/v1"), "kind": dyn("NetworkPolicy"),
             "metadata": dyn({"name": "default-deny-ingress", "namespace": variables.ns}),
             "spec": dyn({"podSelector": {}, "policyTypes": ["Ingress"],
-              "ingress": [{"from": [{"podSelector": {&#125;&#125;,
-                {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "envoy-gateway-system"&#125;&#125;}]}]}) },
+              "ingress": [{"from": [{"podSelector": {}},
+                {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "envoy-gateway-system"}}}]}]}) },
           { "apiVersion": dyn("v1"), "kind": dyn("ResourceQuota"),
             "metadata": dyn({"name": "team-quota", "namespace": variables.ns}),
-            "spec": dyn({"hard": {"requests.cpu": "4", "requests.memory": "8Gi", "limits.memory": "16Gi", "pods": "50"&#125;&#125;) }
+            "spec": dyn({"hard": {"requests.cpu": "4", "requests.memory": "8Gi", "limits.memory": "16Gi", "pods": "50"}}) }
         ]
   generate:
     - expression: generator.Apply(variables.ns, variables.downstream)
@@ -512,18 +518,20 @@ metadata:
 rules:
   - { apiGroups: [networking.k8s.io], resources: [networkpolicies], verbs: [get, list, watch, create, update, patch, delete] }
   - { apiGroups: [""], resources: [resourcequotas], verbs: [get, list, watch, create, update, patch, delete] }
-```text
+```
+
 **Отчёты и раскатка.** Результаты — в `PolicyReport` (`wgpolicyk8s.io/v1alpha2`; формат
 `openreports.io` — опционально, флаг `--openreportsEnabled`):
 ```bash
 kubectl get policyreport -n team-a -o custom-columns=KIND:.scope.kind,NAME:.scope.name,PASS:.summary.pass,FAIL:.summary.fail
 kubectl get policyreport -n team-a -o jsonpath='{range .items[*].results[?(@.result=="fail")]}{.policy}: {.message}{"\n"}{end}'
-```text
-```text
+```
+
+```text:no-line-numbers
  Audit (2–4 недели)          Warn (1–2 недели)             Deny
  отчёты, список нарушителей → kubectl и CI показывают   → отказ; исключения — через
  по командам, MR с фиксами    предупреждение             PolicyException с владельцем и сроком
-```text
+```
 Сроки — ориентир, а не правило: переходить, когда нарушений ноль или все объяснены.
 В CI — `kyverno apply policies/ --resource manifests/` ломает MR раньше кластера.
 
@@ -578,7 +586,8 @@ kubectl create namespace platform
 kubectl label namespace team-a platform.example.com/team=team-a --overwrite
 kubectl apply -f vap-require-limits.yaml -f vap-route-team-domain.yaml -f map-team-label.yaml
 kubectl -n team-a create deployment nolim --image=nginx:1.27-alpine --dry-run=server   # отказ с подсказкой
-```text
+```
+
 **Шаги:**
 1. **VAP:** HTTPRoute с `evil.team-b.example.com` → отказ; с `links.team-a.example.com` → проходит.
    Создай namespace `team-c` с меткой команды без записи в ConfigMap — прочитай сообщение.
@@ -639,7 +648,7 @@ kubectl -n team-a create deployment nolim --image=nginx:1.27-alpine --dry-run=se
 | Внешний контекст | Свой webhook: AdmissionReview v1, `uid`, `allowed`, `patch` base64 |
 | TLS для вебхука | cert-manager `Certificate` + `cert-manager.io/inject-ca-from` |
 | Не положить кластер | `namespaceSelector` без kube-system/своего ns, `timeoutSeconds: 3`, HA, PDB |
-| Поднять кластер | `kubectl delete validatingwebhookconfiguration &lt;имя&gt;` |
+| Поднять кластер | `kubectl delete validatingwebhookconfiguration <имя>` |
 | Ресурсы для каждого namespace | Kyverno `GeneratingPolicy` + `synchronize` + права через агрегацию |
 | Кто нарушает | `kubectl get policyreport -A` |
 
@@ -664,13 +673,17 @@ kubectl -n team-a create deployment nolim --image=nginx:1.27-alpine --dry-run=se
 10. Раскатка: Audit → Warn → Deny, исключения через MR с владельцем и сроком.
 11. Сообщение отказа: что, почему, как исправить, ссылка — это интерфейс платформы.
 
-➡️ Дальше: [05_gateway_mesh.md](/platform/05-gateway-mesh) · Задачи: 04_admission_policy_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«VAP или webhook?»*, *«Что будет, если вебхук упадёт?»*,
+> *«Как раскатить политику, не сломав команды?»* — отвечай через порядок admission,
+> `failurePolicy`, исключения и путь Audit → Warn → Deny.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Назови порядок этапов, которые проходит запрос к API-серверу от аутентификации
 до записи в etcd. Где в нём defaulting схемы?
@@ -968,171 +981,218 @@ Deny. До Deny: нарушений ноль или все оформлены и
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```yaml
 # B1 — VAP на pods: у контейнеров должны быть requests
-```text
-```text:no-line-numbers
 validations:
-```text
-```text:no-line-numbers
   - expression: "object.spec.containers.all(c, has(c.resources.requests))"
-```text
-```text:no-line-numbers
 # разработчик применяет Deployment, где у контейнера только limits.memory: 256Mi
-```text
+```
 Вопрос: пройдёт ли под? Почему?
 
-```text:no-line-numbers
+```yaml
 # B2 — binding
-```text
-```text:no-line-numbers
 validationActions: [Deny, Warn]
-```text
+```
 Вопрос: что ответит API-сервер?
 
-```text:no-line-numbers
+```yaml
 # B3 — VAP route-team-domain, у namespace team-x метка platform.example.com/team=team-x,
-```text
-```text:no-line-numbers
 # в ConfigMap platform/route-domains нет ключа team-x
-```text
+```
 Вопрос: что увидит команда при создании HTTPRoute?
 
-```text:no-line-numbers
+```yaml
 # B4 — MutatingAdmissionPolicy
-```text
-```text:no-line-numbers
 matchConditions:
-```text
-```text:no-line-numbers
   - name: team-ns
-```text
-```text:no-line-numbers
     expression: "'platform.example.com/team' in namespaceObject.metadata.labels"
-```text
-```text:no-line-numbers
 failurePolicy: Fail
-```text
+```
 Вопрос: что случится с созданием Deployment?
 
-```text:no-line-numbers
+```yaml
 # B5 — вебхук
-```text
-```text:no-line-numbers
 rules: [{ apiGroups: [""], apiVersions: [v1], operations: [CREATE], resources: [pods] }]
-```text
-```text:no-line-numbers
 failurePolicy: Fail
-```text
-```text:no-line-numbers
 # namespaceSelector не задан; поды вебхука — в namespace platform; нода с ними перезагрузилась
-```text
+```
 Вопрос: что будет дальше?
 
-```text:no-line-numbers
+```yaml
 # B6 — тот же вебхук, но failurePolicy: Ignore; это вебхук, запрещающий privileged-поды
-```text
+```
 Вопрос: чем это опасно?
 
-```text:no-line-numbers
+```python
 # B7 — ответ вебхука
-```text
-```text:no-line-numbers
 return {"apiVersion": "admission.k8s.io/v1", "kind": "AdmissionReview",
-```text
-```text:no-line-numbers
-        "response": {"allowed": True, "patchType": "JSONPatch", "patch": json.dumps(ops)&#125;&#125;
-```text
+        "response": {"allowed": True, "patchType": "JSONPatch", "patch": json.dumps(ops)}}
+```
 Вопрос: найди две ошибки.
 
-```text:no-line-numbers
+```json
 // B8 — JSONPatch
-```text
-```text:no-line-numbers
 [{"op": "add", "path": "/metadata/labels/platform.example.com/team", "value": "a"}]
-```text
+```
 Вопрос: что не так?
 
-```text:no-line-numbers
+```yaml
 # B9 — Kyverno GeneratingPolicy: operations [CREATE] на namespaces
-```text
-```text:no-line-numbers
 # namespace team-f создали без метки, через минуту добавили platform.example.com/team=team-f
-```text
+```
 Вопрос: будет ли в team-f ResourceQuota?
 
-```text:no-line-numbers
+```yaml
 # B10 — Kyverno ValidatingPolicy сразу в validationActions: [Deny] на все namespace
-```text
-```text:no-line-numbers
 # в кластере 40 сервисов, у 15 нет readinessProbe
-```text
+```
 Вопрос: что случится при следующем релизе и узле, ушедшем на обслуживание?
+
+<details><summary>Ответы</summary>
+
+**B1.** Пройдёт, если VAP проверяет только наличие `requests`: defaulting поставит
+`requests.memory = 256Mi` из limits до admission. Если бы проверялся `requests.cpu` — отказ.
+
+**B2.** Binding будет отклонён при создании: `Deny` и `Warn` одновременно нельзя.
+
+**B3.** Отказ с сообщением «для команды "team-x" не задан домен… обратитесь в #platform» —
+первая валидация не прошла.
+
+**B4.** `namespaceObject` недоступен в `matchConditions` → ошибка вычисления → при
+`failurePolicy: Fail` отказ на создание **всех** подходящих Deployment.
+
+**B5.** Поды вебхука не могут пересоздаться (их создание идёт через упавший вебхук) →
+создание любых подов в кластере отклоняется → «кирпич». Спасение — удалить конфигурацию
+вебхука, починить, вернуть с исключением namespace `platform` и `kube-system`.
+
+**B6.** Пока вебхук недоступен, privileged-поды пройдут молча — защита выключена. Для
+безопасности — `Fail` + HA + алерты, либо VAP вместо вебхука.
+
+**B7.** Нет `uid` из запроса; `patch` должен быть в base64, а не JSON-строкой. (Ещё стоит
+указывать `apiVersion`/`kind` — они есть.)
+
+**B8.** `/` внутри ключа не экранирован: путь понимается как вложенные поля. Правильно —
+`/metadata/labels/platform.example.com~1team`; и если `labels` нет, сначала `add /metadata/labels {}`.
+
+**B9.** Нет: метку добавили через UPDATE, а политика срабатывает только на CREATE. Нужны
+CREATE + UPDATE или `generateExisting`.
+
+**B10.** Деплои 15 сервисов начнут отклоняться, а при эвакуации ноды поды этих сервисов не
+пересоздадутся — простой. Нужно Audit → Warn → Deny.
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 require-limits
+#### C1. 🔑 require-limits
 Примени VAP `require-limits` из конспекта. Проверь: Deployment без limits → отказ в
 `kubectl apply`; Pod без limits → отказ; Deployment с limits → проходит. Переведи binding
 в `[Warn, Audit]` и посмотри, как выглядит предупреждение.
 
-### C2. 🔑 Домен команды
+#### C2. 🔑 Домен команды
 Настрой `route-team-domain` с ConfigMap в `platform`. Проверь три случая: свой домен,
 чужой домен, команда без записи в ConfigMap. Создай LinkdApp с чужим `host` — на каком
 объекте и где ты увидишь отказ?
 
-### C3. Своя VAP
+<details><summary>Ответ</summary>
+
+Отказ придёт на HTTPRoute, который создаёт оператор: его apply получит ошибку
+от API-сервера, kopf будет повторять обработчик с backoff и публиковать ошибку в Events
+LinkdApp и логи оператора; статус не обновится. Разработчик узнает об этом не сразу —
+поэтому для UX правило стоит продублировать на LinkdApp (VAP по `spec.host`): тогда отказ
+придёт прямо в `kubectl apply`.
+
+</details>
+
+#### C3. Своя VAP
 Напиши VAP: у Deployment в namespace команд должна быть метка `app.kubernetes.io/name`,
 а `replicas` не больше значения `maxReplicas` из ConfigMap-параметра. Сообщение — с фактическим
 числом и лимитом (`messageExpression`).
 
-### C4. MAP
+<details><summary>Ответ</summary>
+
+Пример выражения: `has(object.metadata.labels) && 'app.kubernetes.io/name' in
+object.metadata.labels` и `object.spec.replicas <= int(params.data.maxReplicas)`; сообщение —
+`'replicas ' + string(object.spec.replicas) + ' > лимита ' + params.data.maxReplicas`.
+
+</details>
+
+#### C4. MAP
 Примени `team-label`. Затем напиши вторую MAP, которая ставит `revisionHistoryLimit: 3`,
 если поле не задано. Проверь `--dry-run=server -o yaml`. Что будет, если поле задано?
 
-### C5. 🔑 Webhook
+<details><summary>Ответ</summary>
+
+<code v-pre>Object{spec: Object.spec{revisionHistoryLimit: 3}}</code> с `matchConditions`
+`!has(object.spec.revisionHistoryLimit)` — но у Deployment это поле имеет дефолт 10,
+проставленный defaulting, поэтому условие не сработает. Урок из §1: дефолты схемы — до admission.
+
+</details>
+
+#### C5. 🔑 Webhook
 Запусти `webhook.py` локально: самоподписанный сертификат с IP шлюза сети kind в SAN,
 регистрация через `clientConfig.url` и `caBundle`. Проверь: метки от `/mutate`, отказ
 при дубле host, предупреждение при `replicas: 1`.
 
-### C6. Тесты вебхука
+#### C6. Тесты вебхука
 Напиши pytest-тесты с `fastapi.testclient.TestClient`: мутация экранирует ключ с `/`;
 повторная мутация не даёт patch (идемпотентность); дубль host — `allowed: false`.
 Подмени Kubernetes API фейком.
 
-### C7. 🔑 Сломай и почини
+#### C7. 🔑 Сломай и почини
 При работающем вебхуке останови его и попробуй создать LinkdApp. Засеки время ответа
 и запиши текст ошибки. Восстанови работу по runbook двумя способами: удалением конфигурации
 и переводом `failurePolicy` в `Ignore`.
 
-### C8. Kyverno generate
+<details><summary>Ответ</summary>
+
+Ошибка вызова приходит почти сразу при `connection refused` и через `timeoutSeconds`,
+если вебхук «висит». Текст: `failed calling webhook "…": failed to call webhook: Post … connect:
+connection refused`.
+
+</details>
+
+#### C8. Kyverno generate
 Поставь Kyverno 1.19, примени `team-namespace-baseline` и ClusterRole. Проверь: namespace
 с меткой → NetworkPolicy и ResourceQuota; удалённая квота вернулась; namespace без метки —
 ничего. Убери ClusterRole — что покажет статус политики?
 
-### C9. Kyverno validate и отчёты
+<details><summary>Ответ</summary>
+
+Без прав статус политики покажет, что RBAC-разрешения не выданы
+(условие вида `RBACPermissionsGranted=False`), ресурсы не создадутся.
+
+</details>
+
+#### C9. Kyverno validate и отчёты
 Примени `require-probes` в Audit. Найди нарушителей в `PolicyReport` одной командой.
 Переведи в `[Warn]` и затем в `[Deny]`; проверь, что autogen сработал и отказ приходит
 на Deployment, а не на Pod.
 
-### C10. Сообщения
+#### C10. Сообщения
 Возьми три своих политики и перепиши сообщения по анатомии «что — почему — как — ссылка».
 Попроси коллегу (или представь новичка) исправить манифест только по сообщению.
 
-### C11. Выбор инструмента (со звёздочкой)
+#### C11. Выбор инструмента (со звёздочкой)
 Для каждого правила выбери VAP, MAP, Kyverno или webhook и объясни: (а) образы только из
 `registry.example.com`; (б) host LinkdApp уникален в кластере; (в) в каждом namespace
 команды — NetworkPolicy по умолчанию; (г) метка команды на всех Deployment; (д) нельзя
 создать больше 3 LinkdApp с `size: large` на команду.
 
+<details><summary>Ответ</summary>
+
+(а) VAP (или Kyverno ImageValidatingPolicy для подписей); (б) webhook — нужен
+список других объектов; (в) Kyverno GeneratingPolicy; (г) MAP или Kyverno MutatingPolicy;
+(д) webhook или контроллер — нужен подсчёт по объектам (или квота на CR через
+`ResourceQuota` с `count/linkdapps.platform.example.com`, если хватает общего числа).
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Утром никто не может задеплоиться: `failed calling webhook ... x509: certificate has
 expired`. Действия по шагам?
@@ -1214,13 +1274,12 @@ server-side diff в ArgoCD, чтобы учитывались поля, кото
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Как устроена цепочка admission в Kubernetes?
 
 <details><summary>Ответ</summary>
 
 Аутентификация → авторизация → defaulting → mutating (последовательно) → схема →
-   validating (параллельно) → etcd; вебхуки не вызываются для своих конфигураций.
+validating (параллельно) → etcd; вебхуки не вызываются для своих конфигураций.
 
 </details>
 
@@ -1229,7 +1288,7 @@ server-side diff в ArgoCD, чтобы учитывались поля, кото
 <details><summary>Ответ</summary>
 
 VAP — если хватает CEL по объекту, namespace и параметрам: нет пода и точки отказа.
-   Webhook — если нужен внешний контекст или сложная логика.
+Webhook — если нужен внешний контекст или сложная логика.
 
 </details>
 
@@ -1238,7 +1297,7 @@ VAP — если хватает CEL по объекту, namespace и парам
 <details><summary>Ответ</summary>
 
 Мутации на CEL в API-сервере (GA 1.36): заменяет простые mutating webhooks — метки,
-   дефолты, securityContext.
+дефолты, securityContext.
 
 </details>
 
@@ -1247,8 +1306,8 @@ VAP — если хватает CEL по объекту, namespace и парам
 <details><summary>Ответ</summary>
 
 Зависит от `failurePolicy`: Fail — запросы отклоняются, Ignore — проверка пропускается.
-   Исключить kube-system и свой namespace, узкие правила, короткий таймаут, HA и PDB,
-   cert-manager, алерты по метрикам admission.
+Исключить kube-system и свой namespace, узкие правила, короткий таймаут, HA и PDB,
+cert-manager, алерты по метрикам admission.
 
 </details>
 
@@ -1257,7 +1316,7 @@ VAP — если хватает CEL по объекту, namespace и парам
 <details><summary>Ответ</summary>
 
 Удалить или ослабить конфигурацию вебхука (она сама под вебхуки не попадает), при GitOps —
-   сначала отключить selfHeal; починить; вернуть из git.
+сначала отключить selfHeal; починить; вернуть из git.
 
 </details>
 
@@ -1266,7 +1325,7 @@ VAP — если хватает CEL по объекту, namespace и парам
 <details><summary>Ответ</summary>
 
 PSA + VAP/MAP для простого, Kyverno для generate, отчётов и исключений; Gatekeeper —
-   если в компании уже Rego.
+если в компании уже Rego.
 
 </details>
 
@@ -1283,7 +1342,7 @@ Audit → отчёты → Warn → Deny, исключения через MR с 
 <details><summary>Ответ</summary>
 
 Понятные сообщения со ссылкой, предупреждения до запретов, дефолты мутацией вместо
-   отказов, метрики отказов и разбор обходов.
+отказов, метрики отказов и разбор обходов.
 
 </details>
 
@@ -1292,7 +1351,7 @@ Audit → отчёты → Warn → Deny, исключения через MR с 
 <details><summary>Ответ</summary>
 
 `kubectl apply --dry-run=server`, `kyverno apply`/`kyverno test`, `gator` для Gatekeeper,
-   unit-тесты вебхука.
+unit-тесты вебхука.
 
 </details>
 
@@ -1301,9 +1360,7 @@ Audit → отчёты → Warn → Deny, исключения через MR с 
 <details><summary>Ответ</summary>
 
 Пример: вебхук уникальности host — AdmissionReview, JSONPatch с экранированием, TLS
-    через cert-manager, `failurePolicy` и исключения, HA, тесты с фейковым API.
-
----
+через cert-manager, `failurePolicy` и исключения, HA, тесты с фейковым API.
 
 </details>
 

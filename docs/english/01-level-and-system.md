@@ -1,12 +1,12 @@
 ---
 title: "01. Уровень и система: как учить английский для IT"
-description: "Блок → Английский для IT → тема 01. Опирается на карту блока 00INDEX.md"
+description: "CEFR для IT, самооценка, система 20–30 мин/день, Anki, что переключить на английский, ИИ как репетитор"
 ---
 
 # 01. Уровень и система: как учить английский для IT
 
-> Блок → Английский для IT → тема 01. Опирается на карту блока [00_INDEX.md](/english/)
-> и на привычку учиться системно из [../../DevOps/SoftSkills/03_asking_learning.md](/softskills/03-asking-learning).
+> Блок → Английский для IT → тема 01. Опирается на карту блока [English](/english/)
+> и на привычку учиться системно из [Soft Skills: 03. Как спрашивать и учиться в команде](/softskills/03-asking-learning).
 > Здесь нет грамматики — здесь **система**, без которой грамматика не превращается в навык.
 >
 > **После темы ты умеешь:** честно оценить свой уровень по CEFR и по рабочим задачам;
@@ -19,7 +19,7 @@ description: "Блок → Английский для IT → тема 01. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
   ГДЕ Я СЕЙЧАС          КУДА ИДУ              КАК ИДУ КАЖДЫЙ ДЕНЬ (20–30 мин)
  ──────────────       ──────────────        ─────────────────────────────────────
  тест EF SET     ──►  рабочий B2       ──►  INPUT  10 мин  доки, доклады, подкасты
@@ -29,7 +29,8 @@ description: "Блок → Английский для IT → тема 01. Оп�
                                             ─────────────────────────────────────
                                             + погружение: ОС, IDE, доки, поиск — EN
                                             + раз в месяц: та же запись → сравнить
-```text
+```
+
 ---
 
 ## 1. Зачем DevOps-инженеру английский
@@ -75,12 +76,13 @@ description: "Блок → Английский для IT → тема 01. Оп�
 Четыре навыка (reading, listening, writing, speaking) растут с разной скоростью. Типичный
 профиль бэкендера после нескольких лет работы:
 
-```text
+```
  reading    ████████████░░░  B2   (годы доков и Stack Overflow)
  writing    ████████░░░░░░░  B1   (коммиты, короткие сообщения)
  listening  ███████░░░░░░░░  B1   (доклады — с субтитрами)
  speaking   █████░░░░░░░░░░  A2+  (почти не было практики)
-```text
+```
+
 Правило: **качай самый слабый навык из тех, что нужны на работе.** Если читаешь на B2,
 а говоришь на A2, ещё один месяц чтения даст меньше, чем месяц записей стендапа.
 
@@ -135,14 +137,15 @@ Cambridge English даёт ориентир в **guided learning hours** — ч�
 
 Язык держится на трёх опорах:
 
-```text
+```text:no-line-numbers
  INPUT (понимание)          OUTPUT (производство)          ПОВТОРЕНИЕ
  читаешь, слушаешь    ──►   пишешь, говоришь         ──►   свои слова в Anki
  чуть выше уровня           о своей работе                  по интервалам
  ───────────────────        ─────────────────────          ─────────────────
  без него нечего сказать    без него понимаешь,            без неё забываешь
                             но молчишь                     за неделю
-```text
+```
+
 Идея «понятного входа чуть выше твоего уровня» (comprehensible input, i+1) — из работ
 Стивена Крашена; идея, что без собственной речи и письма язык не становится активным, —
 из «гипотезы вывода» Мэрилл Суэйн. Для практики важно одно: **нужны обе половины.**
@@ -162,7 +165,7 @@ Cambridge English даёт ориентир в **guided learning hours** — ч�
 | Пн | Письмо: 5 предложений «что сделал вчера, что делаю сегодня» — это заготовка стендапа |
 | Вт | Речь: записать стендап на 1–2 минуты, переслушать |
 | Ср | Письмо: переписать на английском свой коммит, описание MR или сообщение из чата |
-| Чт | Речь: shadowing 10 минут (повторять за спикером, [05_speaking.md](/english/05-speaking)) |
+| Чт | Речь: shadowing 10 минут (повторять за спикером, [05. Речь: стендап, созвоны, переспрос, демо](/english/05-speaking)) |
 | Пт | Письмо: weekly review — 5 предложений «что узнал за неделю» + разбор ошибок |
 | Сб / Вс | Длинный input: доклад или подкаст 30–40 минут (прогулка, дорога) + **один разговор с живым человеком в неделю** (клуб, преподаватель, коллега) |
 
@@ -182,7 +185,7 @@ Cambridge English даёт ориентир в **guided learning hours** — ч�
 | Что | Где | Уровень | Как использовать |
 |-----|-----|---------|------------------|
 | Документация | kubernetes.io/docs, docs.docker.com, developer.hashicorp.com/terraform | B1+ | Один раздел в день, 3 слова в Anki |
-| Release notes, changelog | GitHub Releases инструментов, которыми пользуешься | B1+ | Перед каждым обновлением ([02_reading_docs.md](/english/02-reading-docs)) |
+| Release notes, changelog | GitHub Releases инструментов, которыми пользуешься | B1+ | Перед каждым обновлением ([02. Чтение документации, ошибок и issues](/english/02-reading-docs)) |
 | GitHub issues | Треды по ошибке, которую ищешь | B1 | Дочитывать до решения, выписывать фразы |
 | Туториалы | YouTube: TechWorld with Nana, Jeff Geerling | B1 | Английские субтитры → без субтитров |
 | Доклады | YouTube-канал CNCF (записи KubeCon + CloudNativeCon) | B1+ → B2 | Сначала с английскими субтитрами, потом без |
@@ -210,13 +213,13 @@ Output — то, чего обычно не хватает айтишнику: �
 
 | Где | Что писать или говорить по-английски |
 |-----|--------------------------------------|
-| Pet-проект linkd ([../../DevOps/Project/00_INDEX.md](/project/)) | Коммиты, описания MR, README, ADR — витрина для работодателя |
+| Pet-проект linkd ([Пет-проект](/project/)) | Коммиты, описания MR, README, ADR — витрина для работодателя |
 | Рабочий дневник | 5 предложений в день о том, что сделал, — готовый стендап |
 | Issues в open source | Вопрос или баг-репорт в репозиторий инструмента |
 | Записи на телефон | Стендап, объяснение темы, «Tell me about yourself» |
 | Живые разговоры | Разговорный клуб, преподаватель, международный созвон на работе |
 
-Подробно — [04_writing.md](/english/04-writing) и [05_speaking.md](/english/05-speaking).
+Подробно — [04. Письмо: коммиты, MR, issues, чат, апдейты инцидентов](/english/04-writing) и [05. Речь: стендап, созвоны, переспрос, демо](/english/05-speaking).
 
 ---
 
@@ -242,16 +245,17 @@ Output — то, чего обычно не хватает айтишнику: �
    переделай их: другое предложение, картинка, пример из своей работы.
 
 🇬🇧 Примеры cloze-карточек:
-```text
-Front: If the new pods fail the readiness probe, &#123;&#123;c1::roll back&#125;&#125; the deployment.
+```
+Front: If the new pods fail the readiness probe, {{c1::roll back}} the deployment.
 Back:  roll back (глагол) — откатить; rollback (сущ.) — откат
 
-Front: This field is &#123;&#123;c1::immutable&#125;&#125;: you must delete and recreate the resource.
+Front: This field is {{c1::immutable}}: you must delete and recreate the resource.
 Back:  immutable — неизменяемый; нельзя поменять после создания
 
-Front: We need to &#123;&#123;c1::mitigate&#125;&#125; the impact first and find the root cause later.
+Front: We need to {{c1::mitigate}} the impact first and find the root cause later.
 Back:  mitigate — смягчить (последствия), не «устранить»
-```text
+```
+
 ---
 
 ## 8. Что переключить на английский
@@ -273,7 +277,8 @@ Back:  mitigate — смягчить (последствия), не «устра
 sudo locale-gen en_US.UTF-8
 sudo localectl set-locale LANG=en_US.UTF-8   # после перелогина всё на английском
 LC_ALL=C ls /nope                            # ls: cannot access '/nope': No such file or directory
-```text
+```
+
 > 💡 Переключай по одному пункту в неделю, если всё сразу мешает работать.
 > Сам волт остаётся на русском — переводить конспекты не нужно.
 
@@ -283,12 +288,13 @@ LC_ALL=C ls /nope                            # ls: cannot access '/nope': No suc
 
 Если ИИ пишет за тебя, ты тренируешь навык копирования. Правильный порядок:
 
-```text
+```text:no-line-numbers
  1. пишешь САМ  ──►  2. просишь проверить и ОБЪЯСНИТЬ  ──►  3. переписываешь САМ
                           (не переписывать целиком)             4. ошибку → в Anki
-```text
+```
+
 🇬🇧 Промпты, которые работают:
-```text
+```
 Here is my message to a colleague. Point out grammar mistakes and unnatural phrases.
 Explain each one briefly, but don't rewrite the whole text.
 
@@ -297,7 +303,8 @@ After each answer, correct my English and suggest one more natural phrase.
 
 Explain the difference between "I've deployed" and "I deployed" with three examples
 from DevOps work. Then give me five sentences to fill in.
-```text
+```
+
 | Риск | Что делать |
 |------|------------|
 | Текст становится «гладким», но чужим: *I hope this message finds you well*, *delve into* | Оставлять свои простые фразы, если они верны |
@@ -315,7 +322,8 @@ from DevOps work. Then give me five sentences to fill in.
 |------------|-----|-------------------------|-------------------------|---------------------------|
 | 2026-09-28 | 25  | k8s docs: Services      | 5 sentences about work  | expose, selector, endpoint |
 | 2026-09-29 | 20  | KubeCon talk, 10 min    | standup recording 1:40  | toil, blast radius        |
-```text
+```
+
 **Раз в месяц** — те же замеры, что в первый день:
 
 | Метрика | Как мерить | Хороший знак через месяц |
@@ -357,7 +365,7 @@ from DevOps work. Then give me five sentences to fill in.
   клиентами — тоже.
 - Экзамены CKA и AWS сдают на английском — это ещё и тренировка чтения под таймером.
 - Pet-проект с README и коммитами на английском — доказательство уровня для работодателя
-  раньше, чем ты откроешь рот на собесе ([../../DevOps/Project/10_readme_resume.md](/project/10-readme-resume)).
+  раньше, чем ты откроешь рот на собесе ([Пет-проект: 10. Оформление: README, ADR, резюме, рассказ на собесе](/project/10-readme-resume)).
 - Английская локаль на серверах — стандарт: ошибки в логах и мониторинге всё равно будут
   на английском.
 
@@ -393,13 +401,17 @@ from DevOps work. Then give me five sentences to fill in.
 9. ИИ — репетитор, который проверяет и объясняет, а не автор твоих текстов.
 10. Без точки отсчёта прогресс не виден: запись и замеры в первый день обязательны.
 
-➡️ Дальше: [02_reading_docs.md](/english/02-reading-docs) · задачи: 01_level_and_system_tasks.md
+---
 
+## Задачи
+
+> Стенда нет: практика — на своём уровне, своих текстах и своём ноутбуке. Английские
+> тексты помечены 🇬🇧; отвечай на них тоже по-английски. Ответы пиши в отдельный файл —
+> через месяц его интересно перечитать.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Назови пять мест в работе DevOps-инженера, где без английского не обойтись.
 Почему перевод документации — плохая замена оригиналу?
@@ -450,6 +462,8 @@ notes без переводчика; MR и issue понятны с первог�
 <details><summary>Ответ</summary>
 
 По ориентиру Cambridge (B1 ~350–400, B2 ~500–600 часов с нуля) — около
+150–250 часов. 25 минут в день — ~150 часов в год, то есть 9–15 месяцев с учётом чтения
+на работе.
 
 </details>
 
@@ -497,7 +511,7 @@ Input (чтение и слушание), output (письмо и речь), п�
 
 <details><summary>Ответ</summary>
 
-Карточка с пропуском в предложении. 🇬🇧 *This field is &#123;&#123;c1::immutable&#125;&#125;:
+Карточка с пропуском в предложении. 🇬🇧 *This field is <span v-pre>{{</span>c1::immutable<span v-pre>}}</span>:
 you must delete and recreate the resource.* При повторении видишь предложение
 с пропуском и вспоминаешь слово — сразу в контексте.
 
@@ -550,7 +564,6 @@ input: чтение доков создаёт ощущение «английс�
 ---
 
 ### Блок B. «Что тут не так»
-
 
 Найди ошибки в английском тексте (а где английский верен — в подходе) и перепиши правильно.
 
@@ -635,6 +648,8 @@ text and explain them briefly. Don't rewrite the whole text.*
 <details><summary>Ответ</summary>
 
 ⚠️ Английский верен, подход — нет: 50 слов в день без контекста — через месяц
+1500 карточек на повторение и почти ничего в речи. ✓ *Every day I add three to five words
+from the docs I read to Anki, in full sentences.*
 
 </details>
 
@@ -671,95 +686,124 @@ are in English.*
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Точка отсчёта
+#### C1. 🔑 Точка отсчёта
 Пройди EF SET (efset.org), запиши результат. Запиши на телефон 2 минуты без подготовки:
 🇬🇧 *Tell me about your current project.* Напиши 5–7 предложений о своей неделе. Засеки
 время чтения первого экрана незнакомой страницы доки и число обращений к переводчику.
 Всё сохрани с датой — через 30 дней повторишь.
 
-### C2. 🔑 Can-do самооценка
+<details><summary>Ответ</summary>
+
+Главное — не результат, а то, что он **сохранён с датой**. Типичная ошибка —
+«подготовиться» к записи: точка отсчёта должна быть без подготовки, иначе через месяц
+сравнивать не с чем.
+
+</details>
+
+#### C2. 🔑 Can-do самооценка
 Заполни чек-лист из раздела 3 конспекта. Для каждого «умею» — доказательство (что именно
 читал, писал или говорил за последний месяц). Определи самый слабый навык из нужных
 на работе.
 
-### C3. 🔑 Колода Anki
+<details><summary>Ответ</summary>
+
+Если доказательства нет — ставь «не умею», даже если «вроде могу». Обычно
+у бэкендера выходит: reading B2, writing B1, listening B1, speaking A2–B1.
+
+</details>
+
+#### C3. 🔑 Колода Anki
 Установи Anki, заведи колоду `DevOps English`. Прочитай страницу Kubernetes → Concepts →
 Workloads → Deployments и сделай 15 cloze-карточек: предложения из текста, сочетания,
 а не отдельные слова. Включи FSRS в настройках колоды.
 
-### C4. Английская локаль
+<details><summary>Ответ</summary>
+
+Проверка качества колоды: в каждой карточке есть предложение с контекстом,
+половина — сочетания (*scale down a deployment*, *roll out a new version*, *pause
+a rollout*), нет карточек «слово — перевод».
+
+</details>
+
+#### C4. Английская локаль
 Переключи локаль ноутбука или учебной ВМ на `en_US.UTF-8`. Собери три сообщения об ошибках
 (`ls` несуществующего файла, `apt` без sudo, `systemctl status` несуществующего юнита),
 найди каждое в поиске дословно.
 
-### C5. План на 30 дней по-английски
+<details><summary>Ответ</summary>
+
+Ожидаемые сообщения: `ls: cannot access '/nope': No such file or directory`;
+`E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)`;
+`Unit foo.service could not be found.` Поиск по английскому тексту сразу выводит на
+Stack Overflow и Ask Ubuntu.
+
+</details>
+
+#### C5. План на 30 дней по-английски
 Напиши 5–7 предложений на английском: какой у тебя уровень, какая цель, что будешь делать
 каждый день, как измеришь результат.
 
-### C6. Перевод
+<details><summary>Ответ</summary>
+
+🇬🇧 Пример:
+```
+My English is around B1: I can read documentation, but speaking is my weakest skill.
+My goal for the next 30 days is to give a two-minute standup without notes.
+Every day I'll spend 25 minutes on English: ten minutes of reading docs,
+five minutes of Anki, and ten minutes of writing or speaking.
+I'll record myself twice a week and join a speaking club on Saturdays.
+At the end of the month, I'll record the same topic again and compare.
+```
+
+</details>
+
+#### C6. Перевод
 Переведи на английский:
-**1.** Я учу английский уже три года, но говорю всё ещё медленно.
+1. Я учу английский уже три года, но говорю всё ещё медленно.
+2. Я читаю документацию без переводчика, но с докладами пока трудно.
+3. Вчера я посмотрел доклад про Argo CD и выписал пять новых слов.
+4. К концу года я хочу спокойно проходить собеседования на английском.
+5. Не могли бы вы говорить чуть медленнее?
+6. Я не уверен, что правильно понял вопрос.
 
 <details><summary>Ответ</summary>
 
-*I've been learning English for three years, but I still speak slowly.*
-
-</details>
-
-**2.** Я читаю документацию без переводчика, но с докладами пока трудно.
-
-<details><summary>Ответ</summary>
-
-*I can read documentation without a translator, but talks are still hard for me.*
-
-</details>
-
-**3.** Вчера я посмотрел доклад про Argo CD и выписал пять новых слов.
-
-<details><summary>Ответ</summary>
-
-*Yesterday I watched a talk about Argo CD and wrote down five new words.*
-
-</details>
-
-**4.** К концу года я хочу спокойно проходить собеседования на английском.
-
-<details><summary>Ответ</summary>
-
-*By the end of the year, I want to feel comfortable in job interviews in English.*
+🇬🇧
+1. *I've been learning English for three years, but I still speak slowly.*
+2. *I can read documentation without a translator, but talks are still hard for me.*
+3. *Yesterday I watched a talk about Argo CD and wrote down five new words.*
+4. *By the end of the year, I want to feel comfortable in job interviews in English.*
    (*pass an interview* понятно, но значит «успешно пройти», а не «участвовать».)
+5. *Could you speak a bit more slowly, please?*
+6. *I'm not sure I understood the question correctly.*
 
 </details>
 
-**5.** Не могли бы вы говорить чуть медленнее?
-
-<details><summary>Ответ</summary>
-
-*Could you speak a bit more slowly, please?*
-
-</details>
-
-**6.** Я не уверен, что правильно понял вопрос.
-
-<details><summary>Ответ</summary>
-
-*I'm not sure I understood the question correctly.*
-
-</details>
-
-### C7. Журнал
+#### C7. Журнал
 Заведи `english_log.md` по шаблону из раздела 10 и заполняй 7 дней подряд.
 В конце недели посчитай минуты и дни.
 
-### C8. ИИ как репетитор
+<details><summary>Ответ</summary>
+
+Если за неделю меньше 5 дней — система слишком тяжёлая: урежь до минимума
+(10 минут в день) и наращивай, а не бросай.
+
+</details>
+
+#### C8. ИИ как репетитор
 Напиши 5 предложений о своём рабочем дне. Отправь ИИ первым промптом из раздела 9.
 Выпиши три ошибки с объяснениями, перепиши текст сам, ошибки — в Anki.
+
+<details><summary>Ответ</summary>
+
+Типичные первые ошибки: пропущенные артикли, Present Perfect с *yesterday*,
+*informations* и *feedbacks*. Каждая — отдельная карточка с правильным предложением.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 Рабочие ситуации, где нужен английский. Ответы — с готовым текстом на английском.
 
@@ -771,10 +815,11 @@ in the pipeline? It's blocking the release. ETA?* Ты не знаешь, что
 *Flaky test* — нестабильный тест, то падает, то проходит без изменений в коде.
 *ETA* (estimated time of arrival) — «когда будет готово». Незнакомое слово — в словарь,
 а не молчать. 🇬🇧 Ответ:
-```text
+```
 Sure, I'm looking into it now. I'll post an update here in 30 minutes.
 Just to make sure: do you mean the integration test in the `test` stage?
-```text
+```
+
 </details>
 
 **D2.** Завтра первый созвон с зарубежной командой. Ты боишься, что не поймёшь половину.
@@ -786,11 +831,12 @@ Just to make sure: do you mean the integration test in the `test` stage?
 части и фразы для переспроса (*Could you repeat the last part?*, *Just to make sure
 I understand…*). Во время: переспрашивать, а не кивать. После — итог в чат:
 🇬🇧
-```text
+```
 Thanks for the call! To summarize: we agreed to move the staging cluster to the new
 node pool next week. I'll prepare the migration plan by Thursday.
 Please correct me if I missed anything.
-```text
+```
+
 </details>
 
 **D3.** В терминале ошибка: `ls: невозможно получить доступ к '/data': Нет такого файла
@@ -810,11 +856,12 @@ Please correct me if I missed anything.
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Heads-up: planned maintenance on the staging cluster tomorrow, Oct 1, 10:00–10:30 UTC.
 Staging will be unavailable for up to 30 minutes. Production is not affected.
 No action is needed from you. If you have questions, reply in this thread.
-```text
+```
+
 </details>
 
 **D5.** Мейнтейнер open-source проекта оставил под твоим PR: 🇬🇧 *Could you rebase on main
@@ -824,10 +871,11 @@ and squash the commits? Also, nit: typo in the docstring.*
 
 *Rebase on main* — перенести коммиты поверх свежего `main`; *squash* —
 объединить в один коммит; *nit* — мелкое необязательное замечание. 🇬🇧 Ответ:
-```text
+```
 Done: rebased on main, squashed into a single commit, and fixed the typo.
 Thanks for the review!
-```text
+```
+
 </details>
 
 **D6.** Коллега-иностранец пишет в личку 🇬🇧 *Hi! Do you have a minute?* — и ждёт.
@@ -836,10 +884,11 @@ Thanks for the review!
 <details><summary>Ответ</summary>
 
 Не молчать до 15:00 и не отвечать просто *Yes*. 🇬🇧
-```text
+```
 Hi! I'm in a meeting until 3 pm. Could you send me the details here?
 I'll get back to you right after.
-```text
+```
+
 </details>
 
 **D7.** На созвоне просят: 🇬🇧 *Could you share your screen and walk us through it?*
@@ -849,11 +898,12 @@ I'll get back to you right after.
 
 *Walk someone through something* — объяснить по шагам, показывая. Переспросить
 не стыдно. 🇬🇧
-```text
+```
 Sorry, what do you mean by "walk you through"? Should I explain the whole pipeline
 or just the deploy stage?
 — OK, let me share my screen. Can everyone see it?
-```text
+```
+
 </details>
 
 **D8.** Ты вставляешь в ИИ-ассистент лог с прода (с хостнеймами, IP и токеном
@@ -862,7 +912,7 @@ or just the deploy stage?
 <details><summary>Ответ</summary>
 
 ⚠️ Утечка: хостнеймы, IP и тем более токен уходят во внешний сервис. Токен —
-ротировать, если уже отправлен. Правильно: обезличить лог (`&lt;host&gt;`, `&lt;ip&gt;`, `&lt;token&gt;`),
+ротировать, если уже отправлен. Правильно: обезличить лог (`<host>`, `<ip>`, `<token>`),
 написать issue самому и просить только проверить английский.
 
 </details>
@@ -871,7 +921,6 @@ or just the deploy stage?
 
 ### Блок E. Вопросы с собеседования
 
-
 Ответь вслух по-английски, потом сравни с примерами.
 
 **1.** 🇬🇧 *How would you rate your English?*
@@ -879,9 +928,9 @@ or just the deploy stage?
 <details><summary>Ответ</summary>
 
 🇬🇧 *I'd say I'm around B2 in reading and B1+ in speaking. I read documentation
-   and GitHub issues in English every day. Speaking is slower, so I practice
-   regularly: I record my standups and attend a speaking club.*
-   — Честно и с доказательствами. Не начинай с *Sorry for my bad English*.
+and GitHub issues in English every day. Speaking is slower, so I practice
+regularly: I record my standups and attend a speaking club.*
+— Честно и с доказательствами. Не начинай с *Sorry for my bad English*.
 
 </details>
 
@@ -890,8 +939,8 @@ or just the deploy stage?
 <details><summary>Ответ</summary>
 
 🇬🇧 *Not yet in a formal way, but most of my daily work is in English: docs,
-   commits, and issues. In my pet project, all commits, READMEs, and ADRs are
-   in English.*
+commits, and issues. In my pet project, all commits, READMEs, and ADRs are
+in English.*
 
 </details>
 
@@ -900,7 +949,7 @@ or just the deploy stage?
 <details><summary>Ответ</summary>
 
 🇬🇧 *I read release notes before every upgrade, follow the Kubernetes Podcast
-   and KubeCon talks, and try new things in my home lab first.*
+and KubeCon talks, and try new things in my home lab first.*
 
 </details>
 
@@ -909,8 +958,8 @@ or just the deploy stage?
 <details><summary>Ответ</summary>
 
 🇬🇧 *I start with the official Quickstart, then read the Concepts section. Then
-   I build something small, break it on purpose, and write short notes on what
-   I learned.*
+I build something small, break it on purpose, and write short notes on what
+I learned.*
 
 </details>
 
@@ -919,7 +968,7 @@ or just the deploy stage?
 <details><summary>Ответ</summary>
 
 🇬🇧 *I'd ask them to repeat or rephrase it, and then confirm my understanding:
-   "Just to make sure, you mean…". After the call, I'd send a short summary in the chat.*
+"Just to make sure, you mean…". After the call, I'd send a short summary in the chat.*
 
 </details>
 
@@ -928,7 +977,7 @@ or just the deploy stage?
 <details><summary>Ответ</summary>
 
 🇬🇧 *Yes. I write MR descriptions and issues in English. I keep messages short:
-   the main point first, then the details and logs.*
+the main point first, then the details and logs.*
 
 </details>
 
@@ -936,9 +985,9 @@ or just the deploy stage?
 
 <details><summary>Ответ</summary>
 
-🇬🇧 *Recently I watched a KubeCon talk about &lt;topic&gt;. The main idea was &lt;one
-   sentence&gt;. After that, I tried &lt;what you did&gt; in my lab.* — только реальный доклад:
-   интервьюер спросит детали.
+🇬🇧 *Recently I watched a KubeCon talk about &lt;topic>. The main idea was &lt;one
+sentence>. After that, I tried &lt;what you did> in my lab.* — только реальный доклад:
+интервьюер спросит детали.
 
 </details>
 
@@ -947,10 +996,8 @@ or just the deploy stage?
 <details><summary>Ответ</summary>
 
 🇬🇧 *I want to work with modern infrastructure and learn from experienced
-   engineers. English is already my working language for docs and code, so
-   I'd like to use it every day with the team.*
-
----
+engineers. English is already my working language for docs and code, so
+I'd like to use it every day with the team.*
 
 </details>
 

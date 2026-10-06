@@ -1,6 +1,6 @@
 ---
 title: "03. Сервинг моделей: vLLM, llama.cpp, Ollama, KServe, холодный старт, метрики, автоскейлинг"
-description: "Блок → AI/MLOps-инфраструктура → тема 03. Самая частая задача девопса в ML —"
+description: "vLLM, Ollama/llama.cpp, Triton, KServe; хранение моделей, холодный старт, батчинг, метрики TTFT и tokens/s, автоскейлинг по очереди"
 ---
 
 # 03. Сервинг моделей: vLLM, llama.cpp, Ollama, KServe, холодный старт, метрики, автоскейлинг
@@ -21,7 +21,7 @@ description: "Блок → AI/MLOps-инфраструктура → тема 03
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  клиент (OpenAI SDK, curl)                                 модель: S3/MinIO, HF, OCI-образ
    │ POST /v1/chat/completions  (stream: SSE)                  │ init-контейнер / PVC-кэш / image volume
    ▼                                                           ▼
@@ -32,7 +32,8 @@ description: "Блок → AI/MLOps-инфраструктура → тема 03
  LLM-шлюз компании (ключи, лимиты, учёт) — тема 04        Prometheus ──► KEDA ──► реплики 0…N
                                                                         (по очереди, не по CPU)
  Над всем этим может стоять KServe: InferenceService = образ + модель + скейлинг + canary одним CRD
-```text
+```
+
 ---
 
 ## 1. Чем сервить: варианты
@@ -68,7 +69,8 @@ vLLM, llama.cpp, Ollama, SGLang, KServe и почти все облачные п
 curl -s http://llm:8080/v1/chat/completions -H "Content-Type: application/json" \
   -d '{"model":"qwen2.5-0.5b","messages":[{"role":"user","content":"Привет!"}],"max_tokens":50}' | jq .usage
 # {"prompt_tokens": 31, "completion_tokens": 12, "total_tokens": 43}
-```text
+```
+
 Что это даёт: приложение пишется **один раз** на OpenAI SDK, а бэкенд (провайдер, vLLM, llama.cpp)
 меняется заменой `base_url` — через шлюз ([04](/mlops/04-llm-gateway-rag)) и без релиза кода. Что проверить:
 - **имя модели** в запросе — `--served-model-name` у vLLM, `--alias` у llama.cpp: зафиксируй его,
@@ -107,7 +109,8 @@ initContainers:
 volumes:
   - name: models
     image: { reference: registry.example.com/models/qwen2.5-0.5b:1.0, pullPolicy: IfNotPresent }
-```text
+```
+
 > 💡 У `huggingface_hub` 2.0 (24.09.2026) удалена команда `huggingface-cli` — только `hf download`.
 > Старые скрипты init-контейнеров с `huggingface-cli download` сломаются при обновлении образа.
 
@@ -115,7 +118,7 @@ volumes:
 
 ## 4. ⭐ Холодный старт и как с ним бороться
 
-```text
+```text:no-line-numbers
  новый под на новой ноде (самый плохой случай):
    нода из пула (ВМ + драйвер GPU)   1–5 мин   ← тема 02 §4, §9
  + pull образа сервинга 8–15 ГБ      1–5 мин
@@ -123,7 +126,8 @@ volumes:
  + загрузка весов в память GPU/RAM   секунды–минуты
  + прогрев (CUDA graphs, компиляция) секунды–минуты
  = первый токен через 5–30 минут — порядок величины, меряй у себя
-```text
+```
+
 | Мера | Что срезает |
 |------|-------------|
 | Минимум реплик > 0 в рабочие часы (cron-триггер KEDA) | Весь холодный старт для пользователей |
@@ -149,8 +153,8 @@ livenessProbe:             # ⚠️ лёгкая и терпеливая: дли
   periodSeconds: 30
   timeoutSeconds: 10
   failureThreshold: 5
-```text
-У vLLM — те же `/health` и порт 8000. Основы проб — [../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources) §1–4.
+```
+У vLLM — те же `/health` и порт 8000. Основы проб — [Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources) §1–4.
 Без `startupProbe` liveness убьёт под на середине загрузки весов — и так по кругу (`CrashLoopBackOff`).
 
 ---
@@ -160,7 +164,7 @@ livenessProbe:             # ⚠️ лёгкая и терпеливая: дли
 Генерация идёт **токен за токеном**: каждый шаг — проход по всем весам модели. Узкое место —
 чтение весов из памяти, поэтому обработать за шаг 32 запроса почти так же дёшево, как один.
 
-```text
+```text:no-line-numbers
  статический батчинг:   [A A A A A A A A]  ждём, пока допишет самый длинный ответ,
                         [B B B . . . . .]  освободившиеся места простаивают,
                         [C C C C C . . .]  новые запросы ждут следующего батча
@@ -169,7 +173,8 @@ livenessProbe:             # ⚠️ лёгкая и терпеливая: дли
                         [A A A A A A A A]
                         [B B B D D D D E]   ← D и E зашли, как только освободилось место
                         [C C C C C F F F]
-```text
+```
+
 | Сервер | Параллелизм | Что крутить |
 |--------|-------------|-------------|
 | vLLM | Continuous batching + PagedAttention (KV-кэш блоками, без фрагментации) | `--max-num-seqs`, `--max-model-len`, `--gpu-memory-utilization` |
@@ -225,10 +230,11 @@ livenessProbe:             # ⚠️ лёгкая и терпеливая: дли
 histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))   # TTFT p95
 sum(rate(vllm:generation_tokens_total[5m]))                                                 # токенов/с на сервис
 sum(vllm:num_requests_waiting)                                                              # очередь
-```text
+```
+
 SLO формулируют в этих терминах (пример, не стандарт): «TTFT p95 < 2 с, ITL p95 < 100 мс» —
-[../SRE/02_sli_slo_error_budget.md](/sre/02-sli-slo-error-budget). Стоимость ответа =
-GPU-секунды (или токены провайдера) на запрос — [../FinOps/01_finops_intro.md](/finops/01-finops-intro) §4.
+[SRE: 02. SLI, SLO и error budget](/sre/02-sli-slo-error-budget). Стоимость ответа =
+GPU-секунды (или токены провайдера) на запрос — [FinOps: 01. Что такое FinOps и как устроены деньги в облаке](/finops/01-finops-intro) §4.
 
 ---
 
@@ -258,7 +264,8 @@ spec:
         query: sum(llamacpp:requests_deferred{namespace="llm"})       # для vLLM — vllm:num_requests_waiting
         threshold: "2"                 # 2 ждущих запроса на реплику
         activationThreshold: "0"
-```text
+```
+
 | Scale-to-zero | Когда да | Когда нет |
 |---------------|----------|-----------|
 | ✅ | Батч-инференс из очереди, dev/stage, редкие внутренние инструменты | — |
@@ -267,7 +274,7 @@ spec:
 Для HTTP со scale-to-zero нужен буфер запросов: **KEDA HTTP add-on** (v0.16.0, статус beta) или
 очередь перед моделью. В Kubernetes 1.37 **HPA умеет scale-to-zero** (beta, включено по умолчанию,
 только с object/external-метриками) — но буфера оно тоже не даёт. На стенде блока (1.36) — KEDA.
-Полная лаба «скейлинг по очереди и засыпание» — лаба 2 в [07_practice_labs.md](/mlops/07-practice-labs).
+Полная лаба «скейлинг по очереди и засыпание» — лаба 2 в [07. Практика: шесть лаб без GPU](/mlops/07-practice-labs).
 
 ---
 
@@ -294,7 +301,8 @@ spec:
   rules:
     - backendRefs:
         - { group: inference.networking.k8s.io, kind: InferencePool, name: qwen-pool }   # вместо Service
-```text
+```
+
 > 💡 На одной-двух репликах разницы не заметишь; Inference Extension окупается на десятках реплик
 > GPU-сервинга. На стенде блока — обычный HTTPRoute → Service.
 
@@ -316,7 +324,8 @@ spec:
         requests: { cpu: "1", memory: 4Gi, nvidia.com/gpu: "1" }
         limits:   { cpu: "2", memory: 6Gi, nvidia.com/gpu: "1" }
 # OpenAI API: http://qwen-llm.kserve-test/openai/v1/chat/completions
-```text
+```
+
 KServe берёт на себя: storage initializer (скачивание по `storageUri`), Deployment и Service, маршрут,
 canary (`canaryTrafficPercent`), автоскейлинг (в т.ч. KEDA). Для GenAI документация рекомендует режим
 **Standard** (без Knative). Для распределённого инференса — отдельный CRD `LLMInferenceService`
@@ -331,14 +340,15 @@ canary (`canaryTrafficPercent`), автоскейлинг (в т.ч. KEDA). Дл
 **Цель:** llama.cpp с `qwen2.5:0.5b` (GGUF Q4_K_M, 491 МБ) в kind: PVC-кэш, init-контейнер, пробы,
 HTTPRoute через Envoy Gateway, вызов по OpenAI API, замер TTFT и tokens/s, метрики.
 Подготовка: кластер со стенда блока и Envoy Gateway + Gateway `web` в `infra` из
-[../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §7.2–7.3.
+[Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §7.2–7.3.
 
 ```bash
 kind create cluster --name ml --image kindest/node:v1.36.4
 helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.9.1 -n envoy-gateway-system --create-namespace
 # + GatewayClass eg и Gateway web (ns infra, allowedRoutes по метке gateway-access=true) — из 12_ingress §7.3
 kubectl create ns llm && kubectl label ns llm gateway-access=true
-```text
+```
+
 ```yaml
 # llm.yaml
 apiVersion: v1
@@ -388,7 +398,8 @@ spec:
   rules:
     - backendRefs: [{ name: llm, port: 80 }]
       timeouts: { request: 300s }       # длинные ответы не должны резаться
-```text
+```
+
 ```bash
 kubectl apply -f llm.yaml
 kubectl -n llm get pods -w                      # Init → Running, READY 0/1 → 1/1 (startupProbe)
@@ -403,7 +414,8 @@ curl -s -H "Host: llm.example.com" localhost:8888/v1/models | jq '.data[].id'   
 curl -s -H "Host: llm.example.com" localhost:8888/v1/chat/completions -H "Content-Type: application/json" \
   -d '{"model":"qwen2.5-0.5b","messages":[{"role":"user","content":"Что такое Kubernetes Service? 3 предложения."}]}' |
   jq '{answer: .choices[0].message.content, usage, prefill_ms: .timings.prompt_ms, tok_s: .timings.predicted_per_second}'
-```text
+```
+
 ```python
 # ttft.py — python -m venv .venv && . .venv/bin/activate && pip install openai
 # ходит прямо в Service: kubectl -n llm port-forward svc/llm 8081:80 &
@@ -421,15 +433,17 @@ for chunk in stream:
         chunks += 1                                   # 1 чанк ≈ 1 токен (приближённо)
 end = time.perf_counter()
 print(f"TTFT {first - t0:.2f} с | ~{chunks / (end - first):.1f} токен/с | всего {end - t0:.1f} с")
-```text
+```
+
 ```bash
 kubectl -n llm port-forward svc/llm 8081:80 &
 python ttft.py                                        # 1 запрос: базовые TTFT и tokens/s
 for i in $(seq 6); do python ttft.py & done; wait     # 6 запросов на 2 слота: TTFT растёт — очередь
 curl -s localhost:8081/metrics | grep -E "requests_(deferred|processing)|tokens_predicted_total|predicted_tokens_seconds"
-```text
+```
+
 **Шаг 2 — метрики в Prometheus.** С kube-prometheus-stack
-([../Left/02_Monitoring/11_long_term_and_operator.md](/monitoring/11-long-term-and-operator) §7)
+([Мониторинг: 11. Долгое хранение и Operator](/monitoring/11-long-term-and-operator) §7)
 создай ServiceMonitor на Service `llm` (порт `http`, путь `/metrics`, метка `release: prometheus` — §9 той
 темы) и построй в Grafana `rate(llamacpp:tokens_predicted_total[1m])` и `llamacpp:requests_deferred`.
 
@@ -476,7 +490,7 @@ curl -s localhost:8081/metrics | grep -E "requests_(deferred|processing)|tokens_
 
 | Хочу | Как |
 |------|-----|
-| LLM на GPU в проде | vLLM `vllm serve &lt;model&gt; --served-model-name X`, порт 8000, `/health`, `/metrics` |
+| LLM на GPU в проде | vLLM `vllm serve <model> --served-model-name X`, порт 8000, `/health`, `/metrics` |
 | LLM на CPU / стенд | `llama-server -m model.gguf --alias X --host 0.0.0.0 -c 4096 -np 2 --metrics` (порт 8080) |
 | Вызвать любую модель | `POST /v1/chat/completions` с `model`, `messages`, `stream` |
 | Доставить модель | Init-контейнер из S3/MinIO на PVC; PVC-кэш; image volume / ModelCar `oci://` |
@@ -514,13 +528,16 @@ curl -s localhost:8081/metrics | grep -E "requests_(deferred|processing)|tokens_
 12. KServe: `InferenceService` с `storageUri` (`hf://`, `s3://`, `oci://`), OpenAI API по `/openai/v1/…`,
     canary и автоскейлинг; для распределённого — `LLMInferenceService`.
 
-➡️ Дальше: [04_llm_gateway_rag.md](/mlops/04-llm-gateway-rag) · Лабы: [07_practice_labs.md](/mlops/07-practice-labs) · Задачи: 03_model_serving_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«Чем сервите LLM?»*, *«Что такое TTFT?»*, *«Как бороться с холодным стартом?»*,
+> *«По какой метрике скейлить инференс?»* — важно говорить метриками и цифрами, а не «поставили vLLM».
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Какие серверы моделей ты знаешь и когда какой выбрать: vLLM, SGLang, llama.cpp, Ollama, Triton, KServe?
 
@@ -642,6 +659,7 @@ PVC-кэш или image volume, быстрое хранилище рядом, м
 <details><summary>Ответ</summary>
 
 `2 × слои × KV-головы × размер головы × байт × токены`. Для Llama-3.1-8B (32 слоя, 8 KV-голов,
+128, FP16): 128 КиБ на токен → ~1 ГиБ на запрос с 8K.
 
 </details>
 
@@ -760,180 +778,234 @@ RWO-том монтируется только на одной ноде: при 
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```yaml
 # B1 — под vLLM с моделью 15 ГБ, загрузка ~4 минуты
-```text
-```text:no-line-numbers
 livenessProbe: { httpGet: { path: /health, port: 8000 }, initialDelaySeconds: 30, periodSeconds: 10, failureThreshold: 3 }
-```text
-```text:no-line-numbers
 # startupProbe нет
-```text
+```
 Вопрос: что будет с подом?
 
-```text:no-line-numbers
+```yaml
 # B2 — Ollama в проде
-```text
-```text:no-line-numbers
 env: []            # всё по умолчанию
-```text
-```text:no-line-numbers
 # пришло 20 одновременных запросов
-```text
+```
 Вопрос: что увидят пользователи?
 
-```text:no-line-numbers
+```yaml
 # B3 — KEDA для llama.cpp
-```text
-```text:no-line-numbers
 triggers:
-```text
-```text:no-line-numbers
   - type: cpu
-```text
-```text:no-line-numbers
     metadata: { type: Utilization, value: "70" }
-```text
-```text:no-line-numbers
 # реплика: -t 4, requests cpu 4
-```text
+```
 Вопрос: как будет вести себя скейлинг?
 
-```text:no-line-numbers
+```yaml
 # B4 — чат-бот поддержки
-```text
-```text:no-line-numbers
 minReplicaCount: 0
-```text
-```text:no-line-numbers
 cooldownPeriod: 300
-```text
-```text:no-line-numbers
 # ночью запросов нет; первый клиент в 8:55
-```text
+```
 Вопрос: что увидит первый клиент? А если это батч-инференс из очереди?
 
-```text:no-line-numbers
+```text
 # B5 — vLLM на GPU 24 ГБ, модель 8B FP16 (~16 ГБ), --gpu-memory-utilization по умолчанию
-```text
-```text:no-line-numbers
 # на ту же GPU через time-slicing ставят второй под с моделью эмбеддингов на 1 ГБ
-```text
+```
 Вопрос: что будет?
 
-```text:no-line-numbers
+```yaml
 # B6
-```text
-```text:no-line-numbers
 spec:
-```text
-```text:no-line-numbers
   replicas: 2
-```text
-```text:no-line-numbers
   strategy: { type: RollingUpdate }
-```text
-```text:no-line-numbers
   # volumes: PVC models, accessModes: [ReadWriteOnce]
-```text
+```
 Вопрос: что будет при выкатке новой версии, если поды на разных нодах?
 
-```text:no-line-numbers
-# B7 — HTTPRoute без timeouts, у Envoy Gateway таймаут по умолчанию, ответ модели стримится 90 секунд
 ```text
+# B7 — HTTPRoute без timeouts, у Envoy Gateway таймаут по умолчанию, ответ модели стримится 90 секунд
+```
 Вопрос: чего ожидать и что проверить?
 
-```text:no-line-numbers
+```bash
 # B8 — init-контейнер на базе образа с huggingface_hub 2.0
-```text
-```text:no-line-numbers
 huggingface-cli download Qwen/Qwen2.5-7B-Instruct --local-dir /models
-```text
+```
 Вопрос: что произойдёт?
 
-```text:no-line-numbers
+```text
 # B9 — llama-server -c 8192 -np 4
-```text
-```text:no-line-numbers
 Пользователь отправляет промпт на 3 000 токенов.
-```text
+```
 Вопрос: влезет ли запрос? Почему?
 
-```text:no-line-numbers
+```text
 # B10 — модель в S3 лежит по пути s3://models/qwen/latest/model.gguf, init-контейнер качает её при каждом старте
-```text
-```text:no-line-numbers
 Вчера DS перезалил «latest» новой версией.
-```text
+```
 Вопрос: что будет в кластере?
 
-```text:no-line-numbers
-# B11 — 8 реплик vLLM за обычным Service, запросы от 20 до 20 000 токенов
 ```text
+# B11 — 8 реплик vLLM за обычным Service, запросы от 20 до 20 000 токенов
+```
 Вопрос: как распределится нагрузка и что улучшит Inference Extension?
 
-```text:no-line-numbers
-# B12 — KServe ModelCar, storageUri: oci://registry.example.com/models/qwen:latest
 ```text
+# B12 — KServe ModelCar, storageUri: oci://registry.example.com/models/qwen:latest
+```
 Вопрос: что не так с тегом?
+
+<details><summary>Ответы</summary>
+
+**B1.** Через ~60 секунд после старта liveness начнёт падать (сервер ещё грузит модель), kubelet перезапустит
+контейнер, загрузка начнётся заново — бесконечный `CrashLoopBackOff`. Нужна startupProbe.
+
+**B2.** Ollama по умолчанию обрабатывает 1 запрос на модель одновременно: остальные 19 ждут в очереди,
+TTFT последних — десятки секунд или минуты; при переполнении очереди — 503. Метрик для диагностики нет.
+
+**B3.** Один запрос загружает все 4 потока → CPU ~100% → KEDA/HPA поднимет реплики даже при одном
+пользователе и не опустит их, пока идут запросы; реальная очередь не видна. Нужен триггер по
+`llamacpp:requests_deferred`.
+
+**B4.** Утром KEDA увидит запрос только через очередь/метрику, поднимет под, модель загрузится за минуты:
+первый клиент получит таймаут или ждёт минуты (у Service нет буфера). Для батча из очереди это нормально —
+задачи подождут.
+
+**B5.** vLLM по умолчанию резервирует 92% памяти GPU (~22 ГБ), второму поду остаётся ~2 ГБ минус
+накладные расходы — модель эмбеддингов может упасть с CUDA OOM (изоляции памяти при time-slicing нет).
+Уменьшить `--gpu-memory-utilization`, MIG или разные GPU.
+
+**B6.** Новый под на другой ноде зависнет в `ContainerCreating` (Multi-Attach error): том занят старым
+подом, а старый не удалится, пока новый не станет Ready. Выкатка встанет. Recreate, RWX или image volume/emptyDir.
+
+**B7.** Если таймаут маршрута/прокси меньше длительности потока, ответ оборвётся (504 или обрезанный поток).
+Проверить `timeouts` в HTTPRoute, политики таймаутов Envoy Gateway, таймауты клиента и LLM-шлюза.
+
+**B8.** В huggingface_hub 2.0 `huggingface-cli` удалён — «command not found», init-контейнер упадёт,
+под не стартует. Использовать `hf download` и пинить версию образа.
+
+**B9.** Контекст 8192 делится на 4 слота — ~2048 токенов на слот: промпт на 3 000 токенов не влезет,
+сервер вернёт ошибку превышения контекста. Уменьшить `-np` или увеличить `-c` (и память).
+
+**B10.** Новые и перезапущенные поды скачают новую версию, старые продолжат работать со старой: разные ответы
+от разных реплик, нет понятной версии и отката. Версия — в пути (`v3/`), иммутабельно.
+
+**B11.** Service распределяет соединения примерно поровну, не глядя на стоимость запросов: часть реплик
+перегружена длинными промптами, часть простаивает; хвост TTFT растёт. InferencePool + EPP выбирает реплику
+по очереди и KV-кэшу, учитывает общий префикс.
+
+**B12.** `latest` означает `imagePullPolicy: Always`: кэш образа на ноде не работает, каждый старт тянет модель
+заново, и непонятно, какая версия запущена. Нужен конкретный тег (или digest).
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Модель на CPU в kind
+#### C1. 🔑 Модель на CPU в kind
 Пройди мини-лабу: llama.cpp + `qwen2.5-0.5b` (Q4_K_M) в kind, PVC, init-контейнер, пробы, HTTPRoute.
 Запиши: время от `apply` до READY, размер модели на PVC, ответ `/v1/models`, `prefill_ms` и `tok_s` из `timings`.
 
-### C2. 🔑 TTFT и tokens/s под нагрузкой
+<details><summary>Ответ</summary>
+
+Ориентиры: первый старт — десятки секунд–минуты (скачивание ~491 МБ + загрузка), модель на PVC ~470 МиБ,
+`/v1/models` вернёт `qwen2.5-0.5b`; `tok_s` на 2 CPU — десятки токенов в секунду для 0,5B (зависит от CPU).
+
+</details>
+
+#### C2. 🔑 TTFT и tokens/s под нагрузкой
 Запусти `ttft.py` 1, 2, 4, 8 раз параллельно при `-np 2`. Составь таблицу: число запросов → TTFT (мин/макс),
 tokens/s на запрос, суммарные tokens/s. Повтори с `-np 4`. Объясни, что происходит с очередью.
 
-### C3. Метрики
+<details><summary>Ответ</summary>
+
+До `-np` запросов TTFT почти не растёт, дальше лишние запросы ждут освободившийся слот — TTFT растёт
+ступенькой, а суммарные tokens/s упираются в CPU. С `-np 4` очереди меньше, но tokens/s на запрос ниже:
+2 CPU делятся на больше слотов.
+
+</details>
+
+#### C3. Метрики
 Во время нагрузки из C2 снимай `/metrics` каждые 2 секунды (`watch`). Найди моменты, когда
 `llamacpp:requests_deferred > 0`. Заведи ServiceMonitor и построй в Grafana график очереди и
 `rate(llamacpp:tokens_predicted_total[1m])`.
 
-### C4. 🔑 Холодный старт
+#### C4. 🔑 Холодный старт
 Замерь три сценария: (а) рестарт пода с моделью на PVC; (б) под с пустым PVC (скачивание);
-(в) под на «новой» ноде (удали образ с ноды: `docker exec ml-control-plane crictl rmi &lt;образ&gt;` — имя ноды
+(в) под на «новой» ноде (удали образ с ноды: `docker exec ml-control-plane crictl rmi <образ>` — имя ноды
 посмотри в `kubectl get nodes`). Разложи время по этапам по событиям `kubectl describe pod`.
 
-### C5. Пробы
+<details><summary>Ответ</summary>
+
+(а) секунды: загрузка весов с локального тома; (б) + скачивание модели; (в) + pull образа
+llama.cpp. По событиям `Pulling/Pulled`, времени init-контейнера и переходу Ready.
+
+</details>
+
+#### C5. Пробы
 Убери `startupProbe` и поставь строгую liveness (`failureThreshold: 1`, `periodSeconds: 2`,
 `timeoutSeconds: 1`). Что происходит при загрузке модели? А при длинной генерации под нагрузкой?
 Верни нормальные пробы и объясни каждое число.
 
-### C6. 🔑 KEDA по очереди
+<details><summary>Ответ</summary>
+
+Без startupProbe строгая liveness убивает под во время загрузки модели; под нагрузкой — во время
+генерации, когда `/health` отвечает медленнее таймаута.
+
+</details>
+
+#### C6. 🔑 KEDA по очереди
 Поставь KEDA 2.21 и kube-prometheus-stack, примени ScaledObject из конспекта (`maxReplicaCount: 3`,
 `threshold: "2"`). Чтобы реплики могли жить на разных нодах, переведи модель на `emptyDir` + init-контейнер
 (или image volume). Дай нагрузку из C2 и посмотри, как растёт число реплик. Полный вариант — лаба 2 в
-[07_practice_labs.md](/mlops/07-practice-labs).
+[07. Практика: шесть лаб без GPU](/mlops/07-practice-labs).
 
-### C7. Ollama против llama.cpp
+#### C7. Ollama против llama.cpp
 Подними Ollama (`ollama/ollama:0.34.4`) с той же моделью (`qwen2.5:0.5b`) в том же кластере.
 Повтори C2 с `OLLAMA_NUM_PARALLEL=1` и `=2`. Сравни с llama.cpp и запиши, чего не хватает Ollama для прода.
 
-### C8. Модель как OCI-образ (со звёздочкой)
+<details><summary>Ответ</summary>
+
+При `NUM_PARALLEL=1` запросы строго по очереди, TTFT последних растёт линейно; метрик нет — очередь
+не видна; для прода не хватает параллелизма по умолчанию, метрик, управления версиями моделей.
+
+</details>
+
+#### C8. Модель как OCI-образ (со звёздочкой)
 Собери образ `FROM scratch` с `COPY model.gguf /model.gguf`, загрузи в kind (`kind load docker-image`)
 и смонтируй через `volumes[].image` (Kubernetes 1.36). Сравни время старта с PVC и с init-контейнером.
 Что будет, если тег образа — `latest`?
 
-### C9. Расчёт KV-кэша
+#### C9. Расчёт KV-кэша
 Найди в `config.json` модели Qwen2.5-7B-Instruct на Hugging Face `num_hidden_layers`, `num_key_value_heads`,
 `hidden_size`, `num_attention_heads` и посчитай KV-кэш на токен в FP16. Сколько одновременных запросов
 по 4K влезет на GPU 24 ГБ после весов в FP16? А в INT4?
 
-### C10. KServe на бумаге
+<details><summary>Ответ</summary>
+
+Qwen2.5-7B: 28 слоёв, 4 KV-головы, размер головы 128 (3584 / 28) — `2 × 28 × 4 × 128 × 2 ≈ 56 КиБ`
+на токен, ~224 МиБ на запрос 4K (сверь с `config.json`). FP16 веса ~15 ГБ → на 24 ГБ остаётся ~7 ГБ минус
+рантайм ≈ 25–30 запросов; с INT4 (~4,5 ГБ) — заметно больше.
+
+</details>
+
+#### C10. KServe на бумаге
 Напиши `InferenceService` для модели из MinIO (`s3://models/qwen/v3/`) с GPU, указанием `--max-model-len`,
 секретом доступа к S3 через ServiceAccount и canary на 10%. Какие объекты KServe создаст в кластере?
+
+<details><summary>Ответ</summary>
+
+KServe создаст Deployment (с storage initializer), Service, маршрут (HTTPRoute/Ingress в Standard
+режиме), при canary — две ревизии предиктора с разделением трафика, и объекты автоскейлинга.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После выкатки новой модели поды в `CrashLoopBackOff`, в логах — загрузка весов обрывается
 на середине без ошибки. Причина и исправление?
@@ -1039,13 +1111,12 @@ PVC-кэш (RWX) или image volume/ModelCar с кэшем на ноде, S3 в
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Чем вы бы сервили LLM на GPU и на CPU? Почему?
 
 <details><summary>Ответ</summary>
 
 GPU — vLLM (метрики, continuous batching, OpenAI API, экосистема), CPU — llama.cpp (GGUF, мало памяти,
-   `/metrics`); Ollama — только dev.
+`/metrics`); Ollama — только dev.
 
 </details>
 
@@ -1054,7 +1125,7 @@ GPU — vLLM (метрики, continuous batching, OpenAI API, экосисте�
 <details><summary>Ответ</summary>
 
 Единый контракт: приложение пишет под OpenAI SDK, инфраструктура меняет бэкенд за шлюзом; фиксируем имя
-   модели, аутентификацию и таймауты.
+модели, аутентификацию и таймауты.
 
 </details>
 
@@ -1063,7 +1134,7 @@ GPU — vLLM (метрики, continuous batching, OpenAI API, экосисте�
 <details><summary>Ответ</summary>
 
 S3/MinIO с версией в пути, реестр моделей (тема 05); доставка — init-контейнер, PVC-кэш, OCI-артефакт
-   (ModelCar, image volume); не в образе.
+(ModelCar, image volume); не в образе.
 
 </details>
 
@@ -1072,7 +1143,7 @@ S3/MinIO с версией в пути, реестр моделей (тема 05
 <details><summary>Ответ</summary>
 
 Тёплые реплики и расписание, предзагрузка образов и моделей, быстрое хранилище, образ ноды с драйвером,
-   меньшая модель, startupProbe.
+меньшая модель, startupProbe.
 
 </details>
 
@@ -1081,7 +1152,7 @@ S3/MinIO с версией в пути, реестр моделей (тема 05
 <details><summary>Ответ</summary>
 
 Continuous batching — запросы входят и выходят из батча на каждом шаге; KV-кэш — память под контекст
-   каждого запроса, ограничивает число одновременных запросов.
+каждого запроса, ограничивает число одновременных запросов.
 
 </details>
 
@@ -1090,7 +1161,7 @@ Continuous batching — запросы входят и выходят из ба�
 <details><summary>Ответ</summary>
 
 TTFT, ITL, E2E, tokens/s, очередь, KV-кэш, загрузка GPU, стоимость ответа; TTFT — время до первого токена
-   (очередь + prefill).
+(очередь + prefill).
 
 </details>
 
@@ -1099,7 +1170,7 @@ TTFT, ITL, E2E, tokens/s, очередь, KV-кэш, загрузка GPU, ст�
 <details><summary>Ответ</summary>
 
 KEDA по очереди из Prometheus (`num_requests_waiting`), плюс задержка; CPU не отражает нагрузку на GPU
-   и насыщен уже одним запросом на CPU-сервинге.
+и насыщен уже одним запросом на CPU-сервинге.
 
 </details>
 
@@ -1116,7 +1187,7 @@ KEDA по очереди из Prometheus (`num_requests_waiting`), плюс за
 <details><summary>Ответ</summary>
 
 Обычный Service — round-robin, плох для разнородных запросов; Gateway API Inference Extension
-   (InferencePool + EPP) — по очереди и KV-кэшу; на малых масштабах хватает Service.
+(InferencePool + EPP) — по очереди и KV-кэшу; на малых масштабах хватает Service.
 
 </details>
 
@@ -1125,9 +1196,7 @@ KEDA по очереди из Prometheus (`num_requests_waiting`), плюс за
 <details><summary>Ответ</summary>
 
 Модель одним CRD: скачивание по `storageUri`, стандартные рантаймы, canary, автоскейлинг, OpenAI API,
-    единая модель эксплуатации для многих команд.
-
----
+единая модель эксплуатации для многих команд.
 
 </details>
 

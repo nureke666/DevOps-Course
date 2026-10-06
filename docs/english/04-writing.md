@@ -1,14 +1,14 @@
 ---
 title: "04. Письмо: коммиты, MR, issues, чат, апдейты инцидентов"
-description: "Блок → Английский для IT → тема 04. Опирается на ../../DevOps/SoftSkills/02writtencommunication.md"
+description: "Коммиты, MR, ответы на ревью, issue, чат, апдейт инцидента, письма; артикли, Present Perfect, тон"
 ---
 
 # 04. Письмо: коммиты, MR, issues, чат, апдейты инцидентов
 
-> Блок → Английский для IT → тема 04. Опирается на [../../DevOps/SoftSkills/02_written_communication.md](/softskills/02-written-communication)
-> (BLUF, сообщения в чат, баг-репорты — там по существу), [../Git/11_collaboration.md](/git/11-collaboration)
-> (описание MR, Conventional Commits), [../../DevOps/SRE/04_incident_management.md](/sre/04-incident-management)
-> (апдейты инцидентов) и лексику из [03_vocabulary.md](/english/03-vocabulary). Здесь не повторяем,
+> Блок → Английский для IT → тема 04. Опирается на [Soft Skills: 02. Письменная коммуникация](/softskills/02-written-communication)
+> (BLUF, сообщения в чат, баг-репорты — там по существу), [Git: 11. Командная работа](/git/11-collaboration)
+> (описание MR, Conventional Commits), [SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management)
+> (апдейты инцидентов) и лексику из [03. Лексика: глоссарий DevOps, фразовые глаголы, ложные друзья, произношение](/english/03-vocabulary). Здесь не повторяем,
 > **что** писать, — здесь **как это звучит по-английски** и где ошибаются русскоговорящие.
 >
 > **После темы ты умеешь:** писать коммиты в повелительном наклонении по Conventional
@@ -21,7 +21,7 @@ description: "Блок → Английский для IT → тема 04. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  ЖАНР              ЧИТАТЕЛЬ                  ЧТО ВАЖНО ПО-АНГЛИЙСКИ
  ─────────────────────────────────────────────────────────────────────────────
  коммит            ты и команда через год    повелительное: Add, Fix — не Added
@@ -33,7 +33,8 @@ description: "Блок → Английский для IT → тема 04. Оп�
  письмо            руководитель, 30 секунд   тема = суть, просьба и дата в начале
  ─────────────────────────────────────────────────────────────────────────────
  везде: короткие предложения · активный залог · простые слова · имена и цифры
-```text
+```
+
 ---
 
 ## 1. Три правила рабочего английского текста
@@ -63,7 +64,7 @@ description: "Блок → Английский для IT → тема 04. Оп�
 
 ## 2. Коммиты
 
-Правила (подробно — [../Git/11_collaboration.md](/git/11-collaboration), раздел 5):
+Правила (подробно — [Git: 11. Командная работа](/git/11-collaboration), раздел 5):
 - **Повелительное наклонение:** *Add*, *Fix*, *Remove* — не *Added*, *Fixes*, *Adding*.
   Так пишет и сам git: *Merge branch…*, *Revert "…"*.
 - Заголовок — до ~50 символов (жёсткий предел — 72), без точки в конце; тело — через
@@ -85,20 +86,21 @@ description: "Блок → Английский для IT → тема 04. Оп�
 | `WIP`, `final`, `final 2` | Сжать в осмысленные коммиты перед MR |
 
 🇬🇧 Коммит с телом:
-```text
+```
 fix(ci): retry registry push on 5xx errors
 
 The registry returns 502 during its nightly garbage collection, which fails
 about 1 in 20 pipelines. Retry the push up to 3 times with a 10-second delay.
 
 Closes #412
-```text
+```
+
 ---
 
 ## 3. Описание MR и ответы на ревью
 
 Заголовок MR — тоже в повелительном наклонении: *Add HPA for payment-service*.
-Структура — как в [../Git/11_collaboration.md](/git/11-collaboration), раздел
+Структура — как в [Git: 11. Командная работа](/git/11-collaboration), раздел
 «Хорошее описание MR», только по-английски.
 
 🇬🇧 Шаблон:
@@ -120,7 +122,8 @@ Argo CD prunes the HPA (auto-sync with pruning is enabled).
 
 ## Out of scope
 Scaling on custom metrics (RPS) — #58.
-```text
+```
+
 Полезные фразы: *This MR adds / removes / replaces…*, *Tested on staging*,
 *No changes to prod values*, *Reviewer notes: please focus on…*, *Depends on !42*.
 Незаконченный MR — с префиксом *Draft:* в GitLab или в статусе draft на GitHub.
@@ -136,7 +139,7 @@ Scaling on custom metrics (RPS) — #58.
 | Прошу повторное ревью | *I've addressed all comments. Could you take another look?* |
 | Прошу ревью | *PTAL when you have a moment. No rush — sometime today is fine.* |
 
-Метки Conventional Comments ([../../DevOps/SoftSkills/07_review_mentoring.md](/softskills/07-review-mentoring))
+Метки Conventional Comments ([Soft Skills: 07. Ревью, фидбек и менторство: путь к сеньору](/softskills/07-review-mentoring))
 уже английские: 🇬🇧 *nitpick (non-blocking): "set up" is a verb here, not "setup".*
 *question: why 30 s? The upstream timeout is 10 s.*
 
@@ -144,7 +147,7 @@ Scaling on custom metrics (RPS) — #58.
 
 ## 4. Issue и баг-репорт
 
-Структура — из [../../DevOps/SoftSkills/02_written_communication.md](/softskills/02-written-communication),
+Структура — из [Soft Skills: 02. Письменная коммуникация](/softskills/02-written-communication),
 раздел 4. По-английски:
 
 🇬🇧 Шаблон:
@@ -173,7 +176,8 @@ About 2% of orders in prod are this large (wholesale customers): 37 last week.
 **What I've tried**
 Pods don't hit their limits; payments alone responds in about 1 s.
 Trace abc123 shows 28 s in the call to payments.
-```text
+```
+
 **Этикет open source:**
 - сначала поиск по существующим issues; нашёл похожий — дополни его, а не заводи дубль;
 - заполни шаблон проекта, укажи версии и минимальный пример (*minimal reproducible example*);
@@ -185,7 +189,7 @@ Trace abc123 shows 28 s in the call to payments.
 
 ## 5. Сообщения в чат
 
-BLUF и «no hello» — в [../../DevOps/SoftSkills/02_written_communication.md](/softskills/02-written-communication),
+BLUF и «no hello» — в [Soft Skills: 02. Письменная коммуникация](/softskills/02-written-communication),
 разделы 2–3. По-английски добавляется **тон**: русская прямота в переводе часто звучит
 резко, а попытка смягчить — слишком церемонно.
 
@@ -217,7 +221,7 @@ BLUF и «no hello» — в [../../DevOps/SoftSkills/02_written_communication.md
 | *Does that make sense?* | Проверить, понят ли ты |
 
 🇬🇧 Пример:
-```text
+```
 ✗ Hello
   I have question
   Why deploy is not working??
@@ -226,23 +230,25 @@ BLUF и «no hello» — в [../../DevOps/SoftSkills/02_written_communication.md
   "field is immutable" (log below). I think MR !240 changed the selector labels.
   Should I delete the Deployment and reinstall? Not a blocker, but I'd like to ship
   it today.
-```text
+```
+
 ---
 
 ## 6. Апдейт инцидента по-английски
 
-Ритм и правила — [../../DevOps/SRE/04_incident_management.md](/sre/04-incident-management),
+Ритм и правила — [SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management),
 раздел 6. Тот же шаблон по-английски:
 
 🇬🇧 Внутренний апдейт:
-```text
+```
 [SEV2][UPDATE #3] 14:45 UTC — Checkout errors
 Status:   🔴 Investigating | 🟡 Identified, mitigating | 🟢 Mitigated, monitoring
 Impact:   ~15% of /checkout requests have been failing since 14:05 UTC
 Actions:  We rolled back release 1.42 at 14:40. The error rate is going down.
 Next:     Monitoring for 30 minutes. Next update at 15:15 UTC.
 IC: @aliya · Ops: @daniyar · Channel: #inc-2026-09-27-checkout
-```text
+```
+
 **Времена в апдейте** — самое частое место ошибок:
 
 | Что описываешь | Время | 🇬🇧 |
@@ -254,7 +260,7 @@ IC: @aliya · Ops: @daniyar · Channel: #inc-2026-09-27-checkout
 
 🇬🇧 Внешний апдейт (статус-страница). Статусы — как у многих status page:
 *Investigating → Identified → Monitoring → Resolved*. Без внутренних деталей и догадок:
-```text
+```
 Investigating — Some customers may see errors when placing orders. We're investigating
 and will post an update within 30 minutes.
 
@@ -263,7 +269,8 @@ the results.
 
 Resolved — This incident has been resolved. Between 14:05 and 14:45 UTC, about 15% of
 checkout attempts failed. We apologize for the inconvenience.
-```text
+```
+
 ---
 
 ## 7. Короткие письма
@@ -277,7 +284,7 @@ checkout attempts failed. We apologize for the inconvenience.
 | Концовка | *Thanks,* / *Best regards,* / *Best,* + имя |
 
 🇬🇧 Пример:
-```text
+```
 Subject: Access request: read-only access to prod logs in Grafana
 
 Hi Yerzhan,
@@ -291,7 +298,8 @@ I'm on call starting next Monday, and I need logs to handle alerts.
 
 Thanks,
 Nurdaulet
-```text
+```
+
 Не нужно: *Dear Sir or Madam* (в IT почти не пишут), *I hope this email finds you well*
 (допустимо, но шаблонно), *Please find attached* (лучше *I've attached…*),
 *Kindly revert* — ⚠️ в индийском английском *revert* = «ответить», но в IT
@@ -315,11 +323,12 @@ Nurdaulet
 
 Проверка: можно подставить «один» (*one*) — ставь *a / an*. Читатель точно знает,
 какой именно, — *the*.
-```text
+```
 ✗ I have question about deployment.     ✓ I have a question about the deployment.
 ✗ There is error in logs.               ✓ There's an error in the logs.
 ✗ Please check a main branch.           ✓ Please check the main branch.
-```text
+```
+
 ### Present Perfect или Past Simple
 
 | Когда | Время | 🇬🇧 |
@@ -329,12 +338,13 @@ Nurdaulet
 | Период ещё не закончился | Present Perfect | *The job has failed three times today.* |
 | С какого-то момента до сейчас (*since*, *for*) | Present Perfect (Continuous) | *I've been working as a backend developer for two years.* |
 
-```text
+```
 ✗ I have deployed it yesterday.        ✓ I deployed it yesterday.
 ✗ I work here since 2024.              ✓ I've worked here since 2024.
 ✗ It is down since 14:05.              ✓ It's been down since 14:05.
 ✗ When have you deployed it?          ✓ When did you deploy it?  (вопрос «когда» — Past Simple)
-```text
+```
+
 ### Порядок слов в вопросах
 
 | ✗ | ✓ |
@@ -377,7 +387,7 @@ Nurdaulet
 ## 9. Было / стало
 
 🇬🇧 MR:
-```text
+```
 ✗ Title: changes
   I did the changes in the helm chart, please check.
 
@@ -388,9 +398,10 @@ Nurdaulet
   How to test: `kubectl rollout restart deploy/linkd-api -n linkd` while k6 is running —
   no 5xx.
   Risks: a slow start could fail the probe; initialDelaySeconds is 5.
-```text
+```
+
 🇬🇧 Сообщение тимлиду:
-```text
+```
 ✗ Hello! Sorry for disturbing. I wanted to say that I was working on the CI task,
   and there were some problems with the runner, and I think maybe I will not finish
   until Friday, sorry.
@@ -399,7 +410,8 @@ Nurdaulet
   from the new registry, and fixing that takes about two days.
   Options: (A) I ship the pipeline without the publish step on Friday, and the rest
   next Wednesday; (B) we move the deadline to Wednesday. Which works better for you?
-```text
+```
+
 ---
 
 ## 10. Грабли
@@ -414,8 +426,8 @@ Nurdaulet
 | Пропущенные артикли | Текст понятен, но режет глаз | Проверка «можно ли подставить *one*?» |
 | *I have done it yesterday* | Классическая ошибка, заметна сразу | С конкретным временем — Past Simple |
 | *Kindly revert*, *do the needful* | Непонятно или двусмысленно | Назвать конкретное действие |
-| ИИ пишет за тебя | Навык не растёт, тексты «чужие» | Сначала сам, ИИ — проверка ([01_level_and_system.md](/english/01-level-and-system), раздел 9) |
-| *Mitigated* и *resolved* как синонимы | Люди думают, что всё починено | Разные статусы ([03_vocabulary.md](/english/03-vocabulary)) |
+| ИИ пишет за тебя | Навык не растёт, тексты «чужие» | Сначала сам, ИИ — проверка ([01. Уровень и система: как учить английский для IT](/english/01-level-and-system), раздел 9) |
+| *Mitigated* и *resolved* как синонимы | Люди думают, что всё починено | Разные статусы ([03. Лексика: глоссарий DevOps, фразовые глаголы, ложные друзья, произношение](/english/03-vocabulary)) |
 
 ---
 
@@ -465,13 +477,18 @@ Nurdaulet
 9. Артикль: можно подставить *one* — *a / an*; читатель знает, какой, — *the*.
 10. *Information*, *feedback*, *advice*, *code* — без *-s*; *make a mistake*, *do research*.
 
-➡️ Дальше: [05_speaking.md](/english/05-speaking) · задачи: 04_writing_tasks.md
+---
 
+## Задачи
+
+> Практика — на своих коммитах, MR и сообщениях с работы и из pet-проекта linkd
+> ([Пет-проект](/project/)). Английские тексты
+> помечены 🇬🇧. Храни пары «было / стало» — через месяц это лучший показатель прогресса.
+> ⚠️ Рабочие тексты перед сохранением в волт обезличивай: без адресов, клиентов и секретов.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Назови три правила рабочего английского текста. Замени простыми словами:
 *utilize*, *commence*, *in order to*, *due to the fact that*.
@@ -621,35 +638,29 @@ documentation, code.* *Make* — создать, произвести (*make a c
 
 ### Блок B. «Что тут не так»
 
-
 Найди ошибки в английском тексте и перепиши правильно.
 
 **B1.** 🇬🇧 История коммитов:
+```
+Fixed bug
+added trivy
+Updating readme.
+fix: Fixed the problem with pods
+```
 
 <details><summary>Ответ</summary>
 
 ⚠️ Прошедшее время и *-ing*, разный регистр, точка, дублирование *fix: Fixed*,
 нет смысла. ✓
-```text
+```
 fix(api): return 404 for unknown short links
 ci: add Trivy scan stage
 docs: describe local setup in README
 fix(k8s): add memory limits to prevent OOMKills
-```text
+```
+
 </details>
 
-```text:no-line-numbers
-Fixed bug
-```text
-```text:no-line-numbers
-added trivy
-```text
-```text:no-line-numbers
-Updating readme.
-```text
-```text:no-line-numbers
-fix: Fixed the problem with pods
-```text
 **B2.** 🇬🇧 Описание MR: *In this MR I have added HPA. Please check it. It was tested.*
 
 <details><summary>Ответ</summary>
@@ -779,319 +790,151 @@ database.*
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Пять своих коммитов
+#### C1. 🔑 Пять своих коммитов
 Возьми 5 последних коммитов с работы или из linkd. Перепиши по Conventional Commits
 на английском: повелительное наклонение, до 50 символов, тело «зачем» там, где нужно.
 Каждый проверь тестом *If applied, this commit will…*
 
-### C2. 🔑 Описание MR
+<details><summary>Ответ</summary>
+
+Типичные находки: половина коммитов в прошедшем времени, заголовки «update X»
+без смысла, тело отсутствует там, где было важное «почему».
+
+</details>
+
+#### C2. 🔑 Описание MR
 Напиши по-английски описание MR для реального изменения или для linkd (например,
 «добавить readiness probe» или «кэш зависимостей в CI»): What, Why, How to test,
 Risks and rollback, Out of scope.
 
-### C3. Артикли
+<details><summary>Ответ</summary>
+
+Проверка: ревьюер понял бы, зачем MR и как его проверить, не открывая diff;
+раздел Risks не пустой.
+
+</details>
+
+#### C3. Артикли
 Вставь *a / an / the* или ничего (—):
-**1.** 🇬🇧 *I found ___ bug in ___ CI pipeline.*
+1. 🇬🇧 *I found ___ bug in ___ CI pipeline.*
+2. 🇬🇧 *___ bug is in ___ cache key.*
+3. 🇬🇧 *___ logs are usually stored in Loki.*
+4. 🇬🇧 *Could you create ___ SSH key for ___ new runner?*
+5. 🇬🇧 *We use ___ Kubernetes in production.*
+6. 🇬🇧 *___ Kubernetes API server was unavailable for five minutes.*
+7. 🇬🇧 *I have ___ question about ___ deployment we discussed yesterday.*
+8. 🇬🇧 *___ monitoring is ___ important part of ___ DevOps.*
+9. 🇬🇧 *There's ___ error in ___ logs of ___ payments service.*
+10. 🇬🇧 *It took ___ hour to find ___ root cause.*
 
 <details><summary>Ответ</summary>
 
-*Hi! Where can I find the values for shop-api on staging? Not urgent — before lunch
-   is fine.*
+1\) a, the. 2) The, the. 3) —. 4) an, the. 5) —. 6) The. 7) a, the. 8) —, an, —.
+9) an, the, the. 10) an, the.
 
 </details>
 
-**2.** 🇬🇧 *___ bug is in ___ cache key.*
+#### C4. Present Perfect или Past Simple
+1. 🇬🇧 *I ___ (deploy) the fix — you can check it now.*
+2. 🇬🇧 *I ___ (deploy) the fix yesterday at 6 pm.*
+3. 🇬🇧 *The job ___ (fail) three times today.*
+4. 🇬🇧 *The job ___ (fail) three times yesterday.*
+5. 🇬🇧 *I ___ (work) as a backend developer since April.*
+6. 🇬🇧 *When ___ you ___ (notice) the errors?*
+7. 🇬🇧 *Requests ___ (fail) since 14:05 UTC.*
+8. 🇬🇧 *___ you ___ (check) the logs yet?*
 
 <details><summary>Ответ</summary>
 
-*Could you review my MR by tomorrow? It's a small change in the CI config.*
+1\) 've deployed. 2) deployed. 3) has failed. 4) failed. 5) 've been working
+(или 've worked). 6) did … notice. 7) have been failing. 8) Have … checked.
 
 </details>
 
-**3.** 🇬🇧 *___ logs are usually stored in Loki.*
-
-<details><summary>Ответ</summary>
-
-*I won't make it by Friday: I need access to the registry, and my request has been
-   pending since Monday.*
-
-</details>
-
-**4.** 🇬🇧 *Could you create ___ SSH key for ___ new runner?*
-
-<details><summary>Ответ</summary>
-
-*Thanks for the review! I've fixed everything except the timeout — I explained why
-   in the comment.*
-
-</details>
-
-**5.** 🇬🇧 *We use ___ Kubernetes in production.*
-
-<details><summary>Ответ</summary>
-
-*Following up on my question above: it's blocking the 3 pm release.*
-
-</details>
-
-**6.** 🇬🇧 *___ Kubernetes API server was unavailable for five minutes.*
-
-<details><summary>Ответ</summary>
-
-Проверка: заголовок понятен из списка issues; есть *Expected* и *Actual*;
-шаги повторит человек без контекста; версии указаны.
-
-</details>
-
-**7.** 🇬🇧 *I have ___ question about ___ deployment we discussed yesterday.*
-
-<details><summary>Ответ</summary>
-
-🇬🇧
-```text
-Subject: Decision needed by Oct 3: standby database for payments
-
-Hi Aliya,
-
-If the payments database server fails, payments will be down for 2–4 hours.
-I suggest building a standby database with automatic failover. Could you decide
-by Friday, Oct 3?
-
-Options:
-A. Standby with automatic failover: 2 weeks, +90,000 KZT/month, downtime of minutes
-B. Backups every 15 minutes: 2 days, +10,000 KZT/month, 2–4 hours of downtime
-C. Do nothing: no cost, the risk stays
-
-I recommend A: the 11.11 sale is our busiest day, and a few hours without payments
-would cost more. Technical details are in the RFC (link).
-
-Thanks,
-Nurdaulet
-```text
-</details>
-
-**8.** 🇬🇧 *___ monitoring is ___ important part of ___ DevOps.*
-
-<details><summary>Ответ</summary>
-
-1) *What does this error mean?* 2) *Why is the pipeline red?* 3) *Where can
-I find the runbook?* 4) *Do you know when the release is?* 5) *How does it work with
-Helm?* 6) *Could you tell me what the ETA is?*
-
-</details>
-
-**9.** 🇬🇧 *There's ___ error in ___ logs of ___ payments service.*
-
-<details><summary>Ответ</summary>
-
-) an, the, the. 10) an, the.
-
-</details>
-
-**10.** 🇬🇧 *It took ___ hour to find ___ root cause.*
-### C4. Present Perfect или Past Simple
-**1.** 🇬🇧 *I ___ (deploy) the fix — you can check it now.*
-
-<details><summary>Ответ</summary>
-
-*Hi! Where can I find the values for shop-api on staging? Not urgent — before lunch
-   is fine.*
-
-</details>
-
-**2.** 🇬🇧 *I ___ (deploy) the fix yesterday at 6 pm.*
-
-<details><summary>Ответ</summary>
-
-*Could you review my MR by tomorrow? It's a small change in the CI config.*
-
-</details>
-
-**3.** 🇬🇧 *The job ___ (fail) three times today.*
-
-<details><summary>Ответ</summary>
-
-*I won't make it by Friday: I need access to the registry, and my request has been
-   pending since Monday.*
-
-</details>
-
-**4.** 🇬🇧 *The job ___ (fail) three times yesterday.*
-
-<details><summary>Ответ</summary>
-
-*Thanks for the review! I've fixed everything except the timeout — I explained why
-   in the comment.*
-
-</details>
-
-**5.** 🇬🇧 *I ___ (work) as a backend developer since April.*
-
-<details><summary>Ответ</summary>
-
-*Following up on my question above: it's blocking the 3 pm release.*
-
-</details>
-
-**6.** 🇬🇧 *When ___ you ___ (notice) the errors?*
-
-<details><summary>Ответ</summary>
-
-Проверка: заголовок понятен из списка issues; есть *Expected* и *Actual*;
-шаги повторит человек без контекста; версии указаны.
-
-</details>
-
-**7.** 🇬🇧 *Requests ___ (fail) since 14:05 UTC.*
-
-<details><summary>Ответ</summary>
-
-🇬🇧
-```text
-Subject: Decision needed by Oct 3: standby database for payments
-
-Hi Aliya,
-
-If the payments database server fails, payments will be down for 2–4 hours.
-I suggest building a standby database with automatic failover. Could you decide
-by Friday, Oct 3?
-
-Options:
-A. Standby with automatic failover: 2 weeks, +90,000 KZT/month, downtime of minutes
-B. Backups every 15 minutes: 2 days, +10,000 KZT/month, 2–4 hours of downtime
-C. Do nothing: no cost, the risk stays
-
-I recommend A: the 11.11 sale is our busiest day, and a few hours without payments
-would cost more. Technical details are in the RFC (link).
-
-Thanks,
-Nurdaulet
-```text
-</details>
-
-**8.** 🇬🇧 *___ you ___ (check) the logs yet?*
-
-<details><summary>Ответ</summary>
-
-1) *What does this error mean?* 2) *Why is the pipeline red?* 3) *Where can
-I find the runbook?* 4) *Do you know when the release is?* 5) *How does it work with
-Helm?* 6) *Could you tell me what the ETA is?*
-
-</details>
-
-### C5. 🔑 Сообщения в чат: перевод с тоном
+#### C5. 🔑 Сообщения в чат: перевод с тоном
 Переведи так, чтобы звучало вежливо, но прямо:
-**1.** «Привет! Подскажи, где лежат values для shop-api на stage? Не срочно, до обеда».
+1. «Привет! Подскажи, где лежат values для shop-api на stage? Не срочно, до обеда».
+2. «Можешь посмотреть мой MR до завтра? Там небольшое изменение в CI».
+3. «Не успеваю к пятнице: нужен доступ к registry, заявка висит с понедельника».
+4. «Спасибо за ревью! Всё поправил, кроме таймаута — объяснил в комментарии».
+5. «Напоминаю про вопрос выше: он блокирует релиз в 15:00».
 
 <details><summary>Ответ</summary>
 
-*Hi! Where can I find the values for shop-api on staging? Not urgent — before lunch
+🇬🇧
+1. *Hi! Where can I find the values for shop-api on staging? Not urgent — before lunch
    is fine.*
-
-</details>
-
-**2.** «Можешь посмотреть мой MR до завтра? Там небольшое изменение в CI».
-
-<details><summary>Ответ</summary>
-
-*Could you review my MR by tomorrow? It's a small change in the CI config.*
-
-</details>
-
-**3.** «Не успеваю к пятнице: нужен доступ к registry, заявка висит с понедельника».
-
-<details><summary>Ответ</summary>
-
-*I won't make it by Friday: I need access to the registry, and my request has been
+2. *Could you review my MR by tomorrow? It's a small change in the CI config.*
+3. *I won't make it by Friday: I need access to the registry, and my request has been
    pending since Monday.*
-
-</details>
-
-**4.** «Спасибо за ревью! Всё поправил, кроме таймаута — объяснил в комментарии».
-
-<details><summary>Ответ</summary>
-
-*Thanks for the review! I've fixed everything except the timeout — I explained why
+4. *Thanks for the review! I've fixed everything except the timeout — I explained why
    in the comment.*
+5. *Following up on my question above: it's blocking the 3 pm release.*
 
 </details>
 
-**5.** «Напоминаю про вопрос выше: он блокирует релиз в 15:00».
-
-<details><summary>Ответ</summary>
-
-*Following up on my question above: it's blocking the 3 pm release.*
-
-</details>
-
-### C6. Баг-репорт
+#### C6. Баг-репорт
 Возьми поломку из журнала linkd (`docs/journal.md`) или с работы и оформи issue
 по-английски по шаблону из раздела 4.
 
-### C7. Письмо с просьбой о решении
-Напиши по-английски короткую версию письма из
-[../../DevOps/SoftSkills/02_written_communication.md](/softskills/02-written-communication),
-раздел 9 (резервная база для payments): тема, просьба и дата, варианты A/B/C, рекомендация.
-
-### C8. Порядок слов в вопросах
-Исправь:
-**1.** 🇬🇧 *What means this error?*
-
-<details><summary>Ответ</summary>
-
-*Hi! Where can I find the values for shop-api on staging? Not urgent — before lunch
-   is fine.*
-
-</details>
-
-**2.** 🇬🇧 *Why the pipeline is red?*
-
-<details><summary>Ответ</summary>
-
-*Could you review my MR by tomorrow? It's a small change in the CI config.*
-
-</details>
-
-**3.** 🇬🇧 *Where I can find the runbook?*
-
-<details><summary>Ответ</summary>
-
-*I won't make it by Friday: I need access to the registry, and my request has been
-   pending since Monday.*
-
-</details>
-
-**4.** 🇬🇧 *Do you know when is the release?*
-
-<details><summary>Ответ</summary>
-
-*Thanks for the review! I've fixed everything except the timeout — I explained why
-   in the comment.*
-
-</details>
-
-**5.** 🇬🇧 *How it works with Helm?*
-
-<details><summary>Ответ</summary>
-
-*Following up on my question above: it's blocking the 3 pm release.*
-
-</details>
-
-**6.** 🇬🇧 *Could you tell me what is the ETA?*
-
 <details><summary>Ответ</summary>
 
 Проверка: заголовок понятен из списка issues; есть *Expected* и *Actual*;
 шаги повторит человек без контекста; версии указаны.
+
+</details>
+
+#### C7. Письмо с просьбой о решении
+Напиши по-английски короткую версию письма из
+[Soft Skills: 02. Письменная коммуникация](/softskills/02-written-communication),
+раздел 9 (резервная база для payments): тема, просьба и дата, варианты A/B/C, рекомендация.
+
+<details><summary>Ответ</summary>
+
+🇬🇧
+```
+Subject: Decision needed by Oct 3: standby database for payments
+
+Hi Aliya,
+
+If the payments database server fails, payments will be down for 2–4 hours.
+I suggest building a standby database with automatic failover. Could you decide
+by Friday, Oct 3?
+
+Options:
+A. Standby with automatic failover: 2 weeks, +90,000 KZT/month, downtime of minutes
+B. Backups every 15 minutes: 2 days, +10,000 KZT/month, 2–4 hours of downtime
+C. Do nothing: no cost, the risk stays
+
+I recommend A: the 11.11 sale is our busiest day, and a few hours without payments
+would cost more. Technical details are in the RFC (link).
+
+Thanks,
+Nurdaulet
+```
+
+</details>
+
+#### C8. Порядок слов в вопросах
+Исправь:
+1. 🇬🇧 *What means this error?*
+2. 🇬🇧 *Why the pipeline is red?*
+3. 🇬🇧 *Where I can find the runbook?*
+4. 🇬🇧 *Do you know when is the release?*
+5. 🇬🇧 *How it works with Helm?*
+6. 🇬🇧 *Could you tell me what is the ETA?*
+
+<details><summary>Ответ</summary>
+
+1\) *What does this error mean?* 2) *Why is the pipeline red?* 3) *Where can
+I find the runbook?* 4) *Do you know when the release is?* 5) *How does it work with
+Helm?* 6) *Could you tell me what the ETA is?*
 
 </details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Напиши по-английски первый внутренний апдейт: SEV2, 09:12 UTC; с 09:00 около 30%
 логинов падают с 500; расследуете, подозрение на релиз auth-сервиса в 08:55; следующий
@@ -1100,14 +943,15 @@ Helm?* 6) *Could you tell me what the ETA is?*
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 [SEV2][UPDATE #1] 09:12 UTC — Login errors
 Status:   🔴 Investigating
 Impact:   ~30% of login requests have been failing with 500 since 09:00 UTC
 Actions:  Investigating. We suspect the auth-service release deployed at 08:55.
 Next:     Next update at 09:30 UTC.
 IC: @aliya · Channel: #inc-2026-10-01-login
-```text
+```
+
 </details>
 
 **D2.** Продолжение: в 09:25 откатили релиз, в 09:28 ошибки вернулись к норме. Напиши
@@ -1116,7 +960,7 @@ IC: @aliya · Channel: #inc-2026-10-01-login
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 [SEV2][UPDATE #3] 09:40 UTC — Login errors
 Status:   🟢 Mitigated, monitoring
 Impact:   ~30% of logins failed between 09:00 and 09:28 UTC
@@ -1125,7 +969,8 @@ Next:     Monitoring until 10:00 UTC, then we'll close the incident.
 
 Resolved — This incident has been resolved. Between 09:00 and 09:28 UTC, some users
 couldn't log in. We apologize for the inconvenience.
-```text
+```
+
 </details>
 
 **D3.** Инженер из другой команды поменял общий ConfigMap, и у тебя сломался stage.
@@ -1134,12 +979,13 @@ couldn't log in. We apologize for the inconvenience.
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Hi Jonas! Staging for notifications has been broken since 11:20: the change to the shared
 `app-config` ConfigMap removed the SMTP_HOST key we depend on. Could we restore that key,
 or agree on a new name? For the future, could we ping each other in #platform before
 changing shared config? Thanks!
-```text
+```
+
 </details>
 
 **D4.** Ревьюер: 🇬🇧 *Why did you hardcode the timeout to 30s? Shouldn't this be
@@ -1149,10 +995,11 @@ configurable?* На деле 30 с — значение по умолчанию,
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Good question! 30s is just the default — it can be overridden with `timeout` in values
 (see values.yaml, line 42). I'll add a comment there to make it clearer.
-```text
+```
+
 </details>
 
 **D5.** Ревьюер резок: 🇬🇧 *This is wrong. Did you even test it?* Ты действительно
@@ -1161,10 +1008,11 @@ Good question! 30s is just the default — it can be overridden with `timeout` i
 <details><summary>Ответ</summary>
 
 Не защищаться и не отвечать резкостью; признать то, что правда. 🇬🇧
-```text
+```
 You're right, I didn't test the case with an empty ConfigMap. I've added a test and
 fixed the template in c4d5e6f. Could you take another look?
-```text
+```
+
 </details>
 
 **D6.** Англоязычный тимлид в личке: 🇬🇧 *Can you give me a quick status on the migration?*
@@ -1174,11 +1022,12 @@ fixed the template in c4d5e6f. Could you take another look?
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Migration status: 3 of 5 services are done (auth, orders, notifications).
 Remaining: payments and search. Blocker: we're waiting for firewall rules from the
 network team (NET-77). New ETA: Thursday, if we get the rules by Tuesday.
-```text
+```
+
 </details>
 
 **D7.** Ты сам сломал stage неудачным изменением в Helm-чарте. Напиши в англоязычный канал.
@@ -1186,11 +1035,11 @@ network team (NET-77). New ETA: Thursday, if we get the rules by Tuesday.
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Heads-up: I broke staging for linkd-api at 15:10 with a change to the Helm chart
 (wrong service port). I'm rolling it back now, ETA 10 minutes.
 I'll post here when it's fixed. Sorry for the trouble!
-```text
+```
 Одно извинение, без самобичевания; главное — что сломано, что делаешь и когда будет.
 
 </details>
@@ -1199,14 +1048,13 @@ I'll post here when it's fixed. Sorry for the trouble!
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** 🇬🇧 *How do you write a good commit message?*
 
 <details><summary>Ответ</summary>
 
 🇬🇧 *I follow Conventional Commits: a type, an optional scope, and a short subject
-   in the imperative mood, like "fix(ci): retry registry push on 5xx errors". If the
-   change isn't obvious, I add a body that explains why.*
+in the imperative mood, like "fix(ci): retry registry push on 5xx errors". If the
+change isn't obvious, I add a body that explains why.*
 
 </details>
 
@@ -1215,8 +1063,8 @@ I'll post here when it's fixed. Sorry for the trouble!
 <details><summary>Ответ</summary>
 
 🇬🇧 *It's small and focused on one thing. The description explains what, why, how
-   to test, and how to roll back, with a link to the ticket. I review my own diff before
-   I ask anyone else.*
+to test, and how to roll back, with a link to the ticket. I review my own diff before
+I ask anyone else.*
 
 </details>
 
@@ -1225,8 +1073,8 @@ I'll post here when it's fixed. Sorry for the trouble!
 <details><summary>Ответ</summary>
 
 🇬🇧 *I try to understand the reviewer's concern first. If I disagree, I explain my
-   reasons and ask what they think. If we can't agree after a couple of comments, we
-   jump on a short call and write the outcome in the thread.*
+reasons and ask what they think. If we can't agree after a couple of comments, we
+jump on a short call and write the outcome in the thread.*
 
 </details>
 
@@ -1235,8 +1083,8 @@ I'll post here when it's fixed. Sorry for the trouble!
 <details><summary>Ответ</summary>
 
 🇬🇧 *Updates in one channel at a regular interval: status, impact, what we're doing,
-   and when the next update is. For external updates, I use simple language without
-   internal details or guesses about the cause.*
+and when the next update is. For external updates, I use simple language without
+internal details or guesses about the cause.*
 
 </details>
 
@@ -1245,8 +1093,8 @@ I'll post here when it's fixed. Sorry for the trouble!
 <details><summary>Ответ</summary>
 
 🇬🇧 *I write things down: short daily updates on long tasks, questions in public
-   channels, and meeting outcomes in the thread. I always give full context in one
-   message, so people in other time zones can answer without a call.*
+channels, and meeting outcomes in the thread. I always give full context in one
+message, so people in other time zones can answer without a call.*
 
 </details>
 
@@ -1255,8 +1103,8 @@ I'll post here when it's fixed. Sorry for the trouble!
 <details><summary>Ответ</summary>
 
 🇬🇧 *I search for existing issues first, then write a clear title, the versions,
-   steps to reproduce, expected and actual behavior, and logs as text. For open source,
-   I try to provide a minimal repro.*
+steps to reproduce, expected and actual behavior, and logs as text. For open source,
+I try to provide a minimal repro.*
 
 </details>
 
@@ -1265,8 +1113,8 @@ I'll post here when it's fixed. Sorry for the trouble!
 <details><summary>Ответ</summary>
 
 🇬🇧 *README and how-to guides in the repo, updated in the same MR as the code;
-   runbooks for alerts; ADRs for decisions. If I answer the same question twice,
-   I write it down.*
+runbooks for alerts; ADRs for decisions. If I answer the same question twice,
+I write it down.*
 
 </details>
 
@@ -1275,11 +1123,9 @@ I'll post here when it's fixed. Sorry for the trouble!
 <details><summary>Ответ</summary>
 
 🇬🇧 STAR коротко: *Our builds were slow, and the team lead asked me to find out why.
-   I measured each stage and wrote a short summary with the numbers, the cause —
-   a cache key tied to the branch name — and two options. The team picked one in the
-   thread without a meeting, and build time dropped from 9 to 4 minutes.*
-
----
+I measured each stage and wrote a short summary with the numbers, the cause —
+a cache key tied to the branch name — and two options. The team picked one in the
+thread without a meeting, and build time dropped from 9 to 4 minutes.*
 
 </details>
 

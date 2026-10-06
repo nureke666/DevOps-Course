@@ -1,13 +1,13 @@
 ---
 title: "08. Упаковка и качество: pyproject, ruff, pytest, Docker, CI"
-description: "Блок → Python для DevOps → тема 8 из 8."
+description: "pyproject, ruff, pytest с моками, Dockerfile, GitLab CI"
 ---
 
 # 08. Упаковка и качество: pyproject, ruff, pytest, Docker, CI
 
 > Блок → **Python для DevOps** → тема 8 из 8.
-> Смежные блоки: [03_dockerfile.md](/docker/03-dockerfile), [04_build_cache_multistage.md](/docker/04-build-cache-multistage),
-> [05_gitlab_ci_basics.md](/cicd/05-gitlab-ci-basics).
+> Смежные блоки: [Docker: 03. Dockerfile: директивы и контекст сборки](/docker/03-dockerfile), [Docker: 04. Кэш сборки, multi-stage и best practices](/docker/04-build-cache-multistage),
+> [CI/CD: 05. GitLab CI: pipeline, stage, job](/cicd/05-gitlab-ci-basics).
 >
 > **После темы ты умеешь:** раскладывать утилиту в структуру проекта с `pyproject.toml` и entry point,
 > ставить её через uv/pip/pipx, держать код чистым через ruff (линт + формат), писать pytest-тесты
@@ -18,20 +18,21 @@ description: "Блок → Python для DevOps → тема 8 из 8."
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  скрипт.py ─────► проект-утилита ─────► качество ──────────────► доставка
  (один файл,      src/opsctl/           ruff check  — линт       Docker-образ: slim, non-root,
   «у меня         pyproject.toml        ruff format — формат     слой зависимостей отдельно
   работает»)      [project.scripts]     pytest + моки            uv tool / pipx install
                   uv.lock               subprocess, HTTP, env    GitLab CI: lint → test → build
-```text
+```
+
 ---
 
 ## 1. Когда скрипт становится проектом
 
 Признаки: файлов больше одного, есть зависимости, утилиту запускают коллеги или CI, хочется тестов.
 
-```text
+```text:no-line-numbers
 opsctl/
 ├── pyproject.toml            ← метаданные, зависимости, entry point, настройки ruff/pytest
 ├── uv.lock                   ← lock-файл (или requirements.txt + requirements-dev.txt)
@@ -48,7 +49,7 @@ opsctl/
 ├── Dockerfile
 ├── .dockerignore
 └── .gitlab-ci.yml
-```text
+```
 - **src-layout**: тесты импортируют установленный пакет, а не случайные файлы из текущего каталога —
   то, что прошло локально, пройдёт и в CI.
 - **Логика отдельно от краёв**: функции принимают данные и возвращают результат; CLI, subprocess, HTTP —
@@ -59,7 +60,8 @@ opsctl/
 from opsctl.cli import main
 
 raise SystemExit(main())
-```text
+```
+
 ---
 
 ## 2. pyproject.toml
@@ -99,7 +101,8 @@ ignore = ["S603", "S607"]               # «любой subprocess подозри
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-```text
+```
+
 ```bash
 uv sync                          # venv + зависимости + dev-группа + сам проект (editable)
 uv run opsctl --help             # entry point из [project.scripts]
@@ -113,7 +116,7 @@ python -m venv .venv && .venv/bin/pip install -e . pytest responses ruff
 # поставить утилиту «как программу» себе или на сервер
 uv tool install .                # или: pipx install .
 pipx install dist/opsctl-0.1.0-py3-none-any.whl
-```text
+```
 Версия в коде без дублирования: `importlib.metadata.version("opsctl")`.
 
 ---
@@ -126,7 +129,8 @@ ruff check --fix .               # исправить то, что можно а
 ruff format .                    # отформатировать (как black)
 ruff format --check .            # в CI: упасть, если код не отформатирован
 ruff check --output-format=gitlab . > gl-code-quality-report.json   # отчёт для GitLab MR
-```text
+```
+
 Что он ловит в ops-скриптах (правила из `select` выше):
 
 | Код | Что | Тема |
@@ -159,16 +163,13 @@ import pytest
 
 from opsctl.backup import find_old_files, parse_size
 
-
 @pytest.mark.parametrize(("text", "expected"), [("10K", 10_240), ("1M", 1_048_576), ("512", 512)])
 def test_parse_size(text, expected):
     assert parse_size(text) == expected
 
-
 def test_parse_size_rejects_garbage():
     with pytest.raises(ValueError):
         parse_size("много")
-
 
 def test_find_old_files(tmp_path):  # tmp_path — свой временный каталог на каждый тест
     old, new = tmp_path / "old.gz", tmp_path / "new.gz"
@@ -177,7 +178,8 @@ def test_find_old_files(tmp_path):  # tmp_path — свой временный �
     week_ago = time.time() - 8 * 86400
     os.utime(old, (week_ago, week_ago))  # подделать mtime
     assert find_old_files(tmp_path, "*.gz", days=7) == [old]
-```text
+```
+
 | Фикстура | Для чего |
 |----------|----------|
 | `tmp_path` | Временный каталог (`Path`) — файлы, конфиги, архивы |
@@ -191,18 +193,17 @@ def test_find_old_files(tmp_path):  # tmp_path — свой временный �
 # tests/test_cli.py
 from opsctl.cli import main
 
-
 def test_cleanup_dry_run_keeps_files(tmp_path):
     f = tmp_path / "a.gz"
     f.write_text("x")
     assert main(["cleanup", str(tmp_path), "--pattern", "*.gz"]) == 0
     assert f.exists()  # dry-run ничего не удалил
 
-
 def test_missing_token(monkeypatch):
     monkeypatch.delenv("GITLAB_TOKEN", raising=False)
     assert main(["pipelines", "devops"]) == 2
-```text
+```
+
 **Мок subprocess** — тест не должен реально звать `pg_dump`:
 
 ```python
@@ -212,7 +213,6 @@ from unittest import mock
 import pytest
 
 from opsctl import backup
-
 
 def test_dump_builds_right_command(tmp_path):
     ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
@@ -224,7 +224,6 @@ def test_dump_builds_right_command(tmp_path):
     assert kwargs["check"] is True
     assert kwargs["timeout"] > 0
 
-
 def test_dump_error_is_wrapped(tmp_path):
     err = subprocess.CalledProcessError(1, ["pg_dump"], stderr="password authentication failed")
     with (
@@ -232,7 +231,7 @@ def test_dump_error_is_wrapped(tmp_path):
         pytest.raises(backup.BackupError, match="authentication failed"),
     ):
         backup.dump_db("app", tmp_path / "app.dump")
-```text
+```
 ⭐ Патчить **там, где имя ищется**: модуль делает `import subprocess` и зовёт `subprocess.run` —
 патчим `opsctl.backup.subprocess.run`; если бы было `from subprocess import run` — `opsctl.backup.run`.
 
@@ -245,7 +244,6 @@ import responses
 
 from opsctl import notify
 
-
 @responses.activate
 def test_send_telegram(monkeypatch):
     monkeypatch.setenv("TG_BOT_TOKEN", "t0k")
@@ -257,21 +255,21 @@ def test_send_telegram(monkeypatch):
     body = json.loads(responses.calls[0].request.body)
     assert body["chat_id"] == "42"
 
-
 @responses.activate
 def test_retry_on_503():
     responses.get("https://api.example.com/items", status=503)  # сначала 503,
     responses.get("https://api.example.com/items", json=[1, 2])  # затем успех
     assert notify.get_items() == [1, 2]  # get_items() ходит через Session с Retry
     assert len(responses.calls) == 2
-```text
+```
 Незарегистрированный URL в `@responses.activate` → `ConnectionError`: тест никогда не уйдёт в реальную сеть.
 
 ```bash
 pytest -q                     # тихо
 pytest -x --lf                # остановиться на первой ошибке / только упавшие в прошлый раз
 pytest -k telegram -v         # по имени
-```text
+```
+
 ---
 
 ## 5. Dockerfile для Python-утилиты
@@ -299,7 +297,8 @@ USER app
 # exec-форма (JSON-массив): Python получает сигналы напрямую
 ENTRYPOINT ["python", "-m", "opsctl"]
 CMD ["--help"]
-```text
+```
+
 **Multi-stage** — когда при сборке нужны компиляторы (пакеты с C-расширениями без готовых wheel'ов),
 а в итоговом образе они лишние:
 
@@ -323,7 +322,7 @@ COPY --from=build /opt/venv /opt/venv
 RUN useradd --system --uid 10001 --no-create-home app
 USER app
 ENTRYPOINT ["opsctl"]
-```text
+```
 С uv тот же приём: `uv sync --locked --no-dev --no-install-project` (слой зависимостей),
 затем копирование `src/` и `uv sync --locked --no-dev --no-editable`.
 
@@ -336,13 +335,13 @@ __pycache__
 .ruff_cache
 dist
 tests
-```text
+```
 ```bash
 docker build -t opsctl:dev .
 docker run --rm opsctl:dev --help
 docker run --rm --entrypoint id opsctl:dev          # uid=10001(app) — не root
 docker image ls opsctl                              # slim-образ ~150 МБ против ~1 ГБ у python:3.12
-```text
+```
 - Долгоживущий процесс в контейнере обрабатывает SIGTERM (тема 03) или запускается с `--init`.
 - `alpine` для Python часто хуже `slim`: musl, часть пакетов собирается из исходников — медленно и больно.
 
@@ -396,8 +395,8 @@ build:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
-```text
-Варианты сборки образа в CI (dind, rootless BuildKit, buildah; kaniko — legacy) — в [07_gitlab_ci_docker.md](/cicd/07-gitlab-ci-docker).
+```
+Варианты сборки образа в CI (dind, rootless BuildKit, buildah; kaniko — legacy) — в [CI/CD: 07. Docker в GitLab CI и Registry](/cicd/07-gitlab-ci-docker).
 Без uv: `pip install -r requirements-dev.txt` в `before_script` и кэш `~/.cache/pip` по файлу requirements.
 
 Локально те же проверки до коммита — `pre-commit` с хуками `ruff-check` и `ruff-format`
@@ -449,7 +448,7 @@ build:
 - ruff в CI с правилами `S` (bandit) ловит `shell=True`, `yaml.load`, `verify=False`, запросы без таймаута
   ещё на MR — дешевле любого ревью.
 - Образ для Python-утилиты — те же правила, что для любого сервиса: slim, non-root, слой зависимостей
-  отдельно, никакого `latest` в проде ([10_security_best_practices.md](/docker/10-security-best-practices)).
+  отдельно, никакого `latest` в проде ([Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices)).
 - На собеседовании «как оформить и доставить свой скрипт» — хороший повод показать весь путь:
   структура → lock → тесты → CI → образ → запуск по расписанию.
 
@@ -493,13 +492,16 @@ build:
 9. CI: `uv sync --locked` → ruff → pytest с junit-отчётом → сборка образа на основной ветке.
 10. Готовность утилиты: `--help`, dry-run, коды выхода, stderr для логов, секреты из env, lock, CI.
 
-➡️ Дальше: [09_practice_labs.md](/python/09-practice-labs) · Задачи: 08_packaging_quality_tasks.md
+---
 
+## Задачи
+
+> Стенд: `uv`, docker, репозиторий в GitLab (gitlab.com или свой) с раннером.
+> Материал для упаковки — скрипты из тем 03-06 (`cleanup.py`, `healthcheck.py`, `top_nginx.py`).
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** По каким признакам скрипт пора превращать в проект с pyproject?
 
@@ -514,7 +516,7 @@ build:
 
 <details><summary>Ответ</summary>
 
-Код лежит в `src/&lt;пакет&gt;/` и недоступен для импорта «из текущего каталога»: тесты работают
+Код лежит в `src/<пакет>/` и недоступен для импорта «из текущего каталога»: тесты работают
 с установленным пакетом, как у пользователя. Ловит забытые файлы, неправильные импорты и зависимости.
 
 </details>
@@ -643,216 +645,130 @@ build-инструменты, которые не нужны в рантайме
 
 ### Блок B. «Что выведет / что тут не так»
 
-
-```text:no-line-numbers
+```python
 # B1. src/opsctl/backup.py
-```text
-```text:no-line-numbers
 from subprocess import run
-```text
-```text:no-line-numbers
 def dump(db): run(["pg_dump", db], check=True, timeout=60)
-```text
-```text:no-line-numbers
-# tests/test_backup.py
-```text
-```text:no-line-numbers
-with mock.patch("subprocess.run") as m:
-```text
-```text:no-line-numbers
-    backup.dump("app")
-```text
-```text:no-line-numbers
-# B2.
-```text
-```text:no-line-numbers
-[project]
-```text
-```text:no-line-numbers
-name = "opsctl"
-```text
-```text:no-line-numbers
-dependencies = ["requests", "pyyaml", "pytest", "ruff"]
-```text
-```text:no-line-numbers
-# B3.
-```text
-```text:no-line-numbers
-def test_report():
-```text
-```text:no-line-numbers
-    data = requests.get("https://gitlab.example.com/api/v4/projects", timeout=10).json()
-```text
-```text:no-line-numbers
-    assert len(report(data)) > 0
-```text
-```text:no-line-numbers
-# B4.
-```text
-```text:no-line-numbers
-def test_old_files():
-```text
-```text:no-line-numbers
-    assert find_old_files(Path("/var/backups"), "*.gz", days=7) == []
-```text
-```text:no-line-numbers
-# B5.
-```text
-```text:no-line-numbers
-def test_rotation():
-```text
-```text:no-line-numbers
-    assert is_expired("db_2026-09-20.sql.gz", days=7)      # «сегодня» внутри функции — datetime.now()
-```text
-```text:no-line-numbers
-# B6.
-```text
-```text:no-line-numbers
-FROM python:3.12
-```text
-```text:no-line-numbers
-COPY . /app
-```text
-```text:no-line-numbers
-WORKDIR /app
-```text
-```text:no-line-numbers
-RUN pip install -r requirements.txt
-```text
-```text:no-line-numbers
-CMD python -m opsctl
-```text
-```text:no-line-numbers
-# B7.
-```text
-```text:no-line-numbers
-FROM python:3.12-slim
-```text
-```text:no-line-numbers
-RUN pip install -r requirements.txt
-```text
-```text:no-line-numbers
-COPY requirements.txt .
-```text
-```text:no-line-numbers
-B8.  .dockerignore отсутствует, в каталоге: .venv/ (400 МБ), .git/ (120 МБ), tests/, src/
-```text
-<details><summary>Ответ</summary>
 
-⚠️ В контекст сборки уходят сотни мегабайт, `COPY . .` тащит `.venv` и `.git` в образ. Нужен `.dockerignore`.
+# tests/test_backup.py
+with mock.patch("subprocess.run") as m:
+    backup.dump("app")
+```
+```toml
+# B2.
+[project]
+name = "opsctl"
+dependencies = ["requests", "pyyaml", "pytest", "ruff"]
+```
+```python
+# B3.
+def test_report():
+    data = requests.get("https://gitlab.example.com/api/v4/projects", timeout=10).json()
+    assert len(report(data)) > 0
+```
+```python
+# B4.
+def test_old_files():
+    assert find_old_files(Path("/var/backups"), "*.gz", days=7) == []
+```
+```python
+# B5.
+def test_rotation():
+    assert is_expired("db_2026-09-20.sql.gz", days=7)      # «сегодня» внутри функции — datetime.now()
+```
+```dockerfile
+# B6.
+FROM python:3.12
+COPY . /app
+WORKDIR /app
+RUN pip install -r requirements.txt
+CMD python -m opsctl
+```
+```dockerfile
+# B7.
+FROM python:3.12-slim
+RUN pip install -r requirements.txt
+COPY requirements.txt .
+```
+```text
+B8. .dockerignore отсутствует, в каталоге: .venv/ (400 МБ), .git/ (120 МБ), tests/, src/
+```
+```yaml
+# B9.
+lint:
+  image: python:3.12-slim
+  script:
+    - pip install ruff
+    - ruff check . || true
+```
+```yaml
+# B10.
+test:
+  image: python:3.12-slim
+  script:
+    - pip install pytest requests pyyaml
+    - pytest
+```
+```python
+# B11.
+@responses.activate
+def test_notify():
+    notify.send_telegram("hi")         # URL Telegram в responses не зарегистрирован
+```
+```python
+# B12.
+def test_cli(capsys):
+    main(["report", "--json"])
+    out = capsys.readouterr().out
+    assert json.loads(out)["total"] == 3      # в main() логи настроены на stdout
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Мок не сработает: модуль уже держит ссылку `run` на настоящую функцию. Патчить `opsctl.backup.run`.
+
+**B2.** ⚠️ Нет `version`/`requires-python`, а `pytest` и `ruff` попадут в рантайм-зависимости пользователю.
+Инструменты разработки — в `dependency-groups`.
+
+**B3.** ⚠️ Тест ходит в реальный API: нужен токен и сеть, тест флапает и зависит от данных. Мок через `responses`
+или тестировать `report()` на фикстурных данных.
+
+**B4.** ⚠️ Тест зависит от реального каталога хоста. Использовать `tmp_path`.
+
+**B5.** ⚠️ Результат зависит от текущей даты — через неделю-другую тест начнёт вести себя иначе. `now` — параметр функции.
+
+**B6.** ⚠️ Полный образ (~1 ГБ), `COPY .` до установки зависимостей (кэш ломается на каждый коммит, в образ
+уходят `.git`/`.venv`), root, shell-форма `CMD` (сигналы не доходят до Python).
+
+**B7.** ⚠️ `pip install` раньше, чем `requirements.txt` скопирован: сборка упадёт — файла ещё нет.
+
+**B8.** ⚠️ В контекст сборки уходят сотни мегабайт, `COPY . .` тащит `.venv` и `.git` в образ. Нужен `.dockerignore`.
+
+**B9.** ⚠️ `|| true` делает линт всегда зелёным, версия ruff не зафиксирована.
+
+**B10.** ⚠️ Версии не зафиксированы, пакет не установлен (импорт зависит от cwd), нет junit-отчёта.
+Ставить из lock, `uv sync --locked` / `pip install -e .` + requirements-dev с `==`.
+
+**B11.** `ConnectionError` из responses: незарегистрированный URL при активном моке — сети нет. Это защита, а не баг.
+
+**B12.** ⚠️ Логи в stdout смешаются с JSON → `JSONDecodeError`. Логи — в stderr.
 
 </details>
 
-```text:no-line-numbers
-# B9.
-```text
-```text:no-line-numbers
-lint:
-```text
-```text:no-line-numbers
-  image: python:3.12-slim
-```text
-```text:no-line-numbers
-  script:
-```text
-```text:no-line-numbers
-    - pip install ruff
-```text
-```text:no-line-numbers
-    - ruff check . || true
-```text
-```text:no-line-numbers
-# B10.
-```text
-```text:no-line-numbers
-test:
-```text
-```text:no-line-numbers
-  image: python:3.12-slim
-```text
-```text:no-line-numbers
-  script:
-```text
-```text:no-line-numbers
-    - pip install pytest requests pyyaml
-```text
-```text:no-line-numbers
-    - pytest
-```text
-```text:no-line-numbers
-# B11.
-```text
-```text:no-line-numbers
-@responses.activate
-```text
-```text:no-line-numbers
-def test_notify():
-```text
-```text:no-line-numbers
-    notify.send_telegram("hi")         # URL Telegram в responses не зарегистрирован
-```text
-```text:no-line-numbers
-# B12.
-```text
-```text:no-line-numbers
-def test_cli(capsys):
-```text
-```text:no-line-numbers
-    main(["report", "--json"])
-```text
-```text:no-line-numbers
-    out = capsys.readouterr().out
-```text
-```text:no-line-numbers
-    assert json.loads(out)["total"] == 3      # в main() логи настроены на stdout
-```text
 ---
 
 ### Блок C. Практика
 
+#### C1. 🔑 Скрипт → проект
+1. `uv init --package opsctl`, разложи `cleanup` и `healthcheck` из прошлых тем по модулям `src/opsctl/`.
+2. `cli.py` с подкомандами, `[project.scripts] opsctl = "opsctl.cli:main"`, `__main__.py`.
+3. Проверь: `uv run opsctl --help`, `uv run python -m opsctl --help`.
+4. `uv build` и установи wheel через `uv tool install dist/*.whl` — команда `opsctl` доступна вне проекта.
 
-### C1. 🔑 Скрипт → проект
-**1.** `uv init --package opsctl`, разложи `cleanup` и `healthcheck` из прошлых тем по модулям `src/opsctl/`.
-**2.** `cli.py` с подкомандами, `[project.scripts] opsctl = "opsctl.cli:main"`, `__main__.py`.
-
-<details><summary>Ответ</summary>
-
-Чаще всего у скриптов срабатывают `I001` (импорты), `F401`, `UP` (устаревший синтаксис), `S113`, `E501`.
-
-</details>
-
-**3.** Проверь: `uv run opsctl --help`, `uv run python -m opsctl --help`.
-
-<details><summary>Ответ</summary>
-
-Пример параметризации с мусором:
-```python
-@pytest.mark.parametrize("line", ["", "garbage", '1.2.3.4 - - [x] "\\x16\\x03" 400 0 "-" "-"'])
-def test_parse_line_garbage(line):
-    assert parse_line(line) is None
-```text
-</details>
-
-**4.** `uv build` и установи wheel через `uv tool install dist/*.whl` — команда `opsctl` доступна вне проекта.
-
-<details><summary>Ответ</summary>
-
-```python
-def test_cleanup_apply_removes_only_old(tmp_path):
-    old, new = tmp_path / "old.gz", tmp_path / "new.gz"
-    for f in (old, new):
-        f.write_text("x")
-    t = time.time() - 30 * 86400
-    os.utime(old, (t, t))
-    assert main(["cleanup", str(tmp_path), "--days", "14", "--apply"]) == 0
-    assert not old.exists()
-    assert new.exists()
-```text
-</details>
-
-### C2. ruff
-**1.** Добавь настройки ruff из конспекта, прогони `ruff check --statistics .` по своим скриптам тем 01-07.
-**2.** Исправь всё, что нашлось; автоисправимое — `ruff check --fix`.
+#### C2. ruff
+1. Добавь настройки ruff из конспекта, прогони `ruff check --statistics .` по своим скриптам тем 01-07.
+2. Исправь всё, что нашлось; автоисправимое — `ruff check --fix`.
+3. `ruff format .` и посмотри diff. Какие правила сработали чаще всего?
 
 <details><summary>Ответ</summary>
 
@@ -860,115 +776,47 @@ def test_cleanup_apply_removes_only_old(tmp_path):
 
 </details>
 
-**3.** `ruff format .` и посмотри diff. Какие правила сработали чаще всего?
-
-<details><summary>Ответ</summary>
-
-Пример параметризации с мусором:
-```python
-@pytest.mark.parametrize("line", ["", "garbage", '1.2.3.4 - - [x] "\\x16\\x03" 400 0 "-" "-"'])
-def test_parse_line_garbage(line):
-    assert parse_line(line) is None
-```text
-</details>
-
-### C3. 🔑 Тесты чистых функций
+#### C3. 🔑 Тесты чистых функций
 Напиши `parametrize`-тесты для: `parse_line` (тема 06, включая мусорные строки), `parse_size`,
 функции ротации «старше N дней» (тема 02, `now` передаётся параметром). Минимум 12 случаев.
 
-### C4. 🔑 Файловые тесты
+<details><summary>Ответ</summary>
+
+Пример параметризации с мусором:
+```python
+@pytest.mark.parametrize("line", ["", "garbage", '1.2.3.4 - - [x] "\\x16\\x03" 400 0 "-" "-"'])
+def test_parse_line_garbage(line):
+    assert parse_line(line) is None
+```
+
+</details>
+
+#### C4. 🔑 Файловые тесты
 Для `cleanup`: создай файлы в `tmp_path`, подделай `mtime` через `os.utime`, проверь, что
 dry-run ничего не удаляет, `--apply` удаляет только старые, отказ на несуществующем каталоге даёт код 2.
 
-### C5. 🔑 Мок subprocess
+<details><summary>Ответ</summary>
+
+```python
+def test_cleanup_apply_removes_only_old(tmp_path):
+    old, new = tmp_path / "old.gz", tmp_path / "new.gz"
+    for f in (old, new):
+        f.write_text("x")
+    t = time.time() - 30 * 86400
+    os.utime(old, (t, t))
+    assert main(["cleanup", str(tmp_path), "--days", "14", "--apply"]) == 0
+    assert not old.exists()
+    assert new.exists()
+```
+
+</details>
+
+#### C5. 🔑 Мок subprocess
 Для `dump_db(db, out)`:
-**1.** Проверь, какая команда и с какими `check`/`timeout` уходит в `subprocess.run`.
-**2.** `CalledProcessError` превращается в `BackupError` с текстом stderr.
-
-<details><summary>Ответ</summary>
-
-Чаще всего у скриптов срабатывают `I001` (импорты), `F401`, `UP` (устаревший синтаксис), `S113`, `E501`.
-
-</details>
-
-**3.** `FileNotFoundError` (нет `pg_dump`) → понятная ошибка.
-
-<details><summary>Ответ</summary>
-
-Пример параметризации с мусором:
-```python
-@pytest.mark.parametrize("line", ["", "garbage", '1.2.3.4 - - [x] "\\x16\\x03" 400 0 "-" "-"'])
-def test_parse_line_garbage(line):
-    assert parse_line(line) is None
-```text
-</details>
-
-**4.** Переделай модуль на `from subprocess import run` и почини тесты (цель патча).
-
-<details><summary>Ответ</summary>
-
-```python
-def test_cleanup_apply_removes_only_old(tmp_path):
-    old, new = tmp_path / "old.gz", tmp_path / "new.gz"
-    for f in (old, new):
-        f.write_text("x")
-    t = time.time() - 30 * 86400
-    os.utime(old, (t, t))
-    assert main(["cleanup", str(tmp_path), "--days", "14", "--apply"]) == 0
-    assert not old.exists()
-    assert new.exists()
-```text
-</details>
-
-### C6. Мок HTTP
-Для `check(url)` из health-checker'а с `responses`: 200 → ok, 500 → не ok, `ConnectionError`
-(`responses.get(url, body=requests.ConnectionError("boom"))`) → не ok с именем ошибки.
-Для функции с ретраями — 503, 503, 200 → успех и ровно 3 вызова.
-
-### C7. Вывод и логи
-Проверь через `capsys`, что `opsctl report --json` пишет в stdout валидный JSON, а логи — в stderr;
-через `caplog` — что на ошибке пишется сообщение уровня ERROR.
-
-### C8. 🔑 Образ
-**1.** Dockerfile по базовому шаблону: slim, зависимости отдельным слоем, non-root, exec-форма ENTRYPOINT.
-**2.** `.dockerignore`. Сравни размер с образом на `python:3.12` (`docker image ls`).
-
-<details><summary>Ответ</summary>
-
-Чаще всего у скриптов срабатывают `I001` (импорты), `F401`, `UP` (устаревший синтаксис), `S113`, `E501`.
-
-</details>
-
-**3.** Поменяй строку в коде и пересобери — слой `pip install` должен взяться из кэша.
-
-<details><summary>Ответ</summary>
-
-Пример параметризации с мусором:
-```python
-@pytest.mark.parametrize("line", ["", "garbage", '1.2.3.4 - - [x] "\\x16\\x03" 400 0 "-" "-"'])
-def test_parse_line_garbage(line):
-    assert parse_line(line) is None
-```text
-</details>
-
-**4.** `docker run --rm --entrypoint id opsctl:dev` → не root.
-
-<details><summary>Ответ</summary>
-
-```python
-def test_cleanup_apply_removes_only_old(tmp_path):
-    old, new = tmp_path / "old.gz", tmp_path / "new.gz"
-    for f in (old, new):
-        f.write_text("x")
-    t = time.time() - 30 * 86400
-    os.utime(old, (t, t))
-    assert main(["cleanup", str(tmp_path), "--days", "14", "--apply"]) == 0
-    assert not old.exists()
-    assert new.exists()
-```text
-</details>
-
-**5.** Сделай multi-stage-вариант и сравни размер.
+1. Проверь, какая команда и с какими `check`/`timeout` уходит в `subprocess.run`.
+2. `CalledProcessError` превращается в `BackupError` с текстом stderr.
+3. `FileNotFoundError` (нет `pg_dump`) → понятная ошибка.
+4. Переделай модуль на `from subprocess import run` и почини тесты (цель патча).
 
 <details><summary>Ответ</summary>
 
@@ -978,59 +826,67 @@ def test_dump_without_pg_dump(tmp_path):
     with (mock.patch("opsctl.backup.subprocess.run", side_effect=FileNotFoundError("pg_dump")),
           pytest.raises(backup.BackupError, match="pg_dump")):
         backup.dump_db("app", tmp_path / "x")
-```text
+```
 (в `dump_db` нужно ловить `FileNotFoundError` и превращать в `BackupError`).
 
 </details>
 
-### C9. 🔑 GitLab CI
-**1.** `.gitlab-ci.yml` с job'ами `lint`, `test` (junit-отчёт), `build` (только на основной ветке).
-**2.** Сделай MR с неотформатированным кодом — `lint` должен упасть.
-
-<details><summary>Ответ</summary>
-
-Чаще всего у скриптов срабатывают `I001` (импорты), `F401`, `UP` (устаревший синтаксис), `S113`, `E501`.
-
-</details>
-
-**3.** Сделай MR с падающим тестом — убедись, что отчёт виден во вкладке тестов MR.
-
-<details><summary>Ответ</summary>
-
-Пример параметризации с мусором:
-```python
-@pytest.mark.parametrize("line", ["", "garbage", '1.2.3.4 - - [x] "\\x16\\x03" 400 0 "-" "-"'])
-def test_parse_line_garbage(line):
-    assert parse_line(line) is None
-```text
-</details>
-
-**4.** Добавь кэш uv по `uv.lock` и сравни время второго прогона.
+#### C6. Мок HTTP
+Для `check(url)` из health-checker'а с `responses`: 200 → ok, 500 → не ok, `ConnectionError`
+(`responses.get(url, body=requests.ConnectionError("boom"))`) → не ok с именем ошибки.
+Для функции с ретраями — 503, 503, 200 → успех и ровно 3 вызова.
 
 <details><summary>Ответ</summary>
 
 ```python
-def test_cleanup_apply_removes_only_old(tmp_path):
-    old, new = tmp_path / "old.gz", tmp_path / "new.gz"
-    for f in (old, new):
-        f.write_text("x")
-    t = time.time() - 30 * 86400
-    os.utime(old, (t, t))
-    assert main(["cleanup", str(tmp_path), "--days", "14", "--apply"]) == 0
-    assert not old.exists()
-    assert new.exists()
-```text
+@responses.activate
+def test_check_connection_error():
+    responses.get("https://svc.local/health", body=requests.ConnectionError("boom"))
+    r = check("https://svc.local/health")
+    assert not r.ok and r.error == "ConnectionError"
+```
+
 </details>
 
-### C10. pre-commit
+#### C7. Вывод и логи
+Проверь через `capsys`, что `opsctl report --json` пишет в stdout валидный JSON, а логи — в stderr;
+через `caplog` — что на ошибке пишется сообщение уровня ERROR.
+
+#### C8. 🔑 Образ
+1. Dockerfile по базовому шаблону: slim, зависимости отдельным слоем, non-root, exec-форма ENTRYPOINT.
+2. `.dockerignore`. Сравни размер с образом на `python:3.12` (`docker image ls`).
+3. Поменяй строку в коде и пересобери — слой `pip install` должен взяться из кэша.
+4. `docker run --rm --entrypoint id opsctl:dev` → не root.
+5. Сделай multi-stage-вариант и сравни размер.
+
+<details><summary>Ответ</summary>
+
+Образ на `python:3.12` — порядка 1 ГБ, на `slim` — 150-200 МБ; при правке кода шаг
+`RUN pip install` помечен `CACHED`.
+
+</details>
+
+#### C9. 🔑 GitLab CI
+1. `.gitlab-ci.yml` с job'ами `lint`, `test` (junit-отчёт), `build` (только на основной ветке).
+2. Сделай MR с неотформатированным кодом — `lint` должен упасть.
+3. Сделай MR с падающим тестом — убедись, что отчёт виден во вкладке тестов MR.
+4. Добавь кэш uv по `uv.lock` и сравни время второго прогона.
+
+#### C10. pre-commit
 Настрой `pre-commit` с хуками `ruff-check` (`args: [--fix]`) и `ruff-format`
 (репозиторий `https://github.com/astral-sh/ruff-pre-commit`, версия через `pre-commit autoupdate`).
 Попробуй закоммитить файл с неиспользуемым импортом — что произойдёт?
 
+<details><summary>Ответ</summary>
+
+Хук `ruff-check --fix` удалит импорт и остановит коммит (файл изменён) — нужно добавить исправление
+в индекс и закоммитить снова.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Локально `pytest` зелёный, в CI — `ModuleNotFoundError: No module named 'opsctl'`. Три возможные причины.
 
@@ -1116,13 +972,12 @@ Shell-форма: PID 1 — `/bin/sh -c`, он не пересылает SIGTERM
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как оформить Python-утилиту, которой будет пользоваться команда?
 
 <details><summary>Ответ</summary>
 
 src-layout, pyproject с entry point, lock-файл, ruff + pytest, CI (lint/test/build), README, Docker-образ
-   или `uv tool`/`pipx`, `--help`, dry-run, коды выхода, логи в stderr.
+или `uv tool`/`pipx`, `--help`, dry-run, коды выхода, логи в stderr.
 
 </details>
 
@@ -1131,7 +986,7 @@ src-layout, pyproject с entry point, lock-файл, ruff + pytest, CI (lint/tes
 <details><summary>Ответ</summary>
 
 Стандартный файл метаданных проекта: имя, версия, зависимости, entry points, система сборки и настройки
-   инструментов (ruff, pytest).
+инструментов (ruff, pytest).
 
 </details>
 
@@ -1140,7 +995,7 @@ src-layout, pyproject с entry point, lock-файл, ruff + pytest, CI (lint/tes
 <details><summary>Ответ</summary>
 
 Lock-файл (`uv.lock` или requirements с `==`), в CI ставить строго из него (`uv sync --locked`) —
-   воспроизводимые сборки, «вчера работало» не повторится.
+воспроизводимые сборки, «вчера работало» не повторится.
 
 </details>
 
@@ -1149,7 +1004,7 @@ Lock-файл (`uv.lock` или requirements с `==`), в CI ставить ст
 <details><summary>Ответ</summary>
 
 Логику вынести в функции, внешние команды вызывать через тонкую обёртку и мокать `subprocess.run`
-   (`mock.patch` в модуле-потребителе), проверяя аргументы и обработку ошибок.
+(`mock.patch` в модуле-потребителе), проверяя аргументы и обработку ошибок.
 
 </details>
 
@@ -1190,7 +1045,7 @@ Job'ы lint → test → build, зависимости из lock, кэш, junit-
 <details><summary>Ответ</summary>
 
 Docker-образ (запуск из systemd/cron/k8s CronJob), `uv tool install`/`pipx install` wheel'а из registry,
-   Ansible-роль с venv.
+Ansible-роль с venv.
 
 </details>
 
@@ -1198,9 +1053,7 @@ Docker-образ (запуск из systemd/cron/k8s CronJob), `uv tool install
 
 <details><summary>Ответ</summary>
 
-Размещение пакета в `src/&lt;имя&gt;/`: тесты работают с установленным пакетом, а не с файлами из cwd.
-
----
+Размещение пакета в `src/<имя>/`: тесты работают с установленным пакетом, а не с файлами из cwd.
 
 </details>
 

@@ -1,16 +1,16 @@
 ---
 title: "05. FinOps в инфраструктурном коде: Infracost, теги, бюджеты, чистка"
-description: "Блок → FinOps → тема 05. Опирается на"
+description: "Infracost v0.10/v2 в MR, conftest-политики, default_tags + tflint, бюджеты, сироты, lifecycle, cost review"
 ---
 
 # 05. FinOps в инфраструктурном коде: Infracost, теги, бюджеты, чистка
 
 > Блок → FinOps → тема 05. Опирается на
-> [../Left/06_Terraform/00_INDEX.md](/terraform/),
-> [../Left/06_Terraform/06_workflow_cicd.md](/terraform/06-workflow-cicd) (plan в MR,
+> [Terraform](/terraform/),
+> [Terraform: 06. Workflow и CI/CD](/terraform/06-workflow-cicd) (plan в MR,
 > там Infracost упомянут одной строкой — здесь разбираем),
-> [../CICD/06_gitlab_ci_core.md](/cicd/06-gitlab-ci-core) (`rules`, `artifacts`, variables),
-> [../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage) (lifecycle) и тему
+> [CI/CD: 06. GitLab CI: rules, variables, artifacts](/cicd/06-gitlab-ci-core) (`rules`, `artifacts`, variables),
+> [Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage) (lifecycle) и тему
 > [01](/finops/01-finops-intro) (теги, бюджеты).
 >
 > **После темы ты умеешь:** оценить стоимость Terraform-кода до `apply` Infracost'ом (обе
@@ -22,7 +22,7 @@ description: "Блок → FinOps → тема 05. Опирается на"
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
   ДО apply (shift-left)                  ПОСЛЕ apply (guardrails)            ПОСТОЯННО
  ─────────────────────────────         ──────────────────────────────     ─────────────────────
  MR с .tf                               бюджеты + алерты (факт/прогноз)    cost review раз в месяц
@@ -34,7 +34,8 @@ description: "Блок → FinOps → тема 05. Опирается на"
          │
          ▼
  «этот MR добавит +$412/мес» видят ДО мержа, а не в счёте через месяц
-```text
+```
+
 ---
 
 ## 1. Infracost: что это и какая версия
@@ -61,12 +62,13 @@ Infracost ресурсы не оценит (покажет как unsupported) �
 
 ```bash
 infracost --version     # 0.10.x → breakdown/diff;  2.x → scan/inspect
-```text
+```
+
 **Регистрация (бесплатно, без облачного аккаунта):**
 ```bash
 infracost auth login              # откроется браузер: вход через GitHub/Google/email
 infracost configure get api_key   # v0.10: показать ключ — положить в CI как INFRACOST_API_KEY (masked)
-```text
+```
 Бесплатный план (на сентябрь 2026) — оценки стоимости с лимитом в 1000 запусков в месяц.
 FinOps- и tagging-политики, guardrails и дашборды — в платном Infracost Cloud.
 Поэтому политики в этой теме — на бесплатном conftest (раздел 4).
@@ -88,9 +90,10 @@ infracost diff --path . --compare-to /tmp/base.json           # что изме�
 
 infracost breakdown --path . --terraform-var-file prod.tfvars # с переменными окружения
 infracost output --path /tmp/base.json --format html --out-file report.html
-```text
+```
+
 Пример вывода (цифры иллюстративные, порядок us-east-1):
-```text
+```text:no-line-numbers
  Name                                                   Monthly Qty  Unit     Monthly Cost
  aws_instance.app
  ├─ Instance usage (Linux/UNIX, on-demand, m6i.large)           730  hours          $70.08
@@ -99,7 +102,8 @@ infracost output --path /tmp/base.json --format html --out-file report.html
  aws_nat_gateway.main
  ├─ NAT gateway                                                 730  hours          $32.85
  └─ Data processed                            Monthly cost depends on usage: $0.045 per GB
-```text
+```
+
 ### Usage-файл: ресурсы, которые стоят «от потребления»
 
 У NAT, Lambda, S3, логов цена зависит от трафика и запросов — из кода её не узнать.
@@ -117,11 +121,11 @@ resource_usage:                       # для конкретного ресур
   aws_lambda_function.thumbnailer:
     monthly_requests: 2000000
     request_duration_ms: 300
-```text
+```
 ```bash
 infracost breakdown --path . --usage-file infracost-usage.yml
 infracost breakdown --path . --usage-file infracost-usage.yml --sync-usage-file   # дописать шаблон для всех usage-ресурсов
-```text
+```
 Цифры для usage-файла бери из реальности: CloudWatch/биллинг прошлого месяца, метрики
 Prometheus.
 
@@ -132,7 +136,7 @@ version: 0.1
 projects:                     # запускай из каталога с infracost.yml; tfvars — относительно path
   - { path: aws/dev,  name: dev,  usage_file: infracost-usage.yml, terraform_var_files: [dev.tfvars] }
   - { path: aws/prod, name: prod, usage_file: infracost-usage.yml, terraform_var_files: [prod.tfvars] }
-```text
+```
 `infracost breakdown --config-file infracost.yml` — оценка всех проектов разом.
 
 ### v2: scan и inspect
@@ -146,13 +150,14 @@ infracost inspect --missing-tag owner            # ресурсы без тег�
 
 terraform plan -out tfplan.binary && terraform show -json tfplan.binary > plan.json
 infracost scan plan.json                         # с v2.4.2 — оценка по plan JSON (значения plan-time)
-```text
+```
+
 ---
 
 ## 3. Infracost в GitLab MR
 
-Процесс Terraform в CI — в [../Left/06_Terraform/06_workflow_cicd.md](/terraform/06-workflow-cicd),
-`rules` и артефакты — в [../CICD/06_gitlab_ci_core.md](/cicd/06-gitlab-ci-core). Джоба по
+Процесс Terraform в CI — в [Terraform: 06. Workflow и CI/CD](/terraform/06-workflow-cicd),
+`rules` и артефакты — в [CI/CD: 06. GitLab CI: rules, variables, artifacts](/cicd/06-gitlab-ci-core). Джоба по
 официальному шаблону (v0.10):
 
 ```yaml
@@ -184,7 +189,8 @@ infracost:
   artifacts:
     paths: [infracost.json]
     expire_in: 7 days
-```text
+```
+
 | Деталь | Почему так |
 |--------|-----------|
 | Baseline из целевой ветки | Дифф честный: сравнивается ровно то, во что мержим |
@@ -221,7 +227,8 @@ warn contains msg if {
 	to_number(r.monthlyCost) > 500
 	msg := sprintf("%s стоит $%s/мес — проверь размер", [r.name, r.monthlyCost])
 }
-```text
+```
+
 ```rego
 # policy/plan/plan.rego — вход: terraform show -json tfplan > plan.json
 package main
@@ -254,7 +261,7 @@ deny contains msg if {
 	not regex.match(`\.(nano|micro|small|medium|large)$`, rc.change.after.instance_type)
 	msg := sprintf("%s: в dev разрешены типы до *.large, а не %s", [rc.address, rc.change.after.instance_type])
 }
-```text
+```
 ```yaml
 cost-policy:
   stage: cost
@@ -264,7 +271,7 @@ cost-policy:
   script:
     - conftest test infracost.json -p policy/cost
     - conftest test ${TF_ROOT}/plan.json -p policy/plan
-```text
+```
 `deny` роняет джобу, `warn` — только предупреждает. Для исключений — лейбл MR
 «finops-approved» и `rules`, пропускающие `deny` при нём, либо ручная джоба-апрув.
 
@@ -298,7 +305,8 @@ variable "env" {
   }
 }
 # так же для owner: can(regex("^team-[a-z0-9-]+$", var.owner)) — команда, а не человек
-```text
+```
+
 Проверка в CI — tflint с AWS-плагином (правило учитывает `default_tags` провайдера):
 ```hcl
 # .tflint.hcl
@@ -312,10 +320,11 @@ rule "aws_resource_missing_tags" {
   enabled = true
   tags    = ["owner", "env", "service", "cost-center"]
 }
-```text
+```
 ```bash
 tflint --init && tflint --recursive
-```text
+```
+
 | Где теги «теряются» | Что делать |
 |---------------------|-----------|
 | Ресурсы, созданные не Terraform'ом (ноды Karpenter, диски PVC, LB от Service) | Karpenter — `spec.tags` в EC2NodeClass; CSI-драйвер и LB-контроллер — свои параметры тегов |
@@ -357,10 +366,10 @@ resource "aws_budgets_budget" "dev" {
   # … те же name, budget_type, limit_*, time_unit и notification (получатель — команда), плюс:
   cost_filter {
     name   = "TagKeyValue"
-    values = ["user:env$dev"]                     # формат: user:&lt;ключ&gt;$&lt;значение&gt;
+    values = ["user:env$dev"]                     # формат: user:<ключ>$<значение>
   }
 }
-```text
+```
 Детектор аномалий AWS — Cost Anomaly Detection (`aws_ce_anomaly_monitor` +
 `aws_ce_anomaly_subscription`): мониторит расходы по сервисам/тегам и шлёт ежедневные
 или мгновенные уведомления. Budget Actions умеют применить IAM/SCP-политику или остановить
@@ -397,14 +406,16 @@ aws cloudwatch get-metric-statistics --namespace AWS/ApplicationELB --metric-nam
 
 # лог-группы без retention (хранятся вечно)
 aws logs describe-log-groups --query 'logGroups[?!retentionInDays].[logGroupName,storedBytes]' --output table
-```text
+```
+
 **Yandex Cloud (`yc`):**
 ```bash
 yc compute disk list --format json \
   | jq -r '.[] | select((.instance_ids // []) | length == 0) | [.id, .name, (.size|tonumber/1073741824)] | @tsv'
 yc vpc address list --format json | jq -r '.[] | select(.used != true) | [.id, .external_ipv4_address.address] | @tsv'
 yc compute snapshot list
-```text
+```
+
 **Kubernetes:** PV в статусе `Released` (`kubectl get pv | grep Released`) — диск в облаке всё
 ещё оплачивается при `reclaimPolicy: Retain`; Service `type: LoadBalancer`, про которые забыли;
 PVC удалённых стендов.
@@ -419,10 +430,10 @@ PVC удалённых стендов.
     "action": { "type": "expire" }
   }]
 }
-```text
+```
 ```bash
 aws ecr put-lifecycle-policy --repository-name shop-api --lifecycle-policy-text file://ecr-lifecycle.json
-```text
+```
 В GitLab Container Registry — cleanup policy проекта (Settings → Packages and registries):
 держать N последних тегов по regex, удалять старше X дней.
 
@@ -431,7 +442,7 @@ aws ecr put-lifecycle-policy --repository-name shop-api --lifecycle-policy-text 
 cloud-nuke inspect-aws --region eu-central-1 --older-than 24h          # только посмотреть
 cloud-nuke aws --list-resource-types                                    # какие типы умеет
 cloud-nuke aws --region eu-central-1 --resource-type ec2 --resource-type ami --older-than 24h --dry-run
-```text
+```
 > ⚠️ cloud-nuke удаляет **всё** подходящее в аккаунте. Запускать только в отдельном
 > sandbox-аккаунте, никогда — в аккаунте с продом или общими ресурсами; сначала `inspect-aws`
 > и `--dry-run`, исключения — через `--config`. Для прода чистка — только кодом (Terraform)
@@ -444,7 +455,7 @@ cloud-nuke aws --region eu-central-1 --resource-type ec2 --resource-type ami --o
 
 ## 8. Хранение: lifecycle и retention
 
-Основы lifecycle — в [../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage). В Terraform:
+Основы lifecycle — в [Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage). В Terraform:
 ```hcl
 resource "aws_s3_bucket_lifecycle_configuration" "logs" {
   bucket = aws_s3_bucket.logs.id
@@ -474,17 +485,17 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
     }
   }
 }
-```text
+```
 Нюансы: у STANDARD_IA минимальный срок хранения 30 дней и минимальный оплачиваемый размер
 объекта 128 КБ — миллионы мелких файлов в IA станут дороже; переходы между классами платные
 (за запрос); при неизвестном профиле доступа — Intelligent-Tiering. В Yandex Object Storage
 классы — STANDARD, COLD, ICE.
 
-**Логи** ([../Left/03_Logging/00_INDEX.md](/logging/)):
+**Логи** ([Логирование](/logging/)):
 
 | Где | Как ограничить |
 |-----|----------------|
-| Loki | `limits_config.retention_period` + compactor с `retention_enabled` ([../Left/03_Logging/03_loki_grafana.md](/logging/03-loki-grafana)); разный retention по tenant/стримам |
+| Loki | `limits_config.retention_period` + compactor с `retention_enabled` ([Логирование: 03. Loki + Grafana](/logging/03-loki-grafana)); разный retention по tenant/стримам |
 | Elasticsearch | ILM-политика: rollover в hot, удаление через N дней |
 | CloudWatch Logs | `retention_in_days` в `aws_cloudwatch_log_group` (по умолчанию — **никогда не удалять**) |
 | Приложение | Уровень INFO в проде, sampling повторяющихся сообщений, не логировать тела запросов |
@@ -496,7 +507,7 @@ downsampling (Thanos/Mimir/VictoriaMetrics); главная статья — к�
 
 ## 9. Привычка: ежемесячный cost review
 
-```text
+```
 COST REVIEW — первый вторник месяца, 60 минут
 участники: платформа (ведёт), тимлиды команд, FinOps/финансы
 
@@ -506,7 +517,8 @@ COST REVIEW — первый вторник месяца, 60 минут
 4. Статус прошлых action items                                               10 мин
 5. Новые action items: что, владелец, срок, ожидаемая экономия $/мес          10 мин
 6. Обязательства: coverage и utilization, истекающие резервы/savings plans     5 мин
-```text
+```
+
 | KPI практики | Цель (ориентир) |
 |--------------|-----------------|
 | Доля расходов с тегами `owner`/`env` | ≥ 90–95% |
@@ -587,13 +599,67 @@ COST REVIEW — первый вторник месяца, 60 минут
 9. Lifecycle и retention — «бесплатная» экономия, но с нюансами классов хранения.
 10. Ежемесячный cost review с action items превращает FinOps из разовой акции в привычку.
 
-➡️ Дальше: [06_practice_labs.md](/english/06-practice-labs) · Задачи: 05_infracost_iac_tasks.md
+---
 
+## Задачи
+
+> Нужно: Terraform, Infracost CLI (бесплатный ключ через `infracost auth login`), tflint,
+> conftest, аккаунт на gitlab.com (бесплатный) для C4. AWS-аккаунт **не нужен** — Infracost
+> читает код локально. ⚠️ Цены иллюстративные, порядок us-east-1.
+
+Код для задач C1–C3, C6 (`~/labs/finops/infracost-lab/main.tf`):
+```hcl
+terraform {
+  required_providers {
+    aws = { source = "hashicorp/aws", version = "~> 6.0" }
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_instance" "app" {
+  ami           = "ami-0123456789abcdef0"
+  instance_type = "m6i.large"
+  root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
+  }
+}
+
+resource "aws_eip" "nat" {
+  domain = "vpc"
+}
+
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = "subnet-0123456789abcdef0"
+}
+
+resource "aws_db_instance" "shop" {
+  identifier                  = "shop"
+  engine                      = "postgres"
+  instance_class              = "db.t4g.medium"
+  allocated_storage           = 50
+  storage_type                = "gp3"
+  username                    = "shop"
+  manage_master_user_password = true
+  skip_final_snapshot         = true
+}
+
+resource "aws_cloudwatch_log_group" "app" {
+  name = "/app/shop"
+}
+
+resource "aws_s3_bucket" "logs" {
+  bucket = "shop-logs-example-kz"
+}
+```
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Что делает Infracost? Нужны ли облачные креды и что уходит в его API?
 
@@ -762,162 +828,90 @@ STANDARD_IA: минимум 30 дней хранения и минимальны
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```
 B1.  image: { name: infracost/infracost:ci-0.10, entrypoint: [""] }
-```text
-<details><summary>Ответ</summary>
+     script: [ "infracost scan ." ]
 
-⚠️ `scan` — команда CLI v2, в образе `ci-0.10` её нет. Либо `breakdown/diff/comment`,
+B2.  # MR из feature в release/2026-10
+     - infracost breakdown --path=/tmp/main/${TF_ROOT} --format=json --out-file=base.json   # склонирован main
+     - infracost diff --path=${TF_ROOT} --compare-to=base.json ...
+
+B3.  deny contains msg if { input.diffTotalMonthlyCost > 200; msg := "дорого" }
+
+B4.  # conftest-политика по diffTotalMonthlyCost, а на вход подаётся вывод
+     infracost breakdown --path . --format json --out-file infracost.json
+
+B5.  default_tags { tags = { owner = "ivan", env = "Production" } }
+
+B6.  resource "aws_budgets_budget" "all" {
+       ... notification { threshold = 100, notification_type = "ACTUAL",
+                          subscriber_email_addresses = ["ivan@example.kz"] } }
+
+B7.  # в основном аккаунте компании, «чтобы убрать мусор»
+     cloud-nuke aws --region eu-central-1
+
+B8.  # бакет с миллионами превью по 10 КБ
+     transition { days = 1  storage_class = "STANDARD_IA" }
+
+B9.  resource "aws_cloudwatch_log_group" "app" { name = "/app/shop" }
+
+B10. transition { days = 30 storage_class = "STANDARD_IA" }     # одной строкой
+
+B11. # StorageClass reclaimPolicy: Retain; фич-стенды с PVC создаются и удаляются каждую неделю
+
+B12. script:
+       - echo "key=$INFRACOST_API_KEY"   # отладка; переменная не masked
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ `scan` — команда CLI v2, в образе `ci-0.10` её нет. Либо `breakdown/diff/comment`,
 либо образ/установка v2.
 
-</details>
-
-```text:no-line-numbers
-     script: [ "infracost scan ." ]
-```text
-```text:no-line-numbers
-B2.  # MR из feature в release/2026-10
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Baseline — `main`, а мержим в `release/…`: в диффе окажутся чужие изменения.
+**B2.** ⚠️ Baseline — `main`, а мержим в `release/…`: в диффе окажутся чужие изменения.
 Клонировать `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME`.
 
-</details>
-
-```text:no-line-numbers
-     - infracost breakdown --path=/tmp/main/${TF_ROOT} --format=json --out-file=base.json   # склонирован main
-```text
-```text:no-line-numbers
-     - infracost diff --path=${TF_ROOT} --compare-to=base.json ...
-```text
-```text:no-line-numbers
-B3.  deny contains msg if { input.diffTotalMonthlyCost > 200; msg := "дорого" }
-```text
-<details><summary>Ответ</summary>
-
-⚠️ В JSON Infracost числа — строки: сравнение строки с числом в Rego не сработает
+**B3.** ⚠️ В JSON Infracost числа — строки: сравнение строки с числом в Rego не сработает
 (правило никогда не выполнится). `to_number(input.diffTotalMonthlyCost) > 200`.
 
-</details>
-
-```text:no-line-numbers
-B4.  # conftest-политика по diffTotalMonthlyCost, а на вход подаётся вывод
-```text
-<details><summary>Ответ</summary>
-
-⚠️ У вывода `breakdown` нет `diffTotalMonthlyCost` — правило молча не срабатывает. На вход
+**B4.** ⚠️ У вывода `breakdown` нет `diffTotalMonthlyCost` — правило молча не срабатывает. На вход
 политики нужен JSON от `infracost diff` (или сравнивать `totalMonthlyCost` с `pastTotalMonthlyCost`).
 
-</details>
-
-```text:no-line-numbers
-     infracost breakdown --path . --format json --out-file infracost.json
-```text
-```text:no-line-numbers
-B5.  default_tags { tags = { owner = "ivan", env = "Production" } }
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Owner — человек (уйдёт — ресурсы «ничьи»), env — не из справочника (`Production`
+**B5.** ⚠️ Owner — человек (уйдёт — ресурсы «ничьи»), env — не из справочника (`Production`
 вместо `prod`). Плюс нет `service`/`cost-center`. Команда + справочник + validation.
 
-</details>
-
-```text:no-line-numbers
-B6.  resource "aws_budgets_budget" "all" {
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Только факт 100% — узнаёшь, когда деньги потрачены; получатель — один человек
+**B6.** ⚠️ Только факт 100% — узнаёшь, когда деньги потрачены; получатель — один человек
 (отпуск, увольнение). Нужны пороги по прогнозу и факту, групповой адрес/канал команды.
 
-</details>
-
-```text:no-line-numbers
-       ... notification { threshold = 100, notification_type = "ACTUAL",
-```text
-```text:no-line-numbers
-                          subscriber_email_addresses = ["ivan@example.kz"] } }
-```text
-```text:no-line-numbers
-B7.  # в основном аккаунте компании, «чтобы убрать мусор»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Удалит всё поддерживаемое в регионе, включая прод. cloud-nuke — только
+**B7.** ⚠️ Удалит всё поддерживаемое в регионе, включая прод. cloud-nuke — только
 в sandbox-аккаунте, с `inspect-aws`/`--dry-run` и фильтрами.
 
-</details>
-
-```text:no-line-numbers
-     cloud-nuke aws --region eu-central-1
-```text
-```text:no-line-numbers
-B8.  # бакет с миллионами превью по 10 КБ
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Объекты 10 КБ в IA оплачиваются как 128 КБ (в 12,8 раза больше), плюс плата за переход
+**B8.** ⚠️ Объекты 10 КБ в IA оплачиваются как 128 КБ (в 12,8 раза больше), плюс плата за переход
 каждого объекта и минимум 30 дней. Для мелких объектов — Standard или Intelligent-Tiering
 (мелкие объекты он не мониторит и не переводит), либо упаковка в архивы.
 
-</details>
+**B9.** ⚠️ Нет `retention_in_days` — логи хранятся вечно и растут в счёте. Задать, например, 30.
 
-```text:no-line-numbers
-     transition { days = 1  storage_class = "STANDARD_IA" }
-```text
-```text:no-line-numbers
-B9.  resource "aws_cloudwatch_log_group" "app" { name = "/app/shop" }
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Нет `retention_in_days` — логи хранятся вечно и растут в счёте. Задать, например, 30.
-
-</details>
-
-```text:no-line-numbers
-B10.  transition { days = 30 storage_class = "STANDARD_IA" }     # одной строкой
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Синтаксическая ошибка HCL: однострочный блок может содержать только один аргумент.
+**B10.** ⚠️ Синтаксическая ошибка HCL: однострочный блок может содержать только один аргумент.
 Писать блок в несколько строк.
 
-</details>
-
-```text:no-line-numbers
-B11.  # StorageClass reclaimPolicy: Retain; фич-стенды с PVC создаются и удаляются каждую неделю
-```text
-<details><summary>Ответ</summary>
-
-⚠️ При удалении PVC том переходит в `Released`, а диск в облаке остаётся и оплачивается —
+**B11.** ⚠️ При удалении PVC том переходит в `Released`, а диск в облаке остаётся и оплачивается —
 каждую неделю копятся новые. Для стендов — StorageClass с `reclaimPolicy: Delete`, для Retain —
 регулярная чистка `Released` PV.
 
-</details>
-
-```text:no-line-numbers
-B12.  script:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Ключ утёк в лог джобы (логи видят все с доступом к проекту). Отметить переменную
+**B12.** ⚠️ Ключ утёк в лог джобы (логи видят все с доступом к проекту). Отметить переменную
 masked, ротировать ключ, отладку делать без вывода секретов.
 
 </details>
 
-```text:no-line-numbers
-       - echo "key=$INFRACOST_API_KEY"   # отладка; переменная не masked
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Первая оценка без облачного аккаунта
-**1.** Установи Infracost v0.10, выполни `infracost auth login`.
+#### C1. 🔑 Первая оценка без облачного аккаунта
+1. Установи Infracost v0.10, выполни `infracost auth login`.
+2. Для `main.tf` из шапки: `infracost breakdown --path .` и `--show-skipped`.
+3. Какие ресурсы оценены, какие «depends on usage», какие бесплатны? Сколько стоит месяц?
 
 <details><summary>Ответ</summary>
 
@@ -928,104 +922,31 @@ masked, ротировать ключ, отладку делать без выв
 
 </details>
 
-**2.** Для `main.tf` из шапки: `infracost breakdown --path .` и `--show-skipped`.
-
-<details><summary>Ответ</summary>
-
-```text
-m6i.large → m6i.xlarge: (0,192 − 0,096) × 730 = +$70,08
-второй NAT:              0,045 × 730           = +$32,85
-второй EIP (IPv4):       0,005 × 730           = +$3,65
-Ожидаемый дифф ≈ +$106,6/мес (плюс usage-часть NAT, если задан usage-файл)
-```text
-Расхождения — актуальные цены в Pricing API отличаются от округлённых в задаче; EIP может
-не учитываться отдельно, если ресурс не поддержан в этой версии.
-
-</details>
-
-**3.** Какие ресурсы оценены, какие «depends on usage», какие бесплатны? Сколько стоит месяц?
-
-<details><summary>Ответ</summary>
-
-500 × $0,045 = $22,50/мес за обработку данных NAT (итого NAT ≈ $32,85 + $22,50 = $55,35).
-Лог-группа: приём 100 ГБ (~$0,50/ГБ → ~$50) + хранение 200 ГБ (~$0,03/ГБ → ~$6) — она может
-оказаться дороже NAT: usage-ресурсы часто и есть «невидимые» статьи счёта.
-
-</details>
-
-### C2. 🔑 Дифф руками и Infracost'ом
-**1.** Сохрани baseline в JSON. Поменяй `m6i.large` → `m6i.xlarge` и добавь второй `aws_eip`
+#### C2. 🔑 Дифф руками и Infracost'ом
+1. Сохрани baseline в JSON. Поменяй `m6i.large` → `m6i.xlarge` и добавь второй `aws_eip`
    + `aws_nat_gateway` (вторая AZ).
-
-<details><summary>Ответ</summary>
-
-Оценены `aws_instance` (инстанс + gp3 30 ГБ), `aws_nat_gateway` (часы), `aws_db_instance`
-(инстанс + хранилище), `aws_eip` (публичный IPv4, если прайс это учитывает); «depends on usage» —
-данные NAT, лог-группа (приём/хранение), S3 (хранение/запросы). Без usage-файла месяц ≈ сумма
-почасовых компонент — ориентир, а не счёт.
-
-</details>
-
-**2.** Посчитай ожидаемый дифф руками: m6i.large — $0,096/ч, m6i.xlarge — $0,192/ч,
+2. Посчитай ожидаемый дифф руками: m6i.large — $0,096/ч, m6i.xlarge — $0,192/ч,
    NAT — $0,045/ч, публичный IPv4 — $0,005/ч, 730 ч.
+3. Сравни с `infracost diff`. Объясни расхождения, если есть.
 
 <details><summary>Ответ</summary>
 
-```text
+```text:no-line-numbers
 m6i.large → m6i.xlarge: (0,192 − 0,096) × 730 = +$70,08
 второй NAT:              0,045 × 730           = +$32,85
 второй EIP (IPv4):       0,005 × 730           = +$3,65
 Ожидаемый дифф ≈ +$106,6/мес (плюс usage-часть NAT, если задан usage-файл)
-```text
+```
 Расхождения — актуальные цены в Pricing API отличаются от округлённых в задаче; EIP может
 не учитываться отдельно, если ресурс не поддержан в этой версии.
 
 </details>
 
-**3.** Сравни с `infracost diff`. Объясни расхождения, если есть.
-
-<details><summary>Ответ</summary>
-
-500 × $0,045 = $22,50/мес за обработку данных NAT (итого NAT ≈ $32,85 + $22,50 = $55,35).
-Лог-группа: приём 100 ГБ (~$0,50/ГБ → ~$50) + хранение 200 ГБ (~$0,03/ГБ → ~$6) — она может
-оказаться дороже NAT: usage-ресурсы часто и есть «невидимые» статьи счёта.
-
-</details>
-
-### C3. 🔑 Usage-файл
+#### C3. 🔑 Usage-файл
 Добавь usage: NAT обрабатывает 500 ГБ/мес, лог-группа принимает 100 ГБ/мес и хранит 200 ГБ.
 Посчитай руками стоимость обработки NAT ($0,045/ГБ) и сверь с выводом. Как меняется картина
 «самых дорогих ресурсов»?
 
-### C4. 🔑 Комментарий в GitLab MR
-**1.** Создай проект на gitlab.com, положи `main.tf` в `infra/aws/dev/`.
-
-<details><summary>Ответ</summary>
-
-Оценены `aws_instance` (инстанс + gp3 30 ГБ), `aws_nat_gateway` (часы), `aws_db_instance`
-(инстанс + хранилище), `aws_eip` (публичный IPv4, если прайс это учитывает); «depends on usage» —
-данные NAT, лог-группа (приём/хранение), S3 (хранение/запросы). Без usage-файла месяц ≈ сумма
-почасовых компонент — ориентир, а не счёт.
-
-</details>
-
-**2.** Добавь masked-переменные `INFRACOST_API_KEY` и `GITLAB_TOKEN` (scope `api`).
-
-<details><summary>Ответ</summary>
-
-```text
-m6i.large → m6i.xlarge: (0,192 − 0,096) × 730 = +$70,08
-второй NAT:              0,045 × 730           = +$32,85
-второй EIP (IPv4):       0,005 × 730           = +$3,65
-Ожидаемый дифф ≈ +$106,6/мес (плюс usage-часть NAT, если задан usage-файл)
-```text
-Расхождения — актуальные цены в Pricing API отличаются от округлённых в задаче; EIP может
-не учитываться отдельно, если ресурс не поддержан в этой версии.
-
-</details>
-
-**3.** Добавь джобу `infracost` из конспекта. Открой MR с `m6i.xlarge` — появился комментарий?
-
 <details><summary>Ответ</summary>
 
 500 × $0,045 = $22,50/мес за обработку данных NAT (итого NAT ≈ $32,85 + $22,50 = $55,35).
@@ -1034,7 +955,11 @@ m6i.large → m6i.xlarge: (0,192 − 0,096) × 730 = +$70,08
 
 </details>
 
-**4.** Запушь ещё одну правку — комментарий обновился, а не продублировался?
+#### C4. 🔑 Комментарий в GitLab MR
+1. Создай проект на gitlab.com, положи `main.tf` в `infra/aws/dev/`.
+2. Добавь masked-переменные `INFRACOST_API_KEY` и `GITLAB_TOKEN` (scope `api`).
+3. Добавь джобу `infracost` из конспекта. Открой MR с `m6i.xlarge` — появился комментарий?
+4. Запушь ещё одну правку — комментарий обновился, а не продублировался?
 
 <details><summary>Ответ</summary>
 
@@ -1044,100 +969,119 @@ m6i.large → m6i.xlarge: (0,192 − 0,096) × 730 = +$70,08
 
 </details>
 
-### C5. Политики conftest
-**1.** Напиши `policy/cost/cost.rego` (лимит роста $200) и прогони на `infracost.json` из C4/C2
+#### C5. Политики conftest
+1. Напиши `policy/cost/cost.rego` (лимит роста $200) и прогони на `infracost.json` из C4/C2
    (формат `diff`).
-
-<details><summary>Ответ</summary>
-
-Оценены `aws_instance` (инстанс + gp3 30 ГБ), `aws_nat_gateway` (часы), `aws_db_instance`
-(инстанс + хранилище), `aws_eip` (публичный IPv4, если прайс это учитывает); «depends on usage» —
-данные NAT, лог-группа (приём/хранение), S3 (хранение/запросы). Без usage-файла месяц ≈ сумма
-почасовых компонент — ориентир, а не счёт.
-
-</details>
-
-**2.** Напиши `policy/plan/plan.rego` (теги, gp2, типы в dev) и прогони на этом plan JSON:
-
-<details><summary>Ответ</summary>
-
-```text
-m6i.large → m6i.xlarge: (0,192 − 0,096) × 730 = +$70,08
-второй NAT:              0,045 × 730           = +$32,85
-второй EIP (IPv4):       0,005 × 730           = +$3,65
-Ожидаемый дифф ≈ +$106,6/мес (плюс usage-часть NAT, если задан usage-файл)
-```text
-Расхождения — актуальные цены в Pricing API отличаются от округлённых в задаче; EIP может
-не учитываться отдельно, если ресурс не поддержан в этой версии.
-
-</details>
-
-```text:no-line-numbers
+2. Напиши `policy/plan/plan.rego` (теги, gp2, типы в dev) и прогони на этом plan JSON:
+```json
 {
-```text
-```text:no-line-numbers
   "variables": { "env": { "value": "dev" } },
-```text
-```text:no-line-numbers
   "resource_changes": [
-```text
-```text:no-line-numbers
     { "address": "aws_instance.app", "type": "aws_instance",
-```text
-```text:no-line-numbers
       "change": { "actions": ["create"],
-```text
-```text:no-line-numbers
         "after": { "instance_type": "m6i.2xlarge",
-```text
-```text:no-line-numbers
                    "tags_all": { "owner": "team-shop", "env": "dev", "service": "shop" } } } },
-```text
-```text:no-line-numbers
     { "address": "aws_ebs_volume.data", "type": "aws_ebs_volume",
-```text
-```text:no-line-numbers
       "change": { "actions": ["create"],
-```text
-```text:no-line-numbers
         "after": { "type": "gp2", "size": 100,
-```text
-```text:no-line-numbers
                    "tags_all": { "owner": "team-shop", "env": "dev", "service": "shop", "cost-center": "cc-1" } } } }
-```text
-```text:no-line-numbers
   ]
-```text
-```text:no-line-numbers
 }
-```text
+```
 Сколько `deny` ты ожидаешь и каких?
 
-### C6. Теги кодом
+<details><summary>Ответ</summary>
+
+Ожидаются 3 `deny`: `aws_instance.app` без тега `cost-center`; `aws_ebs_volume.data` —
+gp2; `aws_instance.app` — `m6i.2xlarge` в dev. Команда: `conftest test plan.json -p policy/plan`.
+Для `cost.rego` на diff с ростом ~$107 — `deny` не сработает (лимит $200), при лимите $100 — сработает.
+
+</details>
+
+#### C6. Теги кодом
 Добавь в `main.tf` `default_tags` с переменными и validation из конспекта, `.tflint.hcl`
 с `aws_resource_missing_tags`. Запусти `tflint --init && tflint`. Убери `cost-center`
 из `default_tags` — что покажет tflint?
 
-### C7. Скрипт поиска сирот
+<details><summary>Ответ</summary>
+
+После удаления `cost-center` из `default_tags` tflint сообщит `aws_resource_missing_tags`
+для каждого тегируемого ресурса (`aws_instance.app`, `aws_eip.nat`, `aws_nat_gateway.main`,
+`aws_db_instance.shop`, `aws_cloudwatch_log_group.app`, `aws_s3_bucket.logs`): отсутствует
+тег `cost-center`.
+
+</details>
+
+#### C7. Скрипт поиска сирот
 Напиши `orphans.sh`: непривязанные диски, свободные EIP, свои снапшоты старше 90 дней,
 лог-группы без retention — и оценка стоимости в месяц (диск $0,08/ГБ, снапшот $0,05/ГБ,
 EIP $3,65). `set -euo pipefail`, чистый shellcheck. Нет аккаунта — проверь логику на
 выводе `aws … --generate-cli-skeleton output` или своём JSON.
 
-### C8. Lifecycle: сколько сэкономит (расчёт)
+<details><summary>Ответ</summary>
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+cutoff=$(date -u -d '-90 days' +%F)
+
+echo "== Непривязанные диски"
+aws ec2 describe-volumes --filters Name=status,Values=available --output json \
+  | jq -r '.Volumes[] | [.VolumeId, .Size, (.Size * 0.08 | tostring)] | @tsv' \
+  | awk -F'\t' '{s+=$3; print} END {printf "итого: $%.2f/мес\n", s}'
+
+echo "== Свободные EIP"
+n=$(aws ec2 describe-addresses --output json | jq '[.Addresses[] | select(.AssociationId == null)] | length')
+awk -v n="$n" 'BEGIN {printf "%d шт, $%.2f/мес\n", n, n * 3.65}'
+
+echo "== Снапшоты старше ${cutoff}"
+aws ec2 describe-snapshots --owner-ids self --output json \
+  | jq -r --arg c "$cutoff" '.Snapshots[] | select(.StartTime < $c) | [.SnapshotId, .VolumeSize, (.VolumeSize * 0.05 | tostring)] | @tsv' \
+  | awk -F'\t' '{s+=$3; print} END {printf "итого: $%.2f/мес\n", s}'
+
+echo "== Лог-группы без retention"
+aws logs describe-log-groups --output json \
+  | jq -r '.logGroups[] | select(.retentionInDays == null) | [.logGroupName, .storedBytes] | @tsv'
+```
+(Снапшоты тарифицируются по фактически занятым блокам, `VolumeSize` — верхняя оценка.)
+
+</details>
+
+#### C8. Lifecycle: сколько сэкономит (расчёт)
 В бакет логов приходит 1 ТБ (1000 ГБ) в месяц, логи хранятся 365 дней. Сейчас всё в Standard
 ($0,023/ГБ·мес). Политика: 30 дней Standard → до 90 дней STANDARD_IA ($0,0125) → до 365 дней
 GLACIER_IR ($0,004) → удаление. Посчитай стоимость хранения в установившемся режиме до и после.
 
-### C9. 🔑 Cost review своего стенда
+<details><summary>Ответ</summary>
+
+```
+Установившийся режим: всего 12 000 ГБ (12 месяцев по 1000 ГБ).
+До:    12 000 × $0,023 = $276/мес
+После: Standard 1 000 ГБ (0–30 дн)  × $0,023  = $23
+       IA       2 000 ГБ (30–90 дн) × $0,0125 = $25
+       GIR      9 000 ГБ (90–365)   × $0,004  = $36
+       итого                                   = $84/мес
+Экономия ≈ $192/мес (−70%), без учёта платы за переходы (зависит от числа объектов).
+```
+
+</details>
+
+#### C9. 🔑 Cost review своего стенда
 Заполни шаблон cost review (конспект, раздел 9) по своему стенду/pet-проекту: итог
 (OpenCost или счёт облака), топ-5 статей, эффективность, 3 action items с владельцем,
 сроком и ожидаемой экономией.
 
+<details><summary>Ответ</summary>
+
+Хороший результат: цифры за месяц (или неделю стенда), топ-5 статей с долями,
+эффективность requests и доля idle, 3 action items вида «rightsizing `api` в `demo` —
+я — до 15.10 — −$X/мес». Заметку положить в репозиторий стенда.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Комментарий Infracost в MR показал «+$0/мес», а после мержа счёт вырос на $800/мес.
 
@@ -1161,6 +1105,7 @@ skipped, мониторить фактические расходы (бюдже�
 </details>
 
 **D3.** В середине месяца джоба Infracost начала падать с ошибкой лимита/ключа: монорепо,
+40 проектов, пайплайн на каждый пуш.
 
 <details><summary>Ответ</summary>
 
@@ -1170,7 +1115,6 @@ skipped, мониторить фактические расходы (бюдже�
 
 </details>
 
-**40.** проектов, пайплайн на каждый пуш.
 **D4.** Бюджет dev превышен две недели назад, уведомление было, реакции — ноль.
 
 <details><summary>Ответ</summary>
@@ -1217,13 +1161,12 @@ DR-копия базы.
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как оценить стоимость инфраструктуры до `terraform apply`?
 
 <details><summary>Ответ</summary>
 
 Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл для usage-ресурсов,
-   для неподдерживаемых облаков — свой расчёт по прайсу.
+для неподдерживаемых облаков — свой расчёт по прайсу.
 
 </details>
 
@@ -1232,7 +1175,7 @@ Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл
 <details><summary>Ответ</summary>
 
 Джоба в MR: baseline целевой ветки → `infracost diff` → комментарий → conftest-политики
-   (лимит роста $, типы, классы дисков, теги) → апрув при превышении. Плюс tflint.
+(лимит роста $, типы, классы дисков, теги) → апрув при превышении. Плюс tflint.
 
 </details>
 
@@ -1241,7 +1184,7 @@ Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл
 <details><summary>Ответ</summary>
 
 `default_tags` и validation в Terraform, модули с тегами, tflint и политики на plan в CI,
-   SCP/Tag Policies в облаке, admission-политики в k8s, отчёт «без owner» и showback.
+SCP/Tag Policies в облаке, admission-политики в k8s, отчёт «без owner» и showback.
 
 </details>
 
@@ -1250,7 +1193,7 @@ Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл
 <details><summary>Ответ</summary>
 
 Бюджеты кодом (`aws_budgets_budget`) на аккаунт, окружения и команды с порогами по факту
-   и прогнозу; детектор аномалий; получатель — команда; runbook реакции.
+и прогнозу; детектор аномалий; получатель — команда; runbook реакции.
 
 </details>
 
@@ -1259,7 +1202,7 @@ Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл
 <details><summary>Ответ</summary>
 
 Скрипты/отчёты: непривязанные диски, старые снапшоты, свободные IP, пустые LB, лог-группы
-   без retention, PV `Released`, старые образы; инструменты провайдера (Trusted Advisor и т.п.).
+без retention, PV `Released`, старые образы; инструменты провайдера (Trusted Advisor и т.п.).
 
 </details>
 
@@ -1268,7 +1211,7 @@ Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл
 <details><summary>Ответ</summary>
 
 Автоматический перевод в дешёвые классы и удаление. Экономят на крупных редко читаемых
-   объектах; не экономят на миллионах мелких и часто читаемых (переходы, минимумы, извлечение).
+объектах; не экономят на миллионах мелких и часто читаемых (переходы, минимумы, извлечение).
 
 </details>
 
@@ -1277,7 +1220,7 @@ Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл
 <details><summary>Ответ</summary>
 
 Уровни логов и sampling, retention по классам логов (Loki, ILM, CloudWatch), дешёвое хранилище
-   (Loki на S3), не логировать лишнее, следить за объёмом приёма.
+(Loki на S3), не логировать лишнее, следить за объёмом приёма.
 
 </details>
 
@@ -1286,7 +1229,7 @@ Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл
 <details><summary>Ответ</summary>
 
 Ежемесячный разбор: тренд и юнит-метрики, топ строк, аномалии, action items с владельцами
-   и экономией, обязательства. Результат — записанные решения.
+и экономией, обязательства. Результат — записанные решения.
 
 </details>
 
@@ -1295,7 +1238,7 @@ Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл
 <details><summary>Ответ</summary>
 
 Можно удалить нужное (DR, бэкапы, чужое), особенно в общем аккаунте. Только с владельцем,
-   предупреждением, снапшотом; инструменты массового удаления — только в песочницах.
+предупреждением, снапшотом; инструменты массового удаления — только в песочницах.
 
 </details>
 
@@ -1304,9 +1247,7 @@ Infracost по коду в MR (`breakdown`/`diff` или `scan`), usage-файл
 <details><summary>Ответ</summary>
 
 Только AWS/Azure/GCP; usage-ресурсы требуют usage-файла; публичные цены без скидок; не видит
-    ресурсы вне кода; бесплатный лимит запусков; две версии CLI с разными командами.
-
----
+ресурсы вне кода; бесплатный лимит запусков; две версии CLI с разными командами.
 
 </details>
 

@@ -1,13 +1,13 @@
 ---
 title: "01. Окружение и каркас скрипта"
-description: "Блок → Python для DevOps → тема 1 из 8."
+description: "bash vs Python, venv/pip/pipx/uv, main() и коды выхода"
 ---
 
 # 01. Окружение и каркас скрипта
 
 > Блок → **Python для DevOps** → тема 1 из 8.
 > Модуль bash закончился разделом «Когда bash пора бросать»
-> ([26_bash_devops_practice.md](/linux/26-bash-devops-practice)) — здесь начинается то, что брать вместо.
+> ([Linux: 26. Bash в DevOps: боевые паттерны](/linux/26-bash-devops-practice)) — здесь начинается то, что брать вместо.
 >
 > **После темы ты умеешь:** решать, где писать на bash, а где на Python; ставить библиотеки,
 > не ломая системный Python; пользоваться venv, pip, pipx и uv; оформлять скрипт с `main()`
@@ -17,7 +17,7 @@ description: "Блок → Python для DevOps → тема 1 из 8."
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                     задача автоматизации
                             │
             ┌───────────────┴────────────────┐
@@ -30,7 +30,8 @@ description: "Блок → Python для DevOps → тема 1 из 8."
   откуда интерпретатор   куда ставить библиотеки   как оформить скрипт   где запускать
   системный python3      venv + requirements/lock  shebang, main(),      руками, cron,
   uv python / образ      pipx / uv tool — для CLI  sys.exit(код)         systemd, docker, CI
-```text
+```
+
 ---
 
 ## 1. Зачем девопсу Python
@@ -76,7 +77,7 @@ Python — второй язык девопса после bash. Не потом
 curl -sSf --max-time 10 -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
   "$GITLAB_URL/api/v4/projects/42/pipelines?status=failed&per_page=20" \
   | jq -r '.[] | "\(.id) \(.ref)"'
-```text
+```
 ```python
 import os
 import requests
@@ -90,7 +91,7 @@ resp = requests.get(
 resp.raise_for_status()
 for p in resp.json():
     print(p["id"], p["ref"])
-```text
+```
 Пока задача такая — bash короче. Когда нужно пройти все страницы, отфильтровать по дате,
 сгруппировать по веткам и отправить отчёт в Telegram — Python выигрывает с большим отрывом.
 
@@ -102,11 +103,12 @@ for p in resp.json():
 ansible-модули на хостах. Ломать его нельзя, поэтому современные Debian/Ubuntu
 запрещают `pip install` в систему (PEP 668):
 
-```text
+```
 $ pip install requests
 error: externally-managed-environment
 × This environment is externally managed
-```text
+```
+
 ⚠️ `--break-system-packages` и `sudo pip install` «чинят» ошибку, ломая систему. Не надо.
 
 | Способ получить Python | Когда |
@@ -120,7 +122,8 @@ error: externally-managed-environment
 python3 --version          # какая версия
 which -a python3           # какие интерпретаторы есть в PATH
 python3 -c 'import sys; print(sys.executable, sys.prefix)'   # какой реально запущен
-```text
+```
+
 ---
 
 ## 4. venv — отдельная коробка для зависимостей
@@ -133,14 +136,16 @@ python -m pip install requests       # ставится в .venv, а не в с�
 deactivate                           # вернуть PATH как было
 
 .venv/bin/python script.py           # ⭐ без активации — так запускают из cron/systemd
-```text
-```text
+```
+
+```text:no-line-numbers
 .venv/
 ├── bin/python  → /usr/bin/python3     (симлинк на базовый интерпретатор)
 ├── bin/pip, bin/activate
 ├── lib/python3.12/site-packages/      ← сюда ставятся библиотеки
 └── pyvenv.cfg                         ← откуда взят интерпретатор
-```text
+```
+
 - Активация — это только правка `PATH` в текущем шелле. Никакой магии.
 - venv **нельзя переносить** в другой каталог: пути прописаны внутри. Удали и создай заново.
 - `.venv/` — в `.gitignore`. В git живёт список зависимостей, а не окружение.
@@ -150,22 +155,23 @@ deactivate                           # вернуть PATH как было
 ## 5. pip, requirements и фиксация версий
 
 ```bash
-python -m pip install 'requests>=2.31,&lt;3'   # ⭐ python -m pip — тот pip, что у этого python
+python -m pip install 'requests>=2.31,<3'   # ⭐ python -m pip — тот pip, что у этого python
 python -m pip install -r requirements.txt
-python -m pip freeze&gt; requirements.txt     # снимок ВСЕГО окружения с точными версиями
+python -m pip freeze > requirements.txt     # снимок ВСЕГО окружения с точными версиями
 python -m pip list --outdated
 python -m pip show requests                 # версия, зависимости, где лежит
-```text
+```
+
 | Спецификатор | Смысл |
 |--------------|-------|
 | `requests==2.32.3` | Ровно эта версия (lock) |
-| `requests>=2.31,&lt;3` | Диапазон — для библиотек и «верхнеуровневых» зависимостей |
-| `requests~=2.32` | Совместимая: `&gt;=2.32, &lt;3` |
+| `requests>=2.31,<3` | Диапазон — для библиотек и «верхнеуровневых» зависимостей |
+| `requests~=2.32` | Совместимая: `>=2.32, <3` |
 | без версии | Что угодно — «вчера работало» ⚠️ |
 
 Две схемы, которые встречаются на практике:
 
-```text
+```text:no-line-numbers
 requirements.in      ← что нужно напрямую:   requests, pyyaml
       │  pip-compile (pip-tools) или  uv pip compile
       ▼
@@ -175,7 +181,8 @@ pyproject.toml       ← зависимости проекта (тема 08)
       │  uv lock
       ▼
 uv.lock              ← lock-файл uv
-```text
+```
+
 ---
 
 ## 6. pipx и uv
@@ -187,7 +194,8 @@ pipx install ruff              # линтер как отдельная кома
 pipx install --include-deps ansible
 pipx run pycowsay moo          # запустить один раз без установки
 pipx list
-```text
+```
+
 **uv** — быстрый менеджер от Astral, заменяет pip, venv, pip-tools, pipx и pyenv разом:
 
 | Задача | uv |
@@ -208,15 +216,16 @@ pipx list
 ```python
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = "&gt;=3.12"
+# requires-python = ">=3.12"
 # dependencies = ["requests", "pyyaml"]
 # ///
 import requests, yaml
 print(requests.__version__, yaml.__version__)
-```text
+```
 ```bash
 chmod +x check.py && ./check.py     # uv сам создаст окружение и поставит зависимости
-```text
+```
+
 ---
 
 ## 7. ⭐ Каркас скрипта
@@ -236,11 +245,9 @@ log = logging.getLogger("disk_check")
 
 DEFAULT_THRESHOLD = 90
 
-
 def used_percent(path: str) -> float:
     usage = shutil.disk_usage(path)
     return usage.used / usage.total * 100
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Проверка свободного места")
@@ -265,13 +272,13 @@ def main(argv: list[str] | None = None) -> int:
             log.info("%s: занято %.1f%%", path, pct)
     return exit_code
 
-
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
         sys.exit(130)
-```text
+```
+
 | Часть | Зачем |
 |-------|-------|
 | `#!/usr/bin/env python3` | Берёт `python3` из `PATH` — в активированном venv это python из venv |
@@ -302,7 +309,7 @@ chmod +x disk_check.py && ./disk_check.py / /var
 
 # cron: окружение минимальное — только абсолютные пути и явный python из venv
 */10 * * * * /opt/disk-check/.venv/bin/python /opt/disk-check/disk_check.py / >> /var/log/disk_check.log 2>&1
-```text
+```
 ```ini
 # /etc/systemd/system/disk-check.service  (+ disk-check.timer для расписания)
 [Service]
@@ -310,7 +317,8 @@ Type=oneshot
 ExecStart=/opt/disk-check/.venv/bin/python /opt/disk-check/disk_check.py / /var
 Environment=PYTHONUNBUFFERED=1
 User=monitor
-```text
+```
+
 ⚠️ **Буферизация stdout.** Когда stdout не терминал (docker, journald, pipe), `print()`
 копит вывод блоками, и логи приходят с задержкой или теряются при падении. Лечится
 `PYTHONUNBUFFERED=1`, `python -u` или логированием через `logging` (он пишет в stderr,
@@ -329,7 +337,8 @@ python3 -m tarfile -l backup.tar.gz            # содержимое архив
 python3 -m zipfile -l artifact.zip
 python3 -m timeit '"-".join(map(str, range(100)))'   # замерить скорость кусочка кода
 python3 -c 'import ssl; print(ssl.OPENSSL_VERSION)'
-```text
+```
+
 ---
 
 ## 10. Грабли окружения
@@ -350,7 +359,7 @@ python3 -c 'import ssl; print(ssl.OPENSSL_VERSION)'
 
 ## 💼 Как это в DevOps
 
-- Типичный путь утилиты: скрипт в git-репозитории `ops-scripts` → venv в `/opt/&lt;tool&gt;`
+- Типичный путь утилиты: скрипт в git-репозитории `ops-scripts` → venv в `/opt/<tool>`
   или образ `python:3.12-slim` → запуск из systemd-таймера, CI или k8s CronJob.
 - На ревью первым делом смотрят: есть ли `main()` и код выхода, зафиксированы ли версии,
   не лезет ли скрипт в системный Python.
@@ -396,13 +405,16 @@ python3 -c 'import ssl; print(ssl.OPENSSL_VERSION)'
 9. В контейнерах и journald — `PYTHONUNBUFFERED=1`, иначе логи опаздывают.
 10. uv закрывает всё: версии Python, venv, зависимости, lock, CLI-утилиты, однофайловые скрипты.
 
-➡️ Дальше: [02_basics_for_scripts.md](/python/02-basics-for-scripts) · Задачи: 01_python_setup_tasks.md
+---
 
+## Задачи
+
+> Стенд: любая Linux-машина с `python3` 3.12+ и `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
+> Для задач с systemd/cron подойдёт ВМ или контейнер `ubuntu:24.04`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Назови пять мест в DevOps, где ты встретишь Python, и что там на нём написано.
 
@@ -513,6 +525,7 @@ pipx ставит CLI-утилиты (ruff, ansible, httpie) каждую в с�
 <details><summary>Ответ</summary>
 
 0 — успех, 1 — проверка не прошла/ошибка, 2 — неверные аргументы или окружение,
+130 — Ctrl+C. Необработанное исключение — код 1 и traceback в stderr.
 
 </details>
 
@@ -547,182 +560,114 @@ pipx ставит CLI-утилиты (ruff, ansible, httpie) каждую в с�
 
 ### Блок B. «Что выведет / что тут не так»
 
-
-```text:no-line-numbers
+```bash
 B1.  $ pip install requests && python3 -c 'import requests'
+     ModuleNotFoundError: No module named 'requests'
+```
+```python
+# B2. файл называется yaml.py
+import yaml
+print(yaml.safe_load("a: 1"))
+```
+```python
+# B3.
+import sys
+def main():
+    print("готово")
+    return 3
+main()
+```
+```python
+# B4.
+import sys
+sys.exit("конфиг не найден")          # какой код выхода и куда уйдёт текст?
+```
+```bash
+B5.  */5 * * * * python3 ~/scripts/report.py
+```
+```dockerfile
+# B6. app.py печатает print() в цикле, а docker logs пустые минутами
+FROM python:3.12-slim
+COPY app.py .
+CMD ["python", "app.py"]
+```
 ```text
-<details><summary>Ответ</summary>
+B7.  requirements.txt:
+     requests
+     pyyaml
+```
+```bash
+B8.  $ ./deploy.py
+     /usr/bin/env: 'python3\r': No such file or directory
+```
+```python
+# B9.
+def main() -> int:
+    ...
+if __name__ == "__main__":
+    main()                            # скрипт упал на проверке — какой код увидит CI?
+```
+```bash
+B10. $ rsync -a ~/tools/.venv/ server:/opt/tools/.venv/ && ssh server /opt/tools/.venv/bin/python -V
+```
+```bash
+B11. $ python3 -m venv .venv
+     The virtual environment was not created successfully because ensurepip is not available.
+```
+```bash
+B12. $ pip install --break-system-packages ansible
+```
 
-`pip` и `python3` принадлежат разным интерпретаторам (или pip поставил в `--user`
+<details><summary>Ответы</summary>
+
+**B1.** `pip` и `python3` принадлежат разным интерпретаторам (или pip поставил в `--user`
 другой версии). Лечение — `python3 -m pip install requests`, а лучше venv.
 
-</details>
+**B2.** Файл `yaml.py` импортирует сам себя: `AttributeError: module 'yaml' has no attribute
+'safe_load'` (или ошибка частично инициализированного модуля). Переименовать файл, удалить `__pycache__`.
 
-```text:no-line-numbers
-     ModuleNotFoundError: No module named 'requests'
-```text
-```text:no-line-numbers
-# B2. файл называется yaml.py
-```text
-```text:no-line-numbers
-import yaml
-```text
-```text:no-line-numbers
-print(yaml.safe_load("a: 1"))
-```text
-```text:no-line-numbers
-# B3.
-```text
-```text:no-line-numbers
-import sys
-```text
-```text:no-line-numbers
-def main():
-```text
-```text:no-line-numbers
-    print("готово")
-```text
-```text:no-line-numbers
-    return 3
-```text
-```text:no-line-numbers
-main()
-```text
-```text:no-line-numbers
-# B4.
-```text
-```text:no-line-numbers
-import sys
-```text
-```text:no-line-numbers
-sys.exit("конфиг не найден")          # какой код выхода и куда уйдёт текст?
-```text
-```text:no-line-numbers
-B5.  */5 * * * * python3 ~/scripts/report.py
-```text
-<details><summary>Ответ</summary>
+**B3.** Напечатает «готово», но код выхода 0: возвращаемое значение `main()` выброшено.
+Нужно `sys.exit(main())`.
 
-⚠️ Запустится системный `python3` без библиотек venv, `PATH` у cron урезан, текущий
+**B4.** Текст уйдёт в stderr, код выхода 1.
+
+**B5.** ⚠️ Запустится системный `python3` без библиотек venv, `PATH` у cron урезан, текущий
 каталог — `$HOME`, а вывод никуда не сохраняется (в лучшем случае уходит в локальную почту).
 Нужны абсолютные пути к venv-python и скрипту и `>> log 2>&1`.
 
-</details>
+**B6.** stdout буферизуется: добавить `ENV PYTHONUNBUFFERED=1` или `python -u`.
 
-```text:no-line-numbers
-# B6. app.py печатает print() в цикле, а docker logs пустые минутами
-```text
-```text:no-line-numbers
-FROM python:3.12-slim
-```text
-```text:no-line-numbers
-COPY app.py .
-```text
-```text:no-line-numbers
-CMD ["python", "app.py"]
-```text
-```text:no-line-numbers
-B7.  requirements.txt:
-```text
-<details><summary>Ответ</summary>
+**B7.** ⚠️ Версии не зафиксированы — сборка невоспроизводима. Нужен lock с `==` для всех пакетов.
 
-⚠️ Версии не зафиксированы — сборка невоспроизводима. Нужен lock с `==` для всех пакетов.
+**B8.** Файл с Windows-переводами строк (CRLF): `\r` попал в шебанг. `dos2unix deploy.py`.
 
-</details>
+**B9.** Код 0: результат `main()` не передан в `sys.exit`. CI будет зелёным при ошибке.
 
-```text:no-line-numbers
-     requests
-```text
-```text:no-line-numbers
-     pyyaml
-```text
-```text:no-line-numbers
-B8.  $ ./deploy.py
-```text
-<details><summary>Ответ</summary>
-
-Файл с Windows-переводами строк (CRLF): `\r` попал в шебанг. `dos2unix deploy.py`.
-
-</details>
-
-```text:no-line-numbers
-     /usr/bin/env: 'python3\r': No such file or directory
-```text
-```text:no-line-numbers
-# B9.
-```text
-```text:no-line-numbers
-def main() -> int:
-```text
-```text:no-line-numbers
-    ...
-```text
-```text:no-line-numbers
-if __name__ == "__main__":
-```text
-```text:no-line-numbers
-    main()                            # скрипт упал на проверке — какой код увидит CI?
-```text
-```text:no-line-numbers
-B10.  $ rsync -a ~/tools/.venv/ server:/opt/tools/.venv/ && ssh server /opt/tools/.venv/bin/python -V
-```text
-<details><summary>Ответ</summary>
-
-⚠️ venv перенесён — пути и симлинк `bin/python` указывают в никуда или на другой
+**B10.** ⚠️ venv перенесён — пути и симлинк `bin/python` указывают в никуда или на другой
 интерпретатор. Переносят requirements/lock и создают venv на месте.
 
-</details>
+**B11.** На Debian/Ubuntu нет пакета `python3-venv` (`apt install python3-venv` или `python3.12-venv`).
 
-```text:no-line-numbers
-B11.  $ python3 -m venv .venv
-```text
-<details><summary>Ответ</summary>
-
-На Debian/Ubuntu нет пакета `python3-venv` (`apt install python3-venv` или `python3.12-venv`).
-
-</details>
-
-```text:no-line-numbers
-     The virtual environment was not created successfully because ensurepip is not available.
-```text
-```text:no-line-numbers
-B12.  $ pip install --break-system-packages ansible
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Ставит пакеты в системный Python в обход PEP 668 — риск сломать ОС. Правильно:
+**B12.** ⚠️ Ставит пакеты в системный Python в обход PEP 668 — риск сломать ОС. Правильно:
 `pipx install --include-deps ansible` или venv.
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
+#### C1. Разведка интерпретаторов
+1. Выведи все `python3` в `PATH` и их версии.
+2. Узнай `sys.executable` и `sys.prefix` для системного Python и для venv.
+3. Найди, где лежит `site-packages` системного Python (`python3 -m site`).
 
-### C1. Разведка интерпретаторов
-**1.** Выведи все `python3` в `PATH` и их версии.
-**2.** Узнай `sys.executable` и `sys.prefix` для системного Python и для venv.
-
-<details><summary>Ответ</summary>
-
-Проверка: `ls .venv/lib/python3.*/site-packages | grep -i requests`,
-`.venv/bin/python -c 'import requests, yaml; print("ok")'`.
-
-</details>
-
-**3.** Найди, где лежит `site-packages` системного Python (`python3 -m site`).
-
-<details><summary>Ответ</summary>
-
-В lock попадут транзитивные зависимости `requests`: `urllib3`, `idna`, `certifi`,
-`charset-normalizer`. После ограничения `&lt;2.32` версия requests (и, возможно, urllib3) сменится.
-
-</details&gt;
-
-### C2. 🔑 venv руками
-**1.** Создай проект `~/labs/py/01`, в нём venv `.venv`.
-**2.** Поставь `requests` и `pyyaml`, сними `pip freeze` в `requirements.txt`.
+#### C2. 🔑 venv руками
+1. Создай проект `~/labs/py/01`, в нём venv `.venv`.
+2. Поставь `requests` и `pyyaml`, сними `pip freeze` в `requirements.txt`.
+3. Удали `.venv`, создай заново и восстанови зависимости из файла.
+4. Запусти `python -c 'import requests'` без активации — через `.venv/bin/python`.
+5. Добавь `.gitignore` с `.venv/` и `__pycache__/`.
 
 <details><summary>Ответ</summary>
 
@@ -731,142 +676,93 @@ B12.  $ pip install --break-system-packages ansible
 
 </details>
 
-**3.** Удали `.venv`, создай заново и восстанови зависимости из файла.
+#### C3. Lock-файл
+1. Создай `requirements.in` с `requests` и `pyyaml`.
+2. Собери `requirements.txt` через `uv pip compile`. Сколько там пакетов и откуда лишние?
+3. Поменяй в `.in` на `requests<2.32` и пересобери. Что изменилось?
 
 <details><summary>Ответ</summary>
 
 В lock попадут транзитивные зависимости `requests`: `urllib3`, `idna`, `certifi`,
-`charset-normalizer`. После ограничения `&lt;2.32` версия requests (и, возможно, urllib3) сменится.
+`charset-normalizer`. После ограничения `<2.32` версия requests (и, возможно, urllib3) сменится.
 
-</details&gt;
+</details>
 
-**4.** Запусти `python -c 'import requests'` без активации — через `.venv/bin/python`.
-**5.** Добавь `.gitignore` с `.venv/` и `__pycache__/`.
+#### C4. pipx / uv tool
+1. Поставь `ruff` через `uv tool install` (или `pipx install`).
+2. Убедись, что `ruff` — отдельная команда и не виден в venv проекта.
+3. Запусти разово `uvx pycowsay moo`.
+
+#### C5. 🔑 Каркас скрипта
+Напиши `disk_check.py` по каркасу из конспекта:
+1. Аргументы: список путей и `--threshold`.
+2. Код выхода 0 — всё ок, 1 — превышен порог, 2 — путь не существует.
+3. Проверь коды: `./disk_check.py /; echo $?`, `./disk_check.py / --threshold 1; echo $?`,
+   `./disk_check.py /nope; echo $?`.
+4. Импортируй функцию `used_percent` в `python3 -c` и убедись, что `main()` при импорте не выполнился.
 
 <details><summary>Ответ</summary>
 
 Импорт без выполнения `main()`:
 ```bash
 python3 -c 'import disk_check; print(disk_check.used_percent("/"))'
-```text
-</details>
-
-### C3. Lock-файл
-**1.** Создай `requirements.in` с `requests` и `pyyaml`.
-**2.** Собери `requirements.txt` через `uv pip compile`. Сколько там пакетов и откуда лишние?
-
-<details><summary>Ответ</summary>
-
-Проверка: `ls .venv/lib/python3.*/site-packages | grep -i requests`,
-`.venv/bin/python -c 'import requests, yaml; print("ok")'`.
+```
 
 </details>
 
-**3.** Поменяй в `.in` на `requests&lt;2.32` и пересобери. Что изменилось?
-
-<details&gt;<summary>Ответ</summary>
-
-В lock попадут транзитивные зависимости `requests`: `urllib3`, `idna`, `certifi`,
-`charset-normalizer`. После ограничения `&lt;2.32` версия requests (и, возможно, urllib3) сменится.
-
-</details&gt;
-
-### C4. pipx / uv tool
-**1.** Поставь `ruff` через `uv tool install` (или `pipx install`).
-**2.** Убедись, что `ruff` — отдельная команда и не виден в venv проекта.
-
-<details><summary>Ответ</summary>
-
-Проверка: `ls .venv/lib/python3.*/site-packages | grep -i requests`,
-`.venv/bin/python -c 'import requests, yaml; print("ok")'`.
-
-</details>
-
-**3.** Запусти разово `uvx pycowsay moo`.
-
-<details><summary>Ответ</summary>
-
-В lock попадут транзитивные зависимости `requests`: `urllib3`, `idna`, `certifi`,
-`charset-normalizer`. После ограничения `&lt;2.32` версия requests (и, возможно, urllib3) сменится.
-
-</details&gt;
-
-### C5. 🔑 Каркас скрипта
-Напиши `disk_check.py` по каркасу из конспекта:
-**1.** Аргументы: список путей и `--threshold`.
-**2.** Код выхода 0 — всё ок, 1 — превышен порог, 2 — путь не существует.
-
-<details><summary>Ответ</summary>
-
-Проверка: `ls .venv/lib/python3.*/site-packages | grep -i requests`,
-`.venv/bin/python -c 'import requests, yaml; print("ok")'`.
-
-</details>
-
-**3.** Проверь коды: `./disk_check.py /; echo $?`, `./disk_check.py / --threshold 1; echo $?`,
-   `./disk_check.py /nope; echo $?`.
-
-<details><summary>Ответ</summary>
-
-В lock попадут транзитивные зависимости `requests`: `urllib3`, `idna`, `certifi`,
-`charset-normalizer`. После ограничения `&lt;2.32` версия requests (и, возможно, urllib3) сменится.
-
-</details&gt;
-
-**4.** Импортируй функцию `used_percent` в `python3 -c` и убедись, что `main()` при импорте не выполнился.
-### C6. Однофайловый скрипт с зависимостями
+#### C6. Однофайловый скрипт с зависимостями
 Сделай `ip_info.py` с блоком `# /// script`, зависимостью `requests` и выводом ответа
 `https://httpbin.org/ip` (или любого доступного JSON-эндпоинта). Запусти через `./ip_info.py`.
 
-### C7. Запуск по расписанию
-**1.** Разложи `disk_check.py` в `/opt/disk-check/` со своим venv.
-**2.** Сделай systemd-юнит `disk-check.service` (`Type=oneshot`) и таймер раз в 10 минут.
+#### C7. Запуск по расписанию
+1. Разложи `disk_check.py` в `/opt/disk-check/` со своим venv.
+2. Сделай systemd-юнит `disk-check.service` (`Type=oneshot`) и таймер раз в 10 минут.
+3. Проверь вывод в `journalctl -u disk-check`.
+4. Альтернатива: строка в crontab с абсолютными путями и перенаправлением вывода.
 
 <details><summary>Ответ</summary>
 
-Проверка: `ls .venv/lib/python3.*/site-packages | grep -i requests`,
-`.venv/bin/python -c 'import requests, yaml; print("ok")'`.
+Таймер:
+```ini
+# /etc/systemd/system/disk-check.timer
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+`systemctl daemon-reload && systemctl enable --now disk-check.timer`,
+проверка — `systemctl list-timers | grep disk`.
 
 </details>
 
-**3.** Проверь вывод в `journalctl -u disk-check`.
+#### C8. Буферизация
+1. Скрипт: `for i in range(5): print(i); time.sleep(1)`.
+2. Запусти `python3 s.py | cat` и `python3 -u s.py | cat` — сравни, когда появляется вывод.
+3. Повтори с `logging` вместо `print`.
 
 <details><summary>Ответ</summary>
 
-В lock попадут транзитивные зависимости `requests`: `urllib3`, `idna`, `certifi`,
-`charset-normalizer`. После ограничения `&lt;2.32` версия requests (и, возможно, urllib3) сменится.
-
-</details&gt;
-
-**4.** Альтернатива: строка в crontab с абсолютными путями и перенаправлением вывода.
-### C8. Буферизация
-**1.** Скрипт: `for i in range(5): print(i); time.sleep(1)`.
-**2.** Запусти `python3 s.py | cat` и `python3 -u s.py | cat` — сравни, когда появляется вывод.
-
-<details><summary>Ответ</summary>
-
-Проверка: `ls .venv/lib/python3.*/site-packages | grep -i requests`,
-`.venv/bin/python -c 'import requests, yaml; print("ok")'`.
+С `| cat` вывод `print` появится разом в конце; с `-u` — по строке в секунду.
+`logging` по умолчанию пишет в stderr, и он появляется сразу.
 
 </details>
 
-**3.** Повтори с `logging` вместо `print`.
-
-<details><summary>Ответ</summary>
-
-В lock попадут транзитивные зависимости `requests`: `urllib3`, `idna`, `certifi`,
-`charset-normalizer`. После ограничения `&lt;2.32` версия requests (и, возможно, urllib3) сменится.
-
-</details&gt;
-
-### C9. Ctrl+C
+#### C9. Ctrl+C
 Добавь в скрипт `time.sleep(60)`, нажми Ctrl+C. Какой код выхода без обработки
 `KeyboardInterrupt` и какой с ней? Что печатается в каждом случае?
+
+<details><summary>Ответ</summary>
+
+Без обработки — traceback `KeyboardInterrupt` и код 130 (Python сам выставляет
+128 + SIGINT начиная с 3.8, но печатает traceback). С обработкой — тихий выход с 130.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Скрипт отлично работает руками, а из cron падает с `ModuleNotFoundError`. Три причины.
 
@@ -946,13 +842,12 @@ Cron запускает системный `python3`, а не venv; другой
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Когда ты выберешь bash, а когда Python?
 
 <details><summary>Ответ</summary>
 
 Bash — склеить утилиты, entrypoint, короткие обёртки. Python — JSON/API, ретраи,
-   структуры данных, тесты, SDK, скрипт больше ~100-200 строк.
+структуры данных, тесты, SDK, скрипт больше ~100-200 строк.
 
 </details>
 
@@ -961,7 +856,7 @@ Bash — склеить утилиты, entrypoint, короткие обёрт�
 <details><summary>Ответ</summary>
 
 Изолированный каталог с интерпретатором и библиотеками проекта; зависимости не конфликтуют
-   между проектами и не ломают систему.
+между проектами и не ломают систему.
 
 </details>
 
@@ -970,7 +865,7 @@ Bash — склеить утилиты, entrypoint, короткие обёрт�
 <details><summary>Ответ</summary>
 
 Lock-файл с точными версиями: `pip-compile`/`uv pip compile` → `requirements.txt`
-   или `uv lock`; в CI ставить строго из него.
+или `uv lock`; в CI ставить строго из него.
 
 </details>
 
@@ -1027,9 +922,7 @@ systemd-таймер (или cron) с абсолютным путём к python 
 <details><summary>Ответ</summary>
 
 Ansible (создать venv + `pip install -r` из lock), deb-пакет, контейнерный образ,
-    или один бинарник через zipapp/shiv. Проще всего — Docker-образ или Ansible-роль с venv.
-
----
+или один бинарник через zipapp/shiv. Проще всего — Docker-образ или Ansible-роль с venv.
 
 </details>
 

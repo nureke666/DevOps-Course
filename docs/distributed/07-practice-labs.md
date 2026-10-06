@@ -1,12 +1,12 @@
 ---
 title: "07. Практика: 6 лаб по распределённым системам"
-description: "Блок → Распределённые системы → практика. Лабы делаются руками в ~/labs/distributed/"
+description: "6 лаб: etcd из 3 нод под отказами и разделением сети, failover Patroni и попытка split brain, дрейф часов, Kafka acks и min.insync.replicas, ретраи без идемпотентности, outbox"
 ---
 
 # 07. Практика: 6 лаб по распределённым системам
 
 > Блок → Распределённые системы → практика. Лабы делаются руками в `~/labs/distributed/`
-> (стенд — в [00_INDEX.md](/distributed/)) и остаются в git. После них на собесе есть что показать:
+> (стенд — в [Распределённые системы](/distributed/)) и остаются в git. После них на собесе есть что показать:
 > свои цифры failover'а etcd и Patroni, воспроизведённый split brain, посчитанные потери Kafka при
 > `acks=1`, ключ идемпотентности и outbox, которые выдержали `kill -9`.
 >
@@ -33,10 +33,11 @@ description: "Блок → Распределённые системы → пр�
 mkdir -p ~/labs/distributed && cd ~/labs/distributed && git init 2>/dev/null
 docker compose version                       # v2
 # задержки и разделения — из sidecar-контейнера netshoot в сетевом неймспейсе узла:
-#   network_mode: "service:&lt;узел&gt;" + cap_add: [NET_ADMIN]
+#   network_mode: "service:<узел>" + cap_add: [NET_ADMIN]
 # ⚠️ перезапустил узел — пересоздай его sidecar: docker compose up -d --force-recreate chaosN
 #    (иначе sidecar остаётся в старом неймспейсе: «Cannot find device eth0»)
-```text
+```
+
 ---
 
 ## 🧪 Лаба 1. ⭐ etcd из 3 узлов под отказами и разделением сети
@@ -47,8 +48,8 @@ docker compose version                       # v2
 задержку до выборов нового лидера.
 
 ### Темы
-[04_consensus_quorum.md](/distributed/04-consensus-quorum) (Raft, кворум, выборы, таймауты etcd),
-[01_fallacies_basics.md](/distributed/01-fallacies-basics) (задержка ≠ отказ, таймауты).
+[04. Консенсус и кворум: Raft, etcd, Patroni, Ceph, corosync](/distributed/04-consensus-quorum) (Raft, кворум, выборы, таймауты etcd),
+[01. Основы: частичные отказы, задержки и 8 заблуждений о сети](/distributed/01-fallacies-basics) (задержка ≠ отказ, таймауты).
 
 ### Стенд
 ```bash
@@ -56,10 +57,10 @@ mkdir -p ~/labs/distributed/lab1 && cd ~/labs/distributed/lab1
 IMG=quay.io/coreos/etcd:v3.6.15              # проверь тег (образ distroless: внутри нет sh)
 {
 echo "services:"
-for i in 1 2 3; do cat <&lt;EOF
+for i in 1 2 3; do cat <<EOF
   etcd$i:
     image: $IMG
-    command:&gt;-
+    command: >-
       etcd --name etcd$i --data-dir /etcd-data
       --listen-peer-urls http://0.0.0.0:2380 --initial-advertise-peer-urls http://etcd$i:2380
       --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://etcd$i:2379
@@ -82,12 +83,13 @@ docker compose up -d && sleep 5
 EP=etcd1:2379,etcd2:2379,etcd3:2379
 st() { docker compose exec -T etcd1 etcdctl --endpoints=$EP endpoint status -w table; }
 st                                           # IS LEADER, RAFT TERM
-```text
+```
+
 Латентность записи меряем без накладных `docker exec` — curl к HTTP/JSON-шлюзу etcd
 (`/v3/kv/put`, ключ и значение в base64: `eA==` = `x`):
 ```bash
 cat > lat.sh <<'EOF'
-# lat.sh &lt;endpoint&gt; [n] — p50/p99/max времени put в мс
+# lat.sh <endpoint> [n] — p50/p99/max времени put в мс
 ep=$1; n=${2:-50}
 for i in $(seq $n); do
   curl -s -o /dev/null -w '%{time_total}\n' -X POST "http://$ep/v3/kv/put" -d '{"key":"bGF0","value":"eA=="}'
@@ -95,9 +97,10 @@ done | sort -n | awk '{a[NR]=$1*1000} END {printf "n=%d p50=%.1fms p99=%.1fms ma
 EOF
 docker compose cp lat.sh client:/lat.sh
 lat() { docker compose exec -T client sh /lat.sh "$@"; }
-```text
+```
+
 ### Шаги
-1. **База.** Найди лидера (`st`), затем `lat &lt;лидер&gt;:2379` и `lat &lt;фолловер&gt;:2379`.
+1. **База.** Найди лидера (`st`), затем `lat <лидер>:2379` и `lat <фолловер>:2379`.
    Ожидаемо: единицы миллисекунд (на прогоне p50 ≈ 1,2 мс) через любой узел.
 2. **Задержка 100 мс на фолловере** (`docker compose exec -T chaosN tc qdisc add dev eth0 root netem delay 100ms`).
    Повтори замеры через лидера и через этот фолловер. Ожидаемо: через лидера — **без изменений**
@@ -111,12 +114,12 @@ lat() { docker compose exec -T client sh /lat.sh "$@"; }
    задержку: лидерство **не** возвращается старому узлу само.
 5. ⭐ **Разделение 1 | 2 — отрезаем лидера** (от соседей, но не от клиента):
    ```bash
-   N=&lt;номер лидера&gt;
+   N=<номер лидера>
    docker compose exec -T chaos$N sh -c 'for h in etcd1 etcd2 etcd3; do [ $h = etcd'$N' ] && continue
      ip=$(getent hosts $h | cut -d" " -f1); iptables -A INPUT -s $ip -j DROP; iptables -A OUTPUT -d $ip -j DROP; done'
    # запись через узел большинства — раз в 0,1 с, таймаут 1 с: сколько запросов не прошло?
    docker compose exec -T client sh -c 'for i in $(seq 30); do curl -s -m 1 -o /dev/null -w "%{http_code} " \
-     -X POST http://&lt;узел большинства&gt;:2379/v3/kv/put -d "{\"key\":\"eA==\",\"value\":\"eQ==\"}"; sleep 0.1; done; echo'
+     -X POST http://<узел большинства>:2379/v3/kv/put -d "{\"key\":\"eA==\",\"value\":\"eQ==\"}"; sleep 0.1; done; echo'
    # запись и чтения через отрезанного старого лидера
    docker compose exec -T client curl -s -m 10 -w ' %{http_code}\n' -X POST http://etcd$N:2379/v3/kv/put -d '{"key":"eA==","value":"eg=="}'
    docker compose exec -T client curl -s -m 10 -w ' %{http_code}\n' -X POST http://etcd$N:2379/v3/kv/range -d '{"key":"eA=="}'
@@ -157,8 +160,8 @@ lat() { docker compose exec -T client sh /lat.sh "$@"; }
 которого защищает watchdog, и увидеть, какие данные он съедает.
 
 ### Темы
-[04_consensus_quorum.md](/distributed/04-consensus-quorum) (Patroni + DCS), [06_failure_modes.md](/distributed/06-failure-modes) §1,
-[../Storage/06_db_backup_replication.md](/storage/06-db-backup-replication) §9 (Patroni в эксплуатации).
+[04. Консенсус и кворум: Raft, etcd, Patroni, Ceph, corosync](/distributed/04-consensus-quorum) (Patroni + DCS), [06. Режимы отказов: split brain, retry storm, метастабильность, exactly-once и outbox](/distributed/06-failure-modes) §1,
+[Хранилища: 06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication) §9 (Patroni в эксплуатации).
 
 ### Стенд
 ```dockerfile
@@ -169,7 +172,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 USER postgres
 ENTRYPOINT ["patroni", "/etc/patroni.yml"]
-```text
+```
 ```yaml
 # patroni.yml — общий для узлов; имя и адреса — через PATRONI_* в compose
 scope: shop-pg
@@ -196,8 +199,8 @@ postgresql:
     replication: { username: replicator, password: replicator }
     rewind:      { username: rewinder,   password: rewinder }
 watchdog: { mode: off }        # в контейнере /dev/watchdog нет; на VM — modprobe softdog и mode: required
-```text
-```text
+```
+```text:no-line-numbers
 # haproxy.cfg — 5000 → только текущий primary (проверка /primary на REST API Patroni)
 global
     maxconn 200
@@ -219,15 +222,15 @@ listen primary
     server pg1 pg1:5432 check port 8008
     server pg2 pg2:5432 check port 8008
     server pg3 pg3:5432 check port 8008
-```text
+```
 ```bash
 mkdir -p ~/labs/distributed/lab2 && cd ~/labs/distributed/lab2   # сюда три файла выше
 {
 echo "services:"
-for i in 1 2 3; do cat <&lt;EOF
+for i in 1 2 3; do cat <<EOF
   etcd$i:
     image: quay.io/coreos/etcd:v3.6.15       # проверь тег
-    command:&gt;-
+    command: >-
       etcd --name etcd$i --data-dir /etcd-data
       --listen-peer-urls http://0.0.0.0:2380 --initial-advertise-peer-urls http://etcd$i:2380
       --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://etcd$i:2379
@@ -235,7 +238,7 @@ for i in 1 2 3; do cat <&lt;EOF
       --initial-cluster-token lab2 --initial-cluster-state new
 EOF
 done
-for i in 1 2 3; do cat <&lt;EOF
+for i in 1 2 3; do cat <<EOF
   pg$i:
     build: .
     image: lab-patroni:17
@@ -257,12 +260,13 @@ cat <<'EOF'
     ports: [ "127.0.0.1:15000:5000", "127.0.0.1:17000:7000" ]
     depends_on: [pg1, pg2, pg3]
 EOF
-}&gt; compose.yaml
+} > compose.yaml
 docker compose up -d --build && sleep 25
 pl() { docker compose exec -T "${1:-pg1}" patronictl -c /etc/patroni.yml list; }
 pl                                            # Leader + 2 × streaming, TL 1
-```text
-«Писатель» — раз в 0,5 с вставляет строку через HAProxy и пишет в лог `ok &lt;адрес сервера&gt;` или `FAIL`
+```
+
+«Писатель» — раз в 0,5 с вставляет строку через HAProxy и пишет в лог `ok <адрес сервера>` или `FAIL`
 (живёт в контейнере реплики pg3; если pg3 станет лидером — это нормально):
 ```bash
 docker compose exec -T -e PGPASSWORD=postgres pg3 psql -h haproxy -p 5000 -U postgres \
@@ -273,22 +277,23 @@ docker compose exec -d -T -e PGPASSWORD=postgres pg3 sh -c 'while true; do
 wlog()  { docker compose exec -T pg3 sh -c "awk '{print \$1, \$2, \$3}' /tmp/writer.log | uniq -c -f1"; }  # сводка ok/FAIL
 wreset(){ docker compose exec -T pg3 sh -c ': > /tmp/writer.log'; }
 rec()   { for n in pg1 pg2 pg3; do printf "%s:%s " $n "$(docker compose exec -T $n psql -U postgres -tAc 'select pg_is_in_recovery()' 2>&1 | head -c 40)"; done; echo; }
-```text
+```
+
 ### Шаги
-1. **Switchover** (плановый): `patronictl switchover shop-pg --leader &lt;лидер&gt; --candidate &lt;реплика&gt; --force`,
+1. **Switchover** (плановый): `patronictl switchover shop-pg --leader <лидер> --candidate <реплика> --force`,
    `wlog`. Ожидаемо: несколько FAIL за пару секунд.
-2. **Failover: чистая остановка против `kill -9`.** `wreset; docker compose stop &lt;лидер&gt;`, через
-   25 с `wlog`, затем `start`. Потом `wreset; docker kill &lt;контейнер лидера&gt;`, через 45 с `wlog`.
+2. **Failover: чистая остановка против `kill -9`.** `wreset; docker compose stop <лидер>`, через
+   25 с `wlog`, затем `start`. Потом `wreset; docker kill <контейнер лидера>`, через 45 с `wlog`.
    Ожидаемо: `stop` — ~5 с ошибок (Patroni при остановке **сам снимает** лидер-ключ); `kill` —
    ~30 с (ключ живёт до `ttl`). Объясни разницу и какое из двух — настоящая авария.
 3. ⭐ **Отрезать primary от DCS** (но не от реплик и HAProxy):
    ```bash
-   P=&lt;лидер&gt;; wreset
+   P=<лидер>; wreset
    docker compose exec -T -u root $P sh -c 'for h in etcd1 etcd2 etcd3; do ip=$(getent hosts $h | cut -d" " -f1)
      iptables -A OUTPUT -d $ip -j DROP; iptables -A INPUT -s $ip -j DROP; done'; date -u +%T
    for i in $(seq 10); do sleep 6; rec; done
    docker compose logs $P --since 90s | grep -i -E 'demot|lock|DCS'
-   wlog; pl &lt;реплика&gt;
+   wlog; pl <реплика>
    ```
    Ожидаемо (прогон): ~T+20 с — `demoting self because DCS is not accessible and I was a leader`
    (следующий цикл + `retry_timeout`); ~T+28 с — новый лидер (ключ истёк: последнее продление + `ttl`);
@@ -305,7 +310,7 @@ rec()   { for n in pg1 pg2 pg3; do printf "%s:%s " $n "$(docker compose exec -T 
 Заморозь **Patroni** (не PostgreSQL) на лидере. Patroni, запущенный как PID 1, форкает рабочий
 процесс — морозить нужно его:
 ```bash
-P=&lt;лидер&gt;
+P=<лидер>
 docker compose exec -T $P sh -c 'ps -o pid,stat,args | grep [p]atroni'      # PID 1 и рабочий (не 1)
 docker compose exec -T $P sh -c 'kill -STOP $(pgrep -f bin/patroni | grep -v "^1$" | head -1)'
 for i in $(seq 9); do sleep 6; rec; done                                     # через ~ttl — ДВА «f»
@@ -317,7 +322,7 @@ docker compose exec -T $P sh -c 'kill -CONT $(pgrep -f bin/patroni | grep -v "^1
 sleep 40; docker compose logs $P --since 45s | grep -i -E 'demot|rewind'
 docker compose exec -T -e PGPASSWORD=postgres pg3 psql -h haproxy -p 5000 -U postgres -tAc \
   "select id, src from t where src = 'direct-to-old-primary'"                 # ?
-```text
+```
 Ожидаемо: через ~30 с реплика стала лидером, а старый PostgreSQL **всё ещё primary** и принимает
 прямые записи — два primary. HAProxy защитил тех, кто ходит через него (REST API замороженного
 Patroni не отвечает — узел выпал из пула). После `CONT` старый узел видит чужой ключ, делает
@@ -349,7 +354,7 @@ etcd2) — что станет с primary, когда DCS потеряет кв�
 и fencing-токеном.
 
 ### Темы
-[05_time_ordering.md](/distributed/05-time-ordering) (мини-лаба с TLS, JWT и логами — сделай её первой).
+[05. Время и порядок событий: часы, логические часы, лизы и fencing-токены](/distributed/05-time-ordering) (мини-лаба с TLS, JWT и логами — сделай её первой).
 
 ### Стенд
 `net-lab` (`~/Projects/devops/stands/net-lab/Vagrantfile`): `web` 192.168.56.10,
@@ -365,13 +370,14 @@ CREATE TABLE locks    (name text PRIMARY KEY, owner text, expires_at bigint NOT 
 CREATE TABLE work_log (id bigserial, owner text, token bigint, at timestamptz DEFAULT now());   -- время БД — одна точка
 CREATE TABLE report   (id int PRIMARY KEY, content text, fence bigint NOT NULL DEFAULT 0);
 INSERT INTO locks (name) VALUES ('report'); INSERT INTO report VALUES (1, '', 0);
-```text
+```
+
 ### Шаги
 1. **Топология времени.** `web` — NTP-сервер для `app` (задача C2 темы 05): на `app` один
    источник `^* 192.168.56.10`. На обеих — `prometheus-node-exporter` из apt; проверь
    `node_timex_sync_status` и `node_timex_offset_seconds` (под chrony offset, скорее всего, 0 —
    запиши, какой метрикой ты бы на самом деле алертил).
-2. **Неправильная блокировка.** Напиши `lock-worker.sh &lt;имя&gt;` (bash + psql), который в цикле раз
+2. **Неправильная блокировка.** Напиши `lock-worker.sh <имя>` (bash + psql), который в цикле раз
    в 2 с пытается взять/продлить блокировку `report` **по своим часам**: `expires_at` = `date +%s`
    + 20, условие захвата — «`expires_at` меньше моего `now` или владелец — я». Держатель пишет
    строку в `work_log` раз в цикл. Запусти воркер на `web` и на `app`.
@@ -417,15 +423,15 @@ INSERT INTO locks (name) VALUES ('report'); INSERT INTO report VALUES (1, '', 0)
 что «ошибка у продюсера» не значит «не записано».
 
 ### Темы
-[03_replication_partitioning.md](/distributed/03-replication-partitioning) (ISR, лаг), [02_consistency_cap.md](/distributed/02-consistency-cap),
-[06_failure_modes.md](/distributed/06-failure-modes) §8 и §12, [../Left/05_Queues/02_kafka_basics.md](/queues/02-kafka-basics) §6.
+[03. Репликация и шардирование](/distributed/03-replication-partitioning) (ISR, лаг), [02. Согласованность, CAP и PACELC](/distributed/02-consistency-cap),
+[06. Режимы отказов: split brain, retry storm, метастабильность, exactly-once и outbox](/distributed/06-failure-modes) §8 и §12, [Очереди: 02. Kafka: концепции](/queues/02-kafka-basics) §6.
 
 ### Стенд
 ```bash
 mkdir -p ~/labs/distributed/lab4 && cd ~/labs/distributed/lab4
 {
 echo "x-kafka: &kafka"; echo "  image: apache/kafka:4.3.1          # проверь тег"; echo "services:"
-for i in 1 2 3; do cat <&lt;EOF
+for i in 1 2 3; do cat <<EOF
   kafka$i:
     <<: *kafka
     hostname: kafka$i
@@ -456,18 +462,19 @@ cat <<'EOF'
     image: apache/kafka:4.3.1
     entrypoint: ["sleep", "infinity"]
 EOF
-}&gt; compose.yaml
+} > compose.yaml
 docker compose up -d && sleep 20
 K=/opt/kafka/bin; BS=kafka1:9092,kafka2:9092,kafka3:9092
 docker compose exec -T tools $K/kafka-metadata-quorum.sh --bootstrap-server $BS describe --status   # LeaderId, CurrentVoters: 3
-```text
+```
+
 ### Шаги
 Эксперимент одной функцией: свежий топик (1 партиция, RF 3, `min.insync.replicas=2`), задержка
 200 мс на фолловерах (чтобы они отставали), `kafka-verifiable-producer.sh` пишет 60 000 сообщений
 со скоростью 5000/с и логирует **каждое подтверждение**, на 6-й секунде `docker kill` лидера,
 потом брокер возвращается, консьюмер вычитывает всё, `comm` сравнивает множества.
 ```bash
-run() {  # run &lt;топик&gt; &lt;acks: 1 | -1&gt;   (verifiable-producer принимает только число; -1 = all)
+run() {  # run <топик> <acks: 1 | -1>   (verifiable-producer принимает только число; -1 = all)
   docker compose exec -T tools $K/kafka-topics.sh --bootstrap-server $BS --create --topic $1 \
     --partitions 1 --replication-factor 3 --config min.insync.replicas=2 >/dev/null
   L=$(docker compose exec -T tools $K/kafka-topics.sh --bootstrap-server $BS --describe --topic $1 |
@@ -488,7 +495,7 @@ run() {  # run &lt;топик&gt; &lt;acks: 1 | -1&gt;   (verifiable-producer п
 }
 run t-acks1 1
 run t-acksall -1
-```text
+```
 1. Выполни `run` для `acks=1` два-три раза (каждый раз новый топик). Ожидаемо: `lost_acked` > 0 —
    на прогоне 30 и 579: лидер подтвердил, фолловеры не успели скопировать, новый лидер из ISR
    их не знает, вернувшийся старый **обрезает** свой лог по новому лидеру.
@@ -510,7 +517,7 @@ run t-acksall -1
 - `unclean.leader.election.enable=true` на топике, RF 3, `min.insync.replicas=1`: останови оба
   фолловера, попиши в лидера, останови лидера, подними **сначала** фолловеры. Кто станет лидером
   и что будет с записями, которые лидер успел подтвердить? Это сценарий Jepsen 2013
-  ([06_failure_modes.md](/distributed/06-failure-modes) §12). (С ELR в 4.x выбор лидера мог измениться — проверь.)
+  ([06. Режимы отказов: split brain, retry storm, метастабильность, exactly-once и outbox](/distributed/06-failure-modes) §12). (С ELR в 4.x выбор лидера мог измениться — проверь.)
 - Повтори `run t-x 1` без задержки на фолловерах: потерь меньше или ноль — почему «на стенде не
   теряется» ничего не доказывает?
 
@@ -534,7 +541,7 @@ run t-acksall -1
 ретраях, ни при параллельных повторах, ни после рестарта сервиса.
 
 ### Темы
-[06_failure_modes.md](/distributed/06-failure-modes) §7 и мини-лаба, [../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns) §2–3.
+[06. Режимы отказов: split brain, retry storm, метастабильность, exactly-once и outbox](/distributed/06-failure-modes) §7 и мини-лаба, [SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns) §2–3.
 
 ### Стенд
 Как в мини-лабе темы 06, но код — **копия** (репозиторий `~/Projects/devops` не трогаем):
@@ -542,7 +549,8 @@ run t-acksall -1
 mkdir -p ~/labs/distributed/lab5/app && cd ~/labs/distributed/lab5
 cp ~/Projects/devops/09-ledger/app/linkd.py app/ && git -C .. add lab5 2>/dev/null
 # compose.yaml — из мини-лабы темы 06, но volume: ./app:/app:ro; порт 127.0.0.1:18480
-```text
+```
+
 ### Шаги
 1. **Дубли под нагрузкой.** Напиши `dupes.sh`: 20 параллельных клиентов, каждый создаёт ссылку на
    свой URL (`https://example.kz/n-$i`) с `curl --max-time 1 --retry 3`; одновременно в фоне
@@ -561,7 +569,7 @@ cp ~/Projects/devops/09-ledger/app/linkd.py app/ && git -C .. add lab5 2>/dev/nu
    - метрика `linkd_idempotent_replays_total` в `/metrics`;
    - чистка ключей старше 24 часов (отдельной командой или при старте — реши и обоснуй).
 3. **Тест `idem-test.sh`** (он и есть критерий приёмки):
-   ```
+   ```text:no-line-numbers
    a) 20 параллельных POST с одним ключом          → в БД 1 строка, у всех 20 ответов один code
    b) шаг 1, но у каждого клиента свой ключ         → ни одного URL с count > 1
    c) тот же ключ, другой URL                       → 422
@@ -597,12 +605,12 @@ cp ~/Projects/devops/09-ledger/app/linkd.py app/ && git -C .. add lab5 2>/dev/nu
 консьюмер убивают `kill -9` в худший момент.
 
 ### Темы
-[06_failure_modes.md](/distributed/06-failure-modes) §8–9, [../Left/05_Queues/01_queues_concepts.md](/queues/01-queues-concepts) §3–4,
-[../Left/05_Queues/03_kafka_ops.md](/queues/03-kafka-ops) (CLI).
+[06. Режимы отказов: split brain, retry storm, метастабильность, exactly-once и outbox](/distributed/06-failure-modes) §8–9, [Очереди: 01. Основы очередей сообщений](/queues/01-queues-concepts) §3–4,
+[Очереди: 03. Kafka: эксплуатация](/queues/03-kafka-ops) (CLI).
 
 ### Стенд
 PostgreSQL (`postgres:17-alpine`, для бонуса с CDC — `command: postgres -c wal_level=logical`),
-Kafka — одноузловой из [../Left/05_Queues/00_INDEX.md](/queues/) или три брокера из лабы 4
+Kafka — одноузловой из [Очереди](/queues/) или три брокера из лабы 4
 (тогда топик с RF 3 и `min.insync.replicas=2`), два своих сервиса на `python:3.12-slim` с
 `psycopg[binary]` и `confluent-kafka` (**проверь** версии пакетов).
 ```sql
@@ -620,7 +628,8 @@ CREATE INDEX outbox_unpublished ON outbox (created_at) WHERE published_at IS NUL
 -- у консьюмера (можно та же база, другая схема):
 CREATE TABLE processed  (msg_id uuid PRIMARY KEY, processed_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE link_stats (day date PRIMARY KEY, created bigint NOT NULL DEFAULT 0);
-```text
+```
+
 ### Шаги (требования)
 1. **Писатель** (скрипт или `psql`): каждая ссылка — `INSERT links` + `INSERT outbox` в одной
    транзакции (`type = 'LinkCreated'`, в `payload` — code и url).
@@ -634,7 +643,7 @@ CREATE TABLE link_stats (day date PRIMARY KEY, created bigint NOT NULL DEFAULT 0
    `link_stats.created + 1` за день → `COMMIT`; **потом** коммит оффсета. Переменная
    `CRASH_BEFORE_OFFSET=1` — упасть между `COMMIT` в базе и коммитом оффсета.
 4. **Проверки:**
-   ```
+   ```text:no-line-numbers
    a) Kafka остановлена → писатель работает, outbox растёт; Kafka вернулась → relay всё дослал
       (метрики relay: число неопубликованных и возраст самого старого — это и есть «лаг outbox»)
    b) CRASH_AFTER_SEND=1 → в топике дубли (посчитай по заголовку id: kafka-console-consumer
@@ -669,7 +678,7 @@ CREATE TABLE link_stats (day date PRIMARY KEY, created bigint NOT NULL DEFAULT 0
 
 ## 🏁 Что должно остаться после блока
 
-```text
+```text:no-line-numbers
 ~/labs/distributed/
 ├── lab1/  compose.yaml, lat.sh, RESULTS.md       # латентность, failover, разделение 1 | 2
 ├── lab2/  Dockerfile, patroni.yml, haproxy.cfg,  # хронология failover, split brain и
@@ -678,9 +687,8 @@ CREATE TABLE link_stats (day date PRIMARY KEY, created bigint NOT NULL DEFAULT 0
 ├── lab4/  compose.yaml, run.sh, RESULTS.md       # lost_acked по acks
 ├── lab5/  app/linkd.py (патч), idem-test.sh      # ключ идемпотентности с тестом
 └── lab6/  relay.py, stats.py, compose.yaml       # outbox + dedup, инвариант после kill -9
-```text
+```
+
 Это превращает «знаю CAP и Raft» в «вот мои цифры: etcd выбирает нового лидера за ~2 с, Patroni
 переключается за ~30 с при `kill -9` и никогда не даёт двух primary — кроме случая без watchdog,
 который я воспроизвёл; Kafka с `acks=1` потеряла у меня 579 подтверждённых сообщений из 60 000».
-
-➡️ Дальше: [08_interview.md](/mlops/08-interview)

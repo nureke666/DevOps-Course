@@ -1,13 +1,13 @@
 ---
 title: "01. Основы хранения: блок, файл, объект, IOPS, RAID"
-description: "Блок → Хранилища и stateful → тема 01. Опирается на"
+description: "Блок/файл/объект, IOPS vs throughput vs latency, HDD/SSD/NVMe, RAID, EC, stateful"
 ---
 
 # 01. Основы хранения: блок, файл, объект, IOPS, RAID
 
 > Блок → Хранилища и stateful → тема 01. Опирается на
-> [../Linux/09_devices.md](/linux/09-devices) (блочные устройства, `/sys/block`, `smartctl`)
-> и [../Linux/10_the_filesystem.md](/linux/10-the-filesystem) (разделы, ФС, монтирование).
+> [Linux: 09. Devices](/linux/09-devices) (блочные устройства, `/sys/block`, `smartctl`)
+> и [Linux: 10. Файловая система](/linux/10-the-filesystem) (разделы, ФС, монтирование).
 > Там — «как подключить диск». Здесь — **как думать о хранилище**: какие бывают, чем меряются,
 > что ломается и что от чего защищает.
 >
@@ -21,7 +21,7 @@ description: "Блок → Хранилища и stateful → тема 01. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                  ПРИЛОЖЕНИЕ (БД, очередь, сайт с файлами)
                               │  что ему нужно?
         ┌─────────────────────┼──────────────────────────┐
@@ -36,19 +36,21 @@ description: "Блок → Хранилища и stateful → тема 01. Оп�
         где живёт: локально (DAS) · по сети (NAS / SAN / iSCSI / Ceph)
                               │
         что обещаем: durability ≠ availability, strong ≠ eventual
-```text
+```
+
 ---
 
 ## 1. Три вида хранилищ
 
-```text
+```text:no-line-numbers
  БЛОЧНОЕ                      ФАЙЛОВОЕ                      ОБЪЕКТНОЕ
  «сырой диск»                 «папка по сети»               «склад по HTTP»
  ─────────────                ─────────────                 ─────────────
  app → ФС (твоя) → блоки      app → ФС сервера по NFS       app → PUT/GET по HTTP
  ФС делаешь сам: ext4/xfs     файлы, каталоги, права        бакет/ключ + метаданные
  обычно одна машина           много клиентов сразу          сколько угодно клиентов
-```text
+```
+
 | | Блочное | Файловое | Объектное |
 |---|---------|----------|-----------|
 | Интерфейс | Блочное устройство (`/dev/vdb`), SCSI/NVMe/iSCSI | POSIX-файлы по сети: NFS, SMB, CephFS | HTTP API (S3): `PUT`, `GET`, `LIST`, `DELETE` |
@@ -64,8 +66,8 @@ description: "Блок → Хранилища и stateful → тема 01. Оп�
 > приложению нужен именно POSIX-каталог на нескольких нодах.
 
 Подробно про S3-модель (бакеты, versioning, lifecycle) — в
-[../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage), про NFS-сервер — в
-[../Linux/16_network_sharing.md](/linux/16-network-sharing).
+[Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage), про NFS-сервер — в
+[Linux: 16. Network Sharing](/linux/16-network-sharing).
 
 ---
 
@@ -79,19 +81,21 @@ description: "Блок → Хранилища и stateful → тема 01. Оп�
 
 Три формулы, на которых держится весь раздел:
 
-```text
+```
 throughput  =  IOPS × размер блока
 IOPS        ≈  queue depth / latency        (закон Литтла: L = λ × W)
 latency     ≈  queue depth / IOPS
-```text
+```
+
 Считаем:
-```text
+```text:no-line-numbers
 4 КиБ блоки, 10 000 IOPS        → 10 000 × 4 КиБ ≈ 40 МиБ/с      («IOPS много, МБ/с мало»)
 1 МиБ блоки, 500 IOPS           → 500 МиБ/с                       («IOPS мало, МБ/с много»)
 SSD, QD=1, latency 0,1 мс       → 1 / 0,0001 = 10 000 IOPS        (один поток упирается в latency)
 тот же SSD, QD=32, 0,2 мс       → 32 / 0,0002 = 160 000 IOPS      (параллелизм спасает)
 HDD, QD=1, latency 8 мс         → 1 / 0,008 = 125 IOPS            (механика не ускоряется)
-```text
+```
+
 Что из этого следует:
 1. **«Диск даёт 500 МБ/с» ничего не говорит о базе.** Базе нужны IOPS на 8 КиБ и низкая
    latency, а не последовательная скорость на 1 МиБ.
@@ -103,7 +107,7 @@ HDD, QD=1, latency 8 мс         → 1 / 0,008 = 125 IOPS            (меха�
 5. **Лимиты облачного диска:** у сетевого диска с лимитами «3000 IOPS и 125 МБ/с» на 4 КиБ
    блоках первым кончается лимит IOPS (≈12 МБ/с), на 1 МиБ — лимит МБ/с (≈125 IOPS).
 
-> ⚠️ Среднее время ответа врёт так же, как в SLO ([../SRE/02_sli_slo_error_budget.md](/sre/02-sli-slo-error-budget)):
+> ⚠️ Среднее время ответа врёт так же, как в SLO ([SRE: 02. SLI, SLO и error budget](/sre/02-sli-slo-error-budget)):
 > базу тормозит хвост — p99 latency записи, а не среднее.
 
 ---
@@ -125,7 +129,7 @@ HDD, QD=1, latency 8 мс         → 1 / 0,008 = 125 IOPS            (меха�
   Enterprise-SSD имеют **PLP** (power loss protection) — конденсаторы дописывают кэш при
   пропаже питания; с PLP `fsync` быстрый *и* честный.
 - **NVMe:** это протокол поверх PCIe, а не «ещё один SSD»: много очередей, минимум слоёв.
-- `cat /sys/block/vda/queue/rotational` — 1 для HDD, 0 для SSD ([../Linux/09_devices.md](/linux/09-devices)).
+- `cat /sys/block/vda/queue/rotational` — 1 для HDD, 0 для SSD ([Linux: 09. Devices](/linux/09-devices)).
 
 ---
 
@@ -136,11 +140,12 @@ HDD, QD=1, latency 8 мс         → 1 / 0,008 = 125 IOPS            (меха�
 ```bash
 sudo apt install -y sysstat
 iostat -xz 1            # -x расширенно, -z скрыть простаивающие, раз в секунду
-```text
-```text
+```
+```
 Device  r/s   rkB/s  r_await rareq-sz  w/s    wkB/s  w_await wareq-sz aqu-sz %util
 vdb     850.0 3400.0   0.45    4.00    120.0  7680.0  12.30   64.00    2.10  96.0
-```text
+```
+
 | Колонка | Смысл | На что смотреть |
 |---------|-------|-----------------|
 | `r/s`, `w/s` | IOPS чтения/записи | Сравни с возможностями диска/лимитом облака |
@@ -173,7 +178,8 @@ sudo fio --name=seqwrite --filename=/mnt/test/fio.bin --size=1G --rw=write --bs=
 # ⚠️ ЗАПИСЬ ПО СЫРОМУ УСТРОЙСТВУ УНИЧТОЖАЕТ ДАННЫЕ И ФС — только пустой диск учебной VM
 sudo fio --name=randwrite --filename=/dev/vdb --rw=randwrite --bs=4k --iodepth=32 \
   --ioengine=libaio --direct=1 --runtime=30 --time_based --group_reporting
-```text
+```
+
 | Флаг | Зачем |
 |------|-------|
 | `--rw=randread/randwrite/read/write/randrw` | Профиль нагрузки |
@@ -191,8 +197,9 @@ sudo fio --name=randwrite --filename=/dev/vdb --rw=randwrite --bs=4k --iodepth=3
 mkdir -p /var/lib/etcd-test && cd /var/lib/etcd-test
 fio --rw=write --ioengine=sync --fdatasync=1 --directory=. --size=22m --bs=2300 --name=etcdcheck
 # смотри блок "fsync/fdatasync/sync_file_range: ... sync percentiles" → 99.00th
-```text
-Здоровье диска — `smartctl -a` (в [../Linux/09_devices.md](/linux/09-devices)): растущие
+```
+
+Здоровье диска — `smartctl -a` (в [Linux: 09. Devices](/linux/09-devices)): растущие
 `Reallocated_Sector_Ct`, `Pending_Sector` у HDD и `Percentage Used` у NVMe — повод менять диск
 до отказа.
 
@@ -212,23 +219,25 @@ fio --rw=write --ioengine=sync --fdatasync=1 --directory=. --size=22m --bs=2300 
 RAID1/10 — записать на оба диска (2); RAID5 — прочитать данные и чётность, записать данные
 и чётность (4); RAID6 — то же с двумя чётностями (6).
 
-```text
+```text:no-line-numbers
 8 HDD × 150 IOPS = 1200 «сырых» IOPS
              чтение     запись (1200 / penalty)
 RAID 10      ~1200      600
 RAID 5       ~1200      300
 RAID 6       ~1200      200        ← поэтому БД на RAID5/6 из HDD страдают на записи
-```text
+```
+
 ### Rebuild — самое опасное время
 
-```text
+```text:no-line-numbers
 RAID 5 из 4 × 16 ТБ HDD, один диск умер
   → rebuild читает ВСЕ оставшиеся: 3 × 16 = 48 ТБ
   → время: 16 ТБ / 150 МБ/с ≈ 107 000 с ≈ 30 часов (под нагрузкой — дольше)
   → URE (unrecoverable read error) у бытовых HDD по паспорту: 1 на 10^14 бит ≈ 12,5 ТБ
   → 48 ТБ чтения ≈ «ожидаемо несколько URE» → rebuild может упасть на нечитаемом секторе
   → а второй диск из той же партии, под той же нагрузкой, может умереть за эти 30 часов
-```text
+```
+
 Паспортный URE — пессимистичная оценка, но вывод отрасли однозначен: **RAID5 на больших HDD
 не используют**, берут RAID6/RAID10 (или распределённые системы с репликацией), держат
 hot spare и **мониторят деградацию**: массив в `[U_]` без алерта — тикающая бомба.
@@ -259,7 +268,7 @@ hot spare и **мониторят деградацию**: массив в `[U_]`
 
 Недоступность временна, потеря данных — навсегда. Поэтому системы хранения при сомнении
 жертвуют доступностью: Ceph останавливает запись в PG, если реплик меньше `min_size`
-([04_ceph.md](/storage/04-ceph)), а кластер с потерей кворума перестаёт принимать запись.
+([04. Ceph: распределённое хранилище](/storage/04-ceph)), а кластер с потерей кворума перестаёт принимать запись.
 
 **Что от чего защищает:**
 
@@ -271,7 +280,7 @@ hot spare и **мониторят деградацию**: массив в `[U_]`
 | Шифровальщик с правами админа | ❌ | ❌ | ❌ (удалит и их) | ✅ если immutable |
 | Пожар в ЦОДе | ❌ | ✅ только если в другом ЦОДе | ❌ | ✅ |
 
-Стратегия бэкапов целиком — в [07_velero_dr.md](/storage/07-velero-dr).
+Стратегия бэкапов целиком — в [07. Velero и disaster recovery](/storage/07-velero-dr).
 
 ---
 
@@ -293,7 +302,7 @@ sudo apt install -y open-iscsi
 sudo iscsiadm -m discovery -t sendtargets -p 192.168.60.20     # какие target'ы есть
 sudo iscsiadm -m node --login                                  # подключиться → появится /dev/sdX
 lsblk; sudo iscsiadm -m session                                # что подключено
-```text
+```
 Для прода: отдельная сеть/VLAN, multipath (`multipathd`) по двум путям, CHAP-аутентификация.
 
 **NVMe-oF** (NVMe over Fabrics: TCP/RDMA/FC) — тот же подход, но протокол NVMe: ниже
@@ -306,13 +315,14 @@ latency, и именно туда движутся современные СХД
 
 ## 8. Репликация vs erasure coding
 
-```text
+```text:no-line-numbers
 РЕПЛИКАЦИЯ ×3                          ERASURE CODING 4+2
 объект ──► копия A, копия B, копия C   объект → 4 куска данных + 2 куска чётности
                                         на 6 разных дисках/нодах
 занимает 300%                           занимает 150%
 переживёт потерю 2                      переживёт потерю любых 2
-```text
+```
+
 | | Репликация (size=3) | Erasure coding (k+m) |
 |---|---------------------|----------------------|
 | Эффективность | 1/3 ≈ 33% | k/(k+m): 4+2 → 67%, 8+3 → 73% |
@@ -325,19 +335,19 @@ latency, и именно туда движутся современные СХД
 
 Пример: 1 ПБ сырых дисков — это ~333 ТБ полезных при ×3 и ~667 ТБ при EC 4+2. Разница
 в сотни тысяч долларов, поэтому объектные хранилища почти всегда на EC, а тома баз —
-на репликации. EC живёт и в MinIO ([03_nfs_minio.md](/storage/03-nfs-minio)), и в Ceph ([04_ceph.md](/storage/04-ceph)).
+на репликации. EC живёт и в MinIO ([03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio)), и в Ceph ([04. Ceph: распределённое хранилище](/storage/04-ceph)).
 
 ---
 
 ## 9. Консистентность — минимум, который нужен девопсу
 
 **Путь записи и где данные могут потеряться:**
-```text
+```text:no-line-numbers
 write() → page cache (RAM) ──fsync()──► блочный уровень → кэш диска ──flush/FUA──► носитель
          │                                                │
          └ потеряется при крахе ОС/питании                └ потеряется, если кэш write-back
                                                             и нет PLP/BBU
-```text
+```
 - Приложение считает запись надёжной только после **`fsync`** (или `O_DSYNC`). Базы делают
   `fsync` WAL на каждый COMMIT — поэтому им важна latency синхронной записи (раздел 4, etcd-тест).
 - Кэш записи без защиты от пропажи питания + отключённые барьеры/flush «ради скорости» =
@@ -359,7 +369,7 @@ AWS S3 даёт strong read-after-write консистентность с дек
 **Синхронная vs асинхронная репликация между площадками** — это прямо про RPO:
 синхронная — RPO ≈ 0, но каждая запись ждёт RTT до второго ЦОДа; асинхронная — быстро,
 но при аварии теряется «хвост», который не успел уехать. Для PostgreSQL это
-`synchronous_commit` ([../Left/01_Databases/06_replication.md](/databases/06-replication)).
+`synchronous_commit` ([Базы данных: 06. Репликация PostgreSQL](/databases/06-replication)).
 
 ---
 
@@ -368,7 +378,7 @@ AWS S3 даёт strong read-after-write консистентность с дек
 **Состояние — это всё, что нельзя пересоздать из git.** Код, образы, манифесты, конфиги
 воссоздаются пайплайном. Данные пользователей — нет.
 
-```text
+```text:no-line-numbers
  STATELESS (восстанавливается из git)       STATEFUL (только из бэкапа)
  ──────────────────────────────────         ─────────────────────────────
  Deployment, образы, Helm-чарты             базы данных (PostgreSQL, Redis с AOF)
@@ -376,7 +386,8 @@ AWS S3 даёт strong read-after-write консистентность с дек
  кэш, который можно прогреть                загруженные файлы, объекты в S3
                                             секреты и ключи (Vault), terraform state
                                             etcd кластера, сертификаты CA
-```text
+```
+
 Чек-лист для **любого** stateful-сервиса — задай эти вопросы до прода, а не после аварии:
 
 | Вопрос | Пример хорошего ответа |
@@ -466,13 +477,18 @@ AWS S3 даёт strong read-after-write консистентность с дек
 11. Stateful — всё, что нельзя пересоздать из git; для каждого такого сервиса нужны ответы:
     где лежит, как реплицируется, как бэкапится, как восстанавливается, RPO/RTO, рост.
 
-➡️ Дальше: [02_lvm_filesystems.md](/storage/02-lvm-filesystems) · задачи: 01_storage_basics_tasks.md
+---
 
+## Задачи
+
+> Стенд: VM `stor1` из [Хранилища](/storage/) (раздел «Стенд»): дополнительные диски
+> `vdb`–`vdg` пустые. Перед любым `fio` проверь, что пишешь не туда:
+> `lsblk -o NAME,SIZE,SERIAL,TYPE,MOUNTPOINTS`. Снапшот перед темой:
+> `vagrant snapshot save stor1 before_01`. Пакеты: `sudo apt install -y sysstat fio`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем отличаются блочное, файловое и объектное хранилище? Для каждого — интерфейс,
 пример и когда выбирать.
@@ -644,167 +660,95 @@ Stateful — всё, что нельзя пересоздать из git: дан
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```bash
 B1.  # на проде «быстро проверить диск»
-```text
-<details><summary>Ответ</summary>
+     sudo fio --name=t --filename=/dev/sda --rw=randwrite --bs=4k --iodepth=32 \
+       --ioengine=libaio --direct=1 --runtime=30 --time_based
 
-⚠️ `randwrite` по сырому `/dev/sda` на проде уничтожит ФС и данные. Тестировать запись —
+B2.  # VM с 2 ГБ RAM, диск — HDD; результат: 280 000 IOPS
+     fio --name=t --filename=/tmp/t.bin --size=512M --rw=randread --bs=4k
+
+B3.  # «Купили NVMe на 7000 МБ/с — база станет быстрой в 10 раз»
+
+B4.  # алерт «диск насыщен» на NVMe:
+     # Device r/s     r_await aqu-sz %util
+     # nvme0n1 38000.0  0.08    3.0   100.0
+
+B5.  # primary PostgreSQL на RAID0 из 4 SSD: «у нас же есть асинхронная реплика»
+
+B6.  # бэкап-хранилище: RAID5 из 8 × 18 ТБ HDD, без hot spare, без алертов на деградацию
+
+B7.  # «У нас RAID10 и снапшоты СХД каждый час — бэкапы не нужны»
+
+B8.  # Ceph: аппаратный RAID5 из 6 дисков отдан одним томом под одну OSD
+
+B9.  # /etc/fstab для тома базы: ... ext4 defaults,barrier=0 0 2
+     # + контроллер в write-back, батарея кэша «давно ругается»
+
+B10. # приложение пишет заказ в primary, а страницу «мои заказы» читает с асинхронной реплики
+
+B11. # Ceph: пул EC 8+3 под тома PostgreSQL с частыми мелкими записями
+
+B12. # облачный диск «до 3000 IOPS, 125 МБ/с»; бэкап читает блоками по 4 КиБ;
+     # iostat: r/s стабильно 3000, rkB/s ≈ 12000, r_await растёт
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ `randwrite` по сырому `/dev/sda` на проде уничтожит ФС и данные. Тестировать запись —
 только в файл на ФС или на пустом диске; на проде — только чтение, и то в окно низкой нагрузки.
 
-</details>
-
-```text:no-line-numbers
-     sudo fio --name=t --filename=/dev/sda --rw=randwrite --bs=4k --iodepth=32 \
-```text
-```text:no-line-numbers
-       --ioengine=libaio --direct=1 --runtime=30 --time_based
-```text
-```text:no-line-numbers
-B2.  # VM с 2 ГБ RAM, диск — HDD; результат: 280 000 IOPS
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без `--direct=1` и с файлом 512 МБ < RAM меряется page cache, а не HDD. Нужны
+**B2.** ⚠️ Без `--direct=1` и с файлом 512 МБ < RAM меряется page cache, а не HDD. Нужны
 `--direct=1`, `--ioengine=libaio`, размер теста больше RAM (или `O_DIRECT` вообще).
 
-</details>
+**B3.** ⚠️ 7000 МБ/с — последовательное чтение крупными блоками. Базе важны random IOPS на
+8 КиБ и p99 latency `fsync`; кроме того, узким местом могут быть запросы, блокировки, CPU.
+Нужно мерить `fio` с профилем базы и смотреть, во что упирается база сейчас.
 
-```text:no-line-numbers
-     fio --name=t --filename=/tmp/t.bin --size=512M --rw=randread --bs=4k
-```text
-```text:no-line-numbers
-B3.  # «Купили NVMe на 7000 МБ/с — база станет быстрой в 10 раз»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ 7000 МБ/с — последовательное чтение крупными блоками. Базе важны random IOPS на
-
-</details>
-
-```text:no-line-numbers
-B4.  # алерт «диск насыщен» на NVMe:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ У NVMe `%util` 100% не означает насыщения: `r_await` 0,08 мс и очередь 3 — диск
+**B4.** ⚠️ У NVMe `%util` 100% не означает насыщения: `r_await` 0,08 мс и очередь 3 — диск
 справляется легко. Алертить на `await`/latency и на рост очереди, а не на `%util`.
 
-</details>
-
-```text:no-line-numbers
-     # Device r/s     r_await aqu-sz %util
-```text
-```text:no-line-numbers
-     # nvme0n1 38000.0  0.08    3.0   100.0
-```text
-```text:no-line-numbers
-B5.  # primary PostgreSQL на RAID0 из 4 SSD: «у нас же есть асинхронная реплика»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ RAID0 умирает от отказа любого из 4 дисков — вероятность отказа выше, чем у одиночного
+**B5.** ⚠️ RAID0 умирает от отказа любого из 4 дисков — вероятность отказа выше, чем у одиночного
 диска. Асинхронная реплика отстаёт — при failover теряются последние транзакции, и после
 каждого отказа диска нужен rebuild реплики. Для primary — RAID10 (или RAID1).
 
-</details>
-
-```text:no-line-numbers
-B6.  # бэкап-хранилище: RAID5 из 8 × 18 ТБ HDD, без hot spare, без алертов на деградацию
-```text
-<details><summary>Ответ</summary>
-
-⚠️ RAID5 на 18 ТБ дисках: rebuild — десятки часов с чтением ~126 ТБ, почти гарантированный
+**B6.** ⚠️ RAID5 на 18 ТБ дисках: rebuild — десятки часов с чтением ~126 ТБ, почти гарантированный
 URE по паспорту; без hot spare rebuild начнётся только когда кто-то заметит; без алертов не
 заметит никто. Нужны RAID6 (или RAID10), hot spare и алерт на деградацию.
 
-</details>
-
-```text:no-line-numbers
-B7.  # «У нас RAID10 и снапшоты СХД каждый час — бэкапы не нужны»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ RAID и снапшоты СХД живут на той же СХД: отказ СХД, пожар, шифровальщик с доступом к
+**B7.** ⚠️ RAID и снапшоты СХД живут на той же СХД: отказ СХД, пожар, шифровальщик с доступом к
 СХД или ошибка админа уносят всё. Снапшоты не заменяют бэкап вне площадки с проверенным
 восстановлением.
 
-</details>
-
-```text:no-line-numbers
-B8.  # Ceph: аппаратный RAID5 из 6 дисков отдан одним томом под одну OSD
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Ceph сам делает избыточность; аппаратный RAID под ним скрывает диски, их ошибки и
+**B8.** ⚠️ Ceph сам делает избыточность; аппаратный RAID под ним скрывает диски, их ошибки и
 SMART, удваивает накладные расходы и превращает 6 дисков в одну большую OSD с долгим
 восстановлением. Нужен HBA/JBOD: одна OSD на диск.
 
-</details>
-
-```text:no-line-numbers
-B9.  # /etc/fstab для тома базы: ... ext4 defaults,barrier=0 0 2
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `barrier=0` отключает flush кэша, а write-back с мёртвой батареей держит подтверждённые
+**B9.** ⚠️ `barrier=0` отключает flush кэша, а write-back с мёртвой батареей держит подтверждённые
 записи в энергозависимой памяти. Авария питания = потерянные транзакции или повреждённая ФС.
 Вернуть барьеры, починить BBU или переключить контроллер в write-through.
 
-</details>
-
-```text:no-line-numbers
-     # + контроллер в write-back, батарея кэша «давно ругается»
-```text
-```text:no-line-numbers
-B10.  # приложение пишет заказ в primary, а страницу «мои заказы» читает с асинхронной реплики
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Асинхронная реплика отстаёт: пользователь не видит только что созданный заказ
+**B10.** ⚠️ Асинхронная реплика отстаёт: пользователь не видит только что созданный заказ
 (read-your-writes нарушено). Критичное чтение после записи — с primary, или ждать, пока реплика
 догонит нужный LSN.
 
-</details>
-
-```text:no-line-numbers
-B11.  # Ceph: пул EC 8+3 под тома PostgreSQL с частыми мелкими записями
-```text
-<details><summary>Ответ</summary>
-
-⚠️ EC плохо переносит мелкие случайные перезаписи (read-modify-write, выше latency) и
+**B11.** ⚠️ EC плохо переносит мелкие случайные перезаписи (read-modify-write, выше latency) и
 медленнее восстанавливается. Тома БД — на реплицированном пуле, EC — для объектов и архивов.
 
-</details>
-
-```text:no-line-numbers
-B12.  # облачный диск «до 3000 IOPS, 125 МБ/с»; бэкап читает блоками по 4 КиБ;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Бэкап упёрся в лимит 3000 IOPS: 3000 × 4 КиБ ≈ 12 МБ/с, до лимита 125 МБ/с далеко.
+**B12.** ⚠️ Бэкап упёрся в лимит 3000 IOPS: 3000 × 4 КиБ ≈ 12 МБ/с, до лимита 125 МБ/с далеко.
 Читать крупными блоками (1 МиБ — тогда упрёшься в МБ/с), распараллелить или временно
 поднять тариф/лимит; заодно бэкап не будет съедать IOPS базы.
 
 </details>
 
-```text:no-line-numbers
-     # iostat: r/s стабильно 3000, rkB/s ≈ 12000, r_await растёт
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Разведка дисков стенда
+#### C1. 🔑 Разведка дисков стенда
 На `stor1` выведи все диски с размером, серийником и типом. Для каждого дополнительного
 диска найди стабильное имя в `/dev/disk/by-id/`, проверь `rotational` и
-`/sys/block/&lt;диск&gt;/queue/scheduler`. Запиши таблицу: устройство → серийник → для чего в блоке.
-
-### C2. 🔑 Закон Литтла на живом диске
-**1.** В одном терминале: `iostat -xz 1`. В другом — `fio` со случайным чтением 4 КиБ с `/dev/vdb`
-   при `--iodepth=1`, затем `--iodepth=32` (по 30 секунд).
+`/sys/block/<диск>/queue/scheduler`. Запиши таблицу: устройство → серийник → для чего в блоке.
 
 <details><summary>Ответ</summary>
 
@@ -814,7 +758,7 @@ ls -l /dev/disk/by-id/ | grep virtio
 for d in vdb vdc vdd vde vdf vdg; do
   echo "$d rot=$(cat /sys/block/$d/queue/rotational) sched=$(cat /sys/block/$d/queue/scheduler)"
 done
-```text
+```
 Ожидаемо: `vdb`/`vdc`/`vdd` — 5G, `lvm-a`/`lvm-b`/`lvm-c` (LVM, тема 02); `vde`/`vdf`/`vdg` — 3G,
 `raid-a`/`raid-b`/`raid-c` (mdadm/ZFS). `rotational` у virtio-дисков часто 1 — гость не знает, что
 на хосте SSD; это ещё одна причина мерить `fio`, а не верить флагам. Scheduler у virtio обычно
@@ -822,7 +766,11 @@ done
 
 </details>
 
-**2.** Для каждого прогона запиши `r/s`, `r_await`, `aqu-sz` из `iostat` и IOPS, p99 из `fio`.
+#### C2. 🔑 Закон Литтла на живом диске
+1. В одном терминале: `iostat -xz 1`. В другом — `fio` со случайным чтением 4 КиБ с `/dev/vdb`
+   при `--iodepth=1`, затем `--iodepth=32` (по 30 секунд).
+2. Для каждого прогона запиши `r/s`, `r_await`, `aqu-sz` из `iostat` и IOPS, p99 из `fio`.
+3. Проверь, что `aqu-sz ≈ r/s × r_await` (в секундах). Объясни, почему IOPS выросли.
 
 <details><summary>Ответ</summary>
 
@@ -831,14 +779,17 @@ sudo fio --name=qd1 --filename=/dev/vdb --rw=randread --bs=4k --iodepth=1 \
   --ioengine=libaio --direct=1 --runtime=30 --time_based --group_reporting
 sudo fio --name=qd32 --filename=/dev/vdb --rw=randread --bs=4k --iodepth=32 \
   --ioengine=libaio --direct=1 --runtime=30 --time_based --group_reporting
-```text
+```
 При QD=1 `aqu-sz` ≈ 1 и IOPS ≈ 1 / latency. При QD=32 `aqu-sz` ≈ 30, latency растёт немного
 (или в разы меньше, чем очередь), а IOPS растут кратно: устройство (и хост под ним)
 обрабатывает запросы параллельно. Проверка: например, 20 000 r/s × 0,0015 с = 30 ≈ `aqu-sz`.
 
 </details>
 
-**3.** Проверь, что `aqu-sz ≈ r/s × r_await` (в секундах). Объясни, почему IOPS выросли.
+#### C3. 🔑 Мелкие блоки против крупных
+Прогони на `/dev/vdb` `randread` с `--bs=4k` и `read` с `--bs=1M` (оба только чтение).
+Посчитай для каждого throughput через `IOPS × bs` и сверь с `BW=` из вывода.
+Что упирается в IOPS, а что — в МБ/с?
 
 <details><summary>Ответ</summary>
 
@@ -849,19 +800,43 @@ sudo fio --name=qd32 --filename=/dev/vdb --rw=randread --bs=4k --iodepth=32 \
 
 </details>
 
-### C3. 🔑 Мелкие блоки против крупных
-Прогони на `/dev/vdb` `randread` с `--bs=4k` и `read` с `--bs=1M` (оба только чтение).
-Посчитай для каждого throughput через `IOPS × bs` и сверь с `BW=` из вывода.
-Что упирается в IOPS, а что — в МБ/с?
-
-### C4. Годится ли диск под etcd
+#### C4. Годится ли диск под etcd
 Прогони etcd-тест из конспекта в каталоге на корневой ФС `stor1`. Найди p99 `fdatasync`.
 Годится ли диск? Что изменится, если на хосте в это время идёт копирование большого файла?
 
-### C5. RAID на бумаге
-**6.** HDD по 8 ТБ, каждый ~150 случайных IOPS и ~150 МБ/с. Для RAID5, RAID6 и RAID10 посчитай:
+<details><summary>Ответ</summary>
+
+```bash
+sudo mkdir -p /var/lib/etcd-test && cd /var/lib/etcd-test
+sudo fio --rw=write --ioengine=sync --fdatasync=1 --directory=. --size=22m --bs=2300 --name=etcdcheck
+sudo rm -rf /var/lib/etcd-test
+```
+Смотри `sync percentiles` → `99.00th`. Меньше 10 мс (10 000 usec) — годится. Параллельная
+тяжёлая запись на хосте поднимет p99 `fdatasync` — ровно так «шумный сосед» ломает etcd
+на общем хранилище.
+
+</details>
+
+#### C5. RAID на бумаге
+6 HDD по 8 ТБ, каждый ~150 случайных IOPS и ~150 МБ/с. Для RAID5, RAID6 и RAID10 посчитай:
 полезную ёмкость, сколько отказов переживёт, ориентировочные IOPS чтения и записи.
 Сколько идёт rebuild одного диска в идеале? Что с URE при rebuild RAID5?
+
+<details><summary>Ответ</summary>
+
+Сырые: 6 × 150 = 900 IOPS.
+- RAID5: 40 ТБ, 1 отказ, чтение ~900, запись ~900/4 = 225.
+- RAID6: 32 ТБ, 2 отказа, чтение ~900, запись ~150.
+- RAID10: 24 ТБ, 1 гарантированно (до 3), чтение ~900, запись ~450.
+
+Rebuild 8 ТБ при 150 МБ/с: 8·10^12 / 1,5·10^8 ≈ 53 000 с ≈ 15 часов в идеале, под нагрузкой — дольше.
+RAID5 при rebuild читает 5 × 8 = 40 ТБ — больше трёх «паспортных» 12,5 ТБ на URE, риск упасть высокий.
+
+</details>
+
+#### C6. Репликация или EC
+600 ТБ сырых дисков. Сколько полезного места при репликации ×3, EC 4+2 и EC 8+3?
+Сколько отказов переживёт каждый вариант? Что выберешь под тома БД, а что — под архив бэкапов?
 
 <details><summary>Ответ</summary>
 
@@ -871,23 +846,50 @@ sudo fio --name=qd32 --filename=/dev/vdb --rw=randread --bs=4k --iodepth=32 \
 
 </details>
 
-### C6. Репликация или EC
-**600.** ТБ сырых дисков. Сколько полезного места при репликации ×3, EC 4+2 и EC 8+3?
-Сколько отказов переживёт каждый вариант? Что выберешь под тома БД, а что — под архив бэкапов?
-### C7. 🔑 Инвентаризация состояния
+#### C7. 🔑 Инвентаризация состояния
 Возьми один реальный сервис (с работы или свой pet-проект) и заполни чек-лист из раздела 10
 конспекта: где данные, репликация, бэкап, восстановление и когда проверяли, RPO/RTO, рост
 объёма, поведение при смерти ноды, владелец. Какие ячейки остались пустыми?
 
-### C8. iSCSI на одной машине (бонус)
+<details><summary>Ответ</summary>
+
+Правильного ответа нет — важна честность. Типично пустыми остаются «когда последний раз
+проверяли восстановление», «RPO/RTO замерены или придуманы» и «прогноз роста». Каждая пустая
+ячейка — задача в бэклог: runbook восстановления, учения, алерт на заполнение с прогнозом.
+
+</details>
+
+#### C8. iSCSI на одной машине (бонус)
 На `stor1` отдай диск `/dev/vdg` как iSCSI-LUN через `targetcli` и подключи его же обратно
 через `open-iscsi` (target и initiator на одной VM). Убедись, что появился новый `/dev/sdX`,
 затем отключись и удали конфигурацию target'а. ⚠️ Только пустой учебный диск.
 
+<details><summary>Ответ</summary>
+
+```bash
+sudo apt install -y targetcli-fb open-iscsi
+IQN_T=iqn.2026-09.lab.stor1:t1
+IQN_I=$(sudo awk -F= '/^InitiatorName/{print $2}' /etc/iscsi/initiatorname.iscsi)
+sudo targetcli /backstores/block create name=lun1 dev=/dev/vdg
+sudo targetcli /iscsi create $IQN_T                 # портал 0.0.0.0:3260 создаётся сам
+sudo targetcli /iscsi/$IQN_T/tpg1/luns create /backstores/block/lun1
+sudo targetcli /iscsi/$IQN_T/tpg1/acls create $IQN_I
+sudo iscsiadm -m discovery -t sendtargets -p 127.0.0.1
+sudo iscsiadm -m node --login
+lsblk -o NAME,SIZE,TRAN,VENDOR                      # новый sdX с TRAN=iscsi
+# уборка
+sudo iscsiadm -m node --logout && sudo iscsiadm -m node -o delete
+sudo targetcli /iscsi delete $IQN_T
+sudo targetcli /backstores/block delete lun1
+sudo targetcli saveconfig
+```
+ACL с именем initiator'а нужен, иначе target не пустит клиента.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Базу перенесли на новый облачный диск «того же размера» — запросы стали медленнее.
 `iostat`: `w/s` ровно 3000 и не растёт, `w_await` 15 мс, `aqu-sz` 40. Что происходит?
@@ -989,14 +991,13 @@ etcd критичен к latency `fdatasync` (p99 < 10 мс), общее HDD-х�
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Чем отличаются блочное, файловое и объектное хранилище?
 
 <details><summary>Ответ</summary>
 
 Блочное — сырой диск, ФС на клиенте, одна нода, минимальная latency (ОС, БД). Файловое —
-   POSIX-каталог по сети для многих клиентов (NFS, CephFS). Объектное — HTTP API, бакет и ключ,
-   объект целиком, бесконечный объём (бэкапы, медиа, артефакты).
+POSIX-каталог по сети для многих клиентов (NFS, CephFS). Объектное — HTTP API, бакет и ключ,
+объект целиком, бесконечный объём (бэкапы, медиа, артефакты).
 
 </details>
 
@@ -1005,8 +1006,8 @@ etcd критичен к latency `fdatasync` (p99 < 10 мс), общее HDD-х�
 <details><summary>Ответ</summary>
 
 IOPS — операции в секунду, throughput — байты в секунду, latency — время операции.
-   `throughput = IOPS × блок`, `IOPS ≈ queue depth / latency`. Базе важны IOPS и p99 latency на
-   мелких блоках, бэкапам — throughput.
+`throughput = IOPS × блок`, `IOPS ≈ queue depth / latency`. Базе важны IOPS и p99 latency на
+мелких блоках, бэкапам — throughput.
 
 </details>
 
@@ -1015,8 +1016,8 @@ IOPS — операции в секунду, throughput — байты в сек
 <details><summary>Ответ</summary>
 
 `iostat -xz 1`: `r_await`/`w_await` и `aqu-sz` выросли, IOPS упёрлись в потолок диска или тарифа;
-   `pidstat -d` — кто грузит; метрики хранилища/облака на throttling; сравнить с `fio`-базовой
-   линией. `%util` на SSD не аргумент.
+`pidstat -d` — кто грузит; метрики хранилища/облака на throttling; сравнить с `fio`-базовой
+линией. `%util` на SSD не аргумент.
 
 </details>
 
@@ -1025,6 +1026,8 @@ IOPS — операции в секунду, throughput — байты в сек
 <details><summary>Ответ</summary>
 
 0 — скорость без защиты; 1 — зеркало; 5 — одна чётность, penalty 4, опасен на больших HDD;
+6 — две чётности, penalty 6; 10 — зеркала в страйпе, penalty 2. Под базу — RAID10: быстрая
+запись и быстрый rebuild.
 
 </details>
 
@@ -1033,7 +1036,7 @@ IOPS — операции в секунду, throughput — байты в сек
 <details><summary>Ответ</summary>
 
 RAID защищает только от отказа диска. Удаление, `DROP TABLE`, шифровальщик и баг приложения
-   он честно применяет ко всем дискам; от потери сервера и площадки не защищает вообще.
+он честно применяет ко всем дискам; от потери сервера и площадки не защищает вообще.
 
 </details>
 
@@ -1042,7 +1045,7 @@ RAID защищает только от отказа диска. Удалени�
 <details><summary>Ответ</summary>
 
 Durability — данные не потеряны (11 девяток у S3), availability — доступны сейчас (99,99%).
-   Системы хранения при сомнении жертвуют доступностью ради сохранности.
+Системы хранения при сомнении жертвуют доступностью ради сохранности.
 
 </details>
 
@@ -1051,7 +1054,7 @@ Durability — данные не потеряны (11 девяток у S3), ava
 <details><summary>Ответ</summary>
 
 Репликация — горячие данные, тома БД, быстрый recovery, но 33% полезного места. EC —
-   объекты и архивы, 67–73% полезного места, но выше CPU, latency и сетевой трафик восстановления.
+объекты и архивы, 67–73% полезного места, но выше CPU, latency и сетевой трафик восстановления.
 
 </details>
 
@@ -1060,8 +1063,8 @@ Durability — данные не потеряны (11 девяток у S3), ava
 <details><summary>Ответ</summary>
 
 `fsync` — гарантия, что данные дошли до устойчивого носителя. Каждый COMMIT пишет WAL с `fsync`,
-   поэтому latency синхронной записи прямо ограничивает число транзакций в секунду (при QD=1
-   TPS ≈ 1 / latency fsync, без учёта group commit).
+поэтому latency синхронной записи прямо ограничивает число транзакций в секунду (при QD=1
+TPS ≈ 1 / latency fsync, без учёта group commit).
 
 </details>
 
@@ -1070,7 +1073,7 @@ Durability — данные не потеряны (11 девяток у S3), ava
 <details><summary>Ответ</summary>
 
 SAN отдаёт блочные устройства по отдельной сети (FC, iSCSI, NVMe-oF), NAS — файлы (NFS/SMB).
-   iSCSI — SCSI поверх TCP: initiator подключается к target'у и получает LUN как локальный диск.
+iSCSI — SCSI поверх TCP: initiator подключается к target'у и получает LUN как локальный диск.
 
 </details>
 
@@ -1079,10 +1082,8 @@ SAN отдаёт блочные устройства по отдельной с�
 <details><summary>Ответ</summary>
 
 Сервис, чьё состояние нельзя пересоздать из git. Перед продом: где лежат данные, как
-    реплицируются, куда и как бэкапятся, проверено ли восстановление, RPO/RTO, прогноз роста и
-    алерты на место, поведение при отказе ноды, владелец и runbook.
-
----
+реплицируются, куда и как бэкапятся, проверено ли восстановление, RPO/RTO, прогноз роста и
+алерты на место, поведение при отказе ноды, владелец и runbook.
 
 </details>
 

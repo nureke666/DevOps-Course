@@ -1,17 +1,17 @@
 ---
 title: "06. Режимы отказов: split brain, retry storm, метастабильность, exactly-once и outbox"
-description: "Блок → Распределённые системы → тема 06. Базовые ретраи, backoff, circuit breaker, bulkhead"
+description: "Split brain и fencing/STONITH, retry storm и метастабильность, backpressure, идемпотентность, exactly-once и outbox, саги, Jepsen"
 ---
 
 # 06. Режимы отказов: split brain, retry storm, метастабильность, exactly-once и outbox
 
 > Блок → Распределённые системы → тема 06. Базовые ретраи, backoff, circuit breaker, bulkhead
-> и ключ идемпотентности — в [../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns) (здесь —
+> и ключ идемпотентности — в [SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns) (здесь —
 > глубже, не повторяем); гарантии доставки, DLQ и outbox «в одну строку» — в
-> [../Left/05_Queues/01_queues_concepts.md](/queues/01-queues-concepts); Patroni — в
-> [../Storage/06_db_backup_replication.md](/storage/06-db-backup-replication) §9; фенсинг HA в Proxmox — в
-> [../Virtualization/04_proxmox.md](/virtualization/04-proxmox) §11; кворум — в
-> [04_consensus_quorum.md](/distributed/04-consensus-quorum); fencing-токены — в [05_time_ordering.md](/distributed/05-time-ordering).
+> [Очереди: 01. Основы очередей сообщений](/queues/01-queues-concepts); Patroni — в
+> [Хранилища: 06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication) §9; фенсинг HA в Proxmox — в
+> [Виртуализация: 04. Proxmox VE: VM, LXC, шаблоны, хранилища, кластер, HA, бэкапы, API](/virtualization/04-proxmox) §11; кворум — в
+> [04. Консенсус и кворум: Raft, etcd, Patroni, Ceph, corosync](/distributed/04-consensus-quorum); fencing-токены — в [05. Время и порядок событий: часы, логические часы, лизы и fencing-токены](/distributed/05-time-ordering).
 >
 > **После темы ты умеешь:** объяснить, как failover без кворума рождает split brain и чем его
 > гасят (STONITH, токены, DCS + watchdog в Patroni, watchdog в Proxmox); посчитать усиление
@@ -24,7 +24,7 @@ description: "Блок → Распределённые системы → те�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
           маленький сбой ─────────────────────────────────────────► большая авария
                 │                                                         ▲
    ┌────────────┼──────────────────┬───────────────────┬─────────────────┤
@@ -42,7 +42,8 @@ description: "Блок → Распределённые системы → те�
    ДУБЛИ И ПОТЕРИ: таймаут ≠ «не выполнено» → ключ идемпотентности; exactly-once = внутри
    Kafka; между системами — at-least-once + дедупликация; outbox вместо dual write; саги вместо 2PC
    ПРОВЕРКА: Jepsen-подход и свои game day — «гарантия есть, если мы её сломать не смогли»
-```text
+```
+
 ---
 
 ## 1. Split brain
@@ -50,20 +51,21 @@ description: "Блок → Распределённые системы → те�
 **Split brain** — две части кластера одновременно считают себя главными и принимают записи.
 Потом данные расходятся, и «склеить» их без потерь нельзя.
 
-```text
+```text:no-line-numbers
  primary pg1 ──── асинхронная репликация ───► pg2           скрипт failover на pg2:
        │                                        │            «pg1 не отвечает 10 с → promote»
        └─────────── ✖ сеть моргнула ✖ ──────────┘
  pg1: жив, клиенты с его стороны пишут       pg2: promote → timeline 2, клиенты пишут
  сеть вернулась: ДВА primary; заказы в обоих; pg_rewind на pg1 выбросит его хвост — потеря
-```text
+```
+
 Откуда берётся: **«я главный» решается без большинства** — два узла keepalived без арбитра
 (оба держат VIP), скрипт «ping не прошёл → promote», `pvecm expected 1`, два сентинела Redis.
 GitHub, 21 октября 2018: 43 секунды разрыва между ДЦ, Orchestrator перевёл primary на западное
 побережье; в обоих ДЦ оказались записи, которых нет в другом, — 24 часа 11 минут деградации
 (данные пользователей сохранили, пожертвовав временем).
 
-Кворум ([04_consensus_quorum.md](/distributed/04-consensus-quorum)) решает «кто **имеет право** быть
+Кворум ([04. Консенсус и кворум: Raft, etcd, Patroni, Ceph, corosync](/distributed/04-consensus-quorum)) решает «кто **имеет право** быть
 главным». Но старый главный об этом может не знать — завис, отрезан, проснулся после паузы.
 Поэтому второй слой — **fencing: не дать старому главному навредить**.
 
@@ -72,37 +74,39 @@ GitHub, 21 октября 2018: 43 секунды разрыва между ДЦ
 | **STONITH** («shoot the other node in the head») | Выключить соседа по питанию: IPMI/iLO, PDU, API гипервизора (`fence_ipmilan`, `fence_virsh`), SBD — «ядовитая таблетка» на общем диске | Pacemaker/corosync-кластеры |
 | **Self-fencing** (watchdog) | Узел, потерявший право, **сам** перезагружается; аппаратный или `softdog`-watchdog гарантирует это, даже если процесс завис | Proxmox HA: без кворума узел с HA-ресурсами уходит в ребут (~60 с); Patroni + `/dev/watchdog` |
 | **Resource fencing** | Отнять доступ к ресурсу: SCSI-3 reservations, отозвать ключ хранилища, убрать из балансировщика | SAN, Ceph `osd blocklist` для старого клиента |
-| **Fencing-токен** | Ресурс отвергает запись со старым номером | Тема [05_time_ordering.md](/distributed/05-time-ordering) |
+| **Fencing-токен** | Ресурс отвергает запись со старым номером | Тема [05. Время и порядок событий: часы, логические часы, лизы и fencing-токены](/distributed/05-time-ordering) |
 
 ### Patroni: как он не допускает двух primary
 
-```text
+```text:no-line-numbers
  лидер продлевает ключ в DCS каждые loop_wait=10 с (ttl=30 с)
  не смог (отрезан от большинства etcd) → сам demote в read-only, не дожидаясь «увольнения»
  Patroni завис и не успел demote → watchdog перезагрузит узел:
      срабатывает за safety_margin=5 с до истечения ttl → у цикла ≥ ttl − safety_margin − loop_wait = 15 с
  ключ истёк → реплики с лагом ≤ maximum_lag_on_failover борются за ключ (атомарно в DCS)
  HAProxy шлёт трафик по /primary — старый primary после demote отвечает 503 и выпадает
-```text
+```
+
 - `watchdog: mode: required` — без работающего watchdog узел **не станет лидером**; `automatic` —
   использовать, если есть; на VM — `modprobe softdog`.
 - `failsafe_mode: true` — при недоступном **целиком** DCS primary остаётся, только пока видит
   **всех** участников по REST API: «etcd упал — база в read-only» лечится без риска split brain.
 - Асинхронная реплика при failover теряет хвост: «ноль потерь» — `synchronous_mode: true` ценой
-  задержки (PACELC, [02_consistency_cap.md](/distributed/02-consistency-cap)).
+  задержки (PACELC, [02. Согласованность, CAP и PACELC](/distributed/02-consistency-cap)).
 
 ---
 
 ## 2. Retry storm и усиление по слоям
 
-База из [../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns) §2: backoff + jitter,
+База из [SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns) §2: backoff + jitter,
 ретраи на одном уровне. Глубже — **почему** это математически неизбежно.
 
-```text
+```text:no-line-numbers
  глубина стека d, на каждом слое r попыток → до r^d запросов на дно
  AWS Builders' Library (Марк Брукер): 5 слоёв × 3 попытки = 3⁵ = 243× нагрузки на базу
  и это без fan-out: запрос, который ходит в 10 шардов, при 5% ошибок ретраит почти всегда
-```text
+```
+
 | Механизм защиты | Как устроен | Источник |
 |-----------------|-------------|----------|
 | Ретраи в **одной** точке стека | Обычно у вызова самой зависимости; остальные слои не ретраят | AWS Builders' Library |
@@ -110,7 +114,7 @@ GitHub, 21 октября 2018: 43 секунды разрыва между ДЦ
 | Token bucket для ретраев | Ретраи тратят токены, успехи их пополняют; кончились — ретраи с фиксированной редкой скоростью. В AWS SDK с 2016 года | AWS Builders' Library |
 | Сигнал «перегружен, не ретраить» | Сервер отвечает отдельной ошибкой (`429`/`503` + `Retry-After`), слой выше не повторяет | Google SRE Book |
 | Адаптивный throttling клиента | Клиент сам отбрасывает запросы с вероятностью `max(0, (requests − K·accepts) / (requests + 1))`, K = 2 | Google SRE Book |
-| Deadline propagation | Не выполнять работу, которую вызывающий уже бросил | [../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns) §1 |
+| Deadline propagation | Не выполнять работу, которую вызывающий уже бросил | [SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns) §1 |
 
 AWS замечает: circuit breaker вносит **модальное** поведение, которое трудно тестировать и которое
 может удлинить восстановление; token bucket для ретраев защищает мягче. Модальность — риск: тестируй оба режима.
@@ -123,7 +127,7 @@ Bronson и др., «Metastable Failures in Distributed Systems» (HotOS 2021): �
 система уходит в плохое состояние и **остаётся** там, когда триггер ушёл. Держит её
 **поддерживающий эффект** — петля через исчерпание ресурса. Корень аварии — петля, не триггер.
 
-```text
+```text:no-line-numbers
  goodput
    ▲   STABLE          VULNERABLE (выглядит здоровым!)          METASTABLE
    │  ────────────────────────────────╮
@@ -132,7 +136,8 @@ Bronson и др., «Metastable Failures in Distributed Systems» (HotOS 2021): �
    │                                      триггер ушёл — а goodput не вернулся
    └────────────────────────────────────────────────────────────────► нагрузка
       < 150 QPS                 150–300 QPS
-```text
+```
+
 **Пример из статьи — ретраи.** База отвечает < 100 мс до 300 QPS и на порядок медленнее выше;
 приложение ретраит, если нет ответа за 1 с. При 280 QPS — 10 секунд сбоя коммутатора → сеть
 дошлёт накопленные запросы и ретраи → база тормозит → ретраится каждый запрос → 560 QPS →
@@ -145,7 +150,7 @@ goodput ноль. Выход — нагрузка ниже 150 QPS **или** р
 
 | Поддерживающий эффект | Как выглядит у тебя |
 |-----------------------|---------------------|
-| Ретраи | Сервис лежит 40 минут после минутного торможения базы (../SRE/06_reliability_patterns_tasks.md, D2) |
+| Ретраи | Сервис лежит 40 минут после минутного торможения базы ([SRE: 06. Паттерны надёжности, нагрузка и chaos engineering — задачи](/sre/06-reliability-patterns#задачи), D2) |
 | Холодный кэш | После рестарта Redis база в 100% CPU, кэш не прогревается |
 | Дорогие ошибки | Каждая ошибка пишет стектрейс в лог и в сеть — ошибки съедают CPU, нужный для успеха |
 | Рестарты по liveness | Под медленный → liveness убивает → остальные получают его долю → тоже медленные |
@@ -165,13 +170,13 @@ goodput ноль. Выход — нагрузка ниже 150 QPS **или** р
   база встала, лёг весь сайт и сеть фулфилмента. Fallback редко срабатывает, плохо тестируется и
   часто **хуже его отсутствия**. Вместо него: надёжнее основной путь, ошибка вызывающему,
   **push** данных заранее (IAM раздаёт учётные данные EC2 на часы вперёд) или постоянный failover.
-- В постмортеме — искать петлю, а не только триггер ([../SRE/05_postmortems.md](/sre/05-postmortems)).
+- В постмортеме — искать петлю, а не только триггер ([SRE: 05. Постмортемы](/sre/05-postmortems)).
 
 ---
 
 ## 4. Backpressure и load shedding
 
-Приёмы — в [../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns) §6. Глубже: **очередь — это
+Приёмы — в [SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns) §6. Глубже: **очередь — это
 задержка**; неограниченная очередь превращает перегрузку в латентность всех и в метастабильность.
 
 | Принцип | Как |
@@ -181,7 +186,7 @@ goodput ноль. Выход — нагрузка ниже 150 QPS **или** р
 | Выбрасывать протухшее | Запрос старше дедлайна клиента не выполнять вовсе |
 | Приоритеты | Google: `CRITICAL_PLUS` → `CRITICAL` → `SHEDDABLE_PLUS` → `SHEDDABLE`; фоновые батчи режутся первыми |
 | Сигнал назад по цепочке | TCP flow control, HTTP/2 windows, gRPC `RESOURCE_EXHAUSTED`, пауза консьюмера |
-| Асинхронный буфер | Kafka/RabbitMQ поглощают пик, но **лаг** — это та же очередь: алерт на него ([../Left/05_Queues/01_queues_concepts.md](/queues/01-queues-concepts) §7) |
+| Асинхронный буфер | Kafka/RabbitMQ поглощают пик, но **лаг** — это та же очередь: алерт на него ([Очереди: 01. Основы очередей сообщений](/queues/01-queues-concepts) §7) |
 
 ---
 
@@ -210,11 +215,11 @@ goodput ноль. Выход — нагрузка ниже 150 QPS **или** р
 
 | Причина каскада | Защита |
 |-----------------|--------|
-| Нет запаса | N+1 по ёмкости, утилизация в пик ~50–70% ([../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns) §9) |
+| Нет запаса | N+1 по ёмкости, утилизация в пик ~50–70% ([SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns) §9) |
 | Failover в меньшую зону | Ёмкость каждой зоны — под трафик соседней |
 | Автоматика «лечит» слишком усердно | Лимиты: `maxEjectionPercent` в outlier detection, PodDisruptionBudget, не больше N failover'ов подряд |
 | Health check, который валит всех | Зависимости — не в liveness; readiness не должен разом выключить все поды |
-| Gray failure, общий пул | Смотреть глазами клиента ([01_fallacies_basics.md](/distributed/01-fallacies-basics)); bulkhead |
+| Gray failure, общий пул | Смотреть глазами клиента ([01. Основы: частичные отказы, задержки и 8 заблуждений о сети](/distributed/01-fallacies-basics)); bulkhead |
 
 ---
 
@@ -235,8 +240,9 @@ CREATE TABLE idempotency_keys (
   PRIMARY KEY (client_id, key)
 );
 CREATE INDEX ON idempotency_keys (created_at);    -- для чистки: DELETE … WHERE created_at < now() - '24 hours'
-```text
-```text
+```
+
+```text:no-line-numbers
  POST /api/links  Idempotency-Key: 7c9e…   {"url": "https://kaspi.kz/x"}
    BEGIN
    INSERT INTO idempotency_keys (client_id, key, request_hash) … ON CONFLICT DO NOTHING RETURNING 1
@@ -245,7 +251,8 @@ CREATE INDEX ON idempotency_keys (created_at);    -- для чистки: DELETE
                      hash другой        → 422 «ключ уже использован с другим телом»
                      status_code есть   → вернуть сохранённый ответ как есть (тот же code!)
                      status_code NULL   → 409 «запрос ещё выполняется» (только в схеме с внешним вызовом)
-```text
+```
+
 ⭐ Ключевое свойство: запись ключа и сама операция — **в одной транзакции** (AWS: «запись
 токена и все изменения должны быть ACID-операцией»). Параллельный дубль с тем же ключом
 **ждёт** на уникальном индексе, пока первая транзакция не закоммитится, и потом видит готовый
@@ -296,16 +303,17 @@ CREATE INDEX ON idempotency_keys (created_at);    -- для чистки: DELETE
 - Документация: для **внешней системы** позицию консьюмера надо согласовать с результатом —
   хранить оффсет **там же, где результат**.
 
-```text
+```text:no-line-numbers
  продюсер ──► Kafka ──► консьюмер ──► PostgreSQL / HTTP-вызов / письмо
  └ идемпотентность ┘                     ▲
  └──── транзакции: EOS внутри Kafka ────┘│  ← здесь EOS КОНЧАЕТСЯ
                                           │
  консьюмер упал после INSERT, до коммита оффсета → сообщение придёт снова → нужен dedup:
    BEGIN; INSERT INTO processed(msg_id) VALUES ($id) ON CONFLICT DO NOTHING;  -- 0 строк → уже было
-          &lt;эффект&gt;;  [или: UPDATE consumer_offsets SET offset=$o WHERE partition=$p]
+          <эффект>;  [или: UPDATE consumer_offsets SET offset=$o WHERE partition=$p]
    COMMIT;          -- эффект и отметка «обработано» атомарно
-```text
+```
+
 ⭐ Ответ на собесе: «exactly-once — правда **внутри Kafka** (продюсер → лог → Streams); между
 системами это at-least-once плюс идемпотентный потребитель. Маркетинг — когда обещают
 "ровно одно письмо клиенту"».
@@ -317,10 +325,11 @@ CREATE INDEX ON idempotency_keys (created_at);    -- для чистки: DELETE
 Проблема **dual write**: сервис пишет в базу и в брокер — двумя операциями без общей
 транзакции.
 
-```text
+```text:no-line-numbers
  INSERT order; COMMIT  ✔ ──► producer.send("order.created")  ✖ упал   → заказ есть, события нет
  producer.send(...)    ✔ ──► INSERT order                     ✖ откат  → событие о несуществующем заказе
-```text
+```
+
 **Outbox** (Chris Richardson, microservices.io): событие пишется в таблицу `outbox` **той же
 транзакцией**, что и бизнес-данные; отдельный **relay** читает outbox и публикует в брокер.
 
@@ -330,11 +339,12 @@ INSERT INTO links (code, url, created_at) VALUES ('ab12cd', 'https://…', 17900
 INSERT INTO outbox (id, aggregatetype, aggregateid, type, payload)
 VALUES (gen_random_uuid(), 'link', 'ab12cd', 'LinkCreated', '{"code":"ab12cd","url":"https://…"}');
 COMMIT;                                     -- или оба, или ничего
-```text
+```
+
 | Relay | Как | Подводные камни |
 |-------|-----|-----------------|
 | **Polling publisher** | Раз в N мс: `SELECT … FROM outbox WHERE published_at IS NULL ORDER BY … LIMIT 100 FOR UPDATE SKIP LOCKED` → отправить → отметить/удалить | Задержка = период опроса; нагрузка на БД; параллельные relay — через `SKIP LOCKED` |
-| **CDC (log tailing)** | Debezium читает WAL через слот логической репликации; SMT Outbox Event Router маршрутизирует в `outbox.event.&lt;aggregatetype&gt;`, ключ — `aggregateid` | `wal_level=logical`; **слот держит WAL**, пока коннектор стоит — диск primary растёт; слоты и failover Patroni (проверь поддержку failover-слотов в своей версии PG/Patroni) |
+| **CDC (log tailing)** | Debezium читает WAL через слот логической репликации; SMT Outbox Event Router маршрутизирует в `outbox.event.<aggregatetype>`, ключ — `aggregateid` | `wal_level=logical`; **слот держит WAL**, пока коннектор стоит — диск primary растёт; слоты и failover Patroni (проверь поддержку failover-слотов в своей версии PG/Patroni) |
 
 Гарантия: событие есть **тогда и только тогда**, когда закоммичены данные; но relay может упасть
 между `send` и отметкой — доставка **at-least-once**, потребитель дедуплицирует (§8, у него —
@@ -347,13 +357,14 @@ COMMIT;                                     -- или оба, или ничег�
 **Двухфазный коммит (2PC):** координатор спрашивает всех «готовы?» (prepare — участники
 записали всё на диск и держат блокировки), затем рассылает commit.
 
-```text
+```text:no-line-numbers
  координатор ── PREPARE ──► БД-1 ✔ «готов» (строки заблокированы)
              ── PREPARE ──► БД-2 ✔ «готов»
              ✖ координатор упал до COMMIT
  участники не имеют права ни закоммитить, ни откатить сами (другой мог уже закоммитить) →
  in-doubt транзакции держат блокировки, пока координатор не вернётся — БЛОКИРУЮЩИЙ протокол
-```text
+```
+
 Почему 2PC между сервисами избегают: доступность = произведение доступностей всех участников и
 координатора; блокировки держатся на время самого медленного; брокеры и HTTP-API в 2PC обычно не
 участвуют. В PostgreSQL `PREPARE TRANSACTION` выключен по умолчанию (`max_prepared_transactions =
@@ -364,12 +375,13 @@ COMMIT;                                     -- или оба, или ничег�
 транзакций `T1…Tn`, у каждой — **компенсация** `Ci`. Гарантия: выполнится либо `T1…Tn`, либо
 `T1…Tj, Cj…C1`.
 
-```text
+```text:no-line-numbers
  заказ: T1 создать заказ(PENDING) → T2 зарезервировать товар → T3 списать деньги ✖ отказ
         → C2 снять резерв → C1 заказ = CANCELLED
  оркестрация: координатор-сага шлёт команды шагам (явный процесс, проще отлаживать)
  хореография: каждый сервис реагирует на события предыдущего (меньше связности, сложнее видеть целое)
-```text
+```
+
 | Свойство саги | Следствие |
 |---------------|-----------|
 | Нет изоляции | Промежуточные состояния видны: «семантические блокировки» — статусы `PENDING`, проверка перед действием |
@@ -390,7 +402,7 @@ COMMIT;                                     -- или оба, или ничег�
 | Ограниченные ретраи | N попыток, затем DLQ; для задержек — retry-топики (`orders.retry.1m`, `orders.retry.10m`) |
 | DLQ в Kafka делают сами | В брокере DLQ нет: Kafka Connect — `errors.tolerance=all` + `errors.deadletterqueue.topic.name`; Spring Kafka — `DeadLetterPublishingRecoverer` |
 | Порядок против DLQ | Убрали сообщение в DLQ — следующие по тому же ключу обработаются «через голову»; если порядок критичен, останавливать ключ/партицию |
-| DLQ — это алерт | Непустая DLQ = чья-то задача; есть инструмент переотправки после фикса ([../Left/05_Queues/01_queues_concepts.md](/queues/01-queues-concepts) §5) |
+| DLQ — это алерт | Непустая DLQ = чья-то задача; есть инструмент переотправки после фикса ([Очереди: 01. Основы очередей сообщений](/queues/01-queues-concepts) §5) |
 
 ---
 
@@ -404,18 +416,18 @@ COMMIT;                                     -- или оба, или ничег�
 |--------|-----------|
 | Kafka 0.8 beta (2013, aphyr.com) | ISR сжался до лидера, лидер отрезан → выбрана отставшая реплика: из 987 подтверждённых записей потеряно 520. Против этого сценария позже появились `min.insync.replicas` (0.8.2) и `unclean.leader.election.enable=false` по умолчанию (0.11) |
 | etcd 3.4.3 (2020) | KV — strict serializable даже со сдвигом часов на сотни секунд; **блокировки** не дают взаимного исключения — нужна ревизия как fencing-токен |
-| PostgreSQL 12.3 (2020) | Аномалия G2-item на уровне `SERIALIZABLE`, баг с 2011 года — исправлен в минорном релизе ([02_consistency_cap.md](/distributed/02-consistency-cap)) |
+| PostgreSQL 12.3 (2020) | Аномалия G2-item на уровне `SERIALIZABLE`, баг с 2011 года — исправлен в минорном релизе ([02. Согласованность, CAP и PACELC](/distributed/02-consistency-cap)) |
 | Bufstream 0.1.0 (2024) | Попутно — проблемы протокола транзакций самой Kafka (KAFKA-17754: «оторванные» транзакции) → KIP-890 в Kafka 4.0 |
 
 Свой **game day** для гарантий — тот же подход меньшими силами:
-```text
+```
  1. Гарантия словами:  «запись с acks=all, RF=3, min ISR=2 не теряется при kill -9 лидера»
  2. Журнал:            клиент пишет уникальные значения и логирует, что ему ПОДТВЕРДИЛИ
  3. Отказ:             kill -9, docker pause, iptables, tc netem, libfaketime, Toxiproxy/Chaos Mesh
  4. Проверка:          подтверждённые − прочитанные = потери; прочитанные дважды = дубли
-```text
-Это ровно лаба 4 из [07_practice_labs.md](/mlops/07-practice-labs). Формат учений — в
-[../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns) §11 и [../SRE/07_practice_labs.md](/mlops/07-practice-labs).
+```
+Это ровно лаба 4 из [07. Практика: 6 лаб по распределённым системам](/distributed/07-practice-labs). Формат учений — в
+[SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns) §11 и [SRE: 07. Практика: 4 лабы по SRE и observability](/sre/07-practice-labs).
 
 ---
 
@@ -434,7 +446,7 @@ services:
     healthcheck: { test: ["CMD", "pg_isready", "-U", "linkd"], interval: 2s, retries: 30 }
   linkd:
     image: python:3.12-slim
-    command: sh -c 'pip install -q --root-user-action=ignore "psycopg[binary]>=3.1,&lt;4" && exec python3 /app/linkd.py'
+    command: sh -c 'pip install -q --root-user-action=ignore "psycopg[binary]>=3.1,<4" && exec python3 /app/linkd.py'
     environment: { LINKD_PORT: "8080", LINKD_DATABASE_URL: "postgresql://linkd:linkd@db:5432/linkd" }
     volumes: [ "${HOME}/Projects/devops/09-ledger/app:/app:ro" ]
     ports: [ "127.0.0.1:18480:8080" ]
@@ -442,11 +454,12 @@ services:
 EOF
 docker compose up -d && until curl -sf localhost:18480/readyz; do sleep 2; done
 PSQL="docker compose exec -T db psql -U linkd -d linkd -X"
-```text
+```
+
 **1. Медленная база + клиент с таймаутом и ретраями.** Держим `SHARE`-блокировку таблицы
 (чтения идут, `INSERT` ждёт) — так выглядит «база тормозит» для записи:
 ```bash
-$PSQL -c "BEGIN; LOCK TABLE links IN SHARE MODE; SELECT pg_sleep(6); COMMIT;"&gt;/dev/null &
+$PSQL -c "BEGIN; LOCK TABLE links IN SHARE MODE; SELECT pg_sleep(6); COMMIT;" >/dev/null &
 sleep 0.5
 curl -sS -o /dev/null -w '%{http_code}\n' --max-time 1 --retry 3 --retry-delay 0 \
   -X POST -d '{"url":"https://example.kz/pay-42"}' localhost:18480/api/links
@@ -454,7 +467,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' --max-time 1 --retry 3 --retry-delay 0
 sleep 7; $PSQL -c "SELECT code, url FROM links WHERE url = 'https://example.kz/pay-42';"
 #   2–4 строки с РАЗНЫМИ code: каждый оборванный запрос всё равно дописался после снятия блокировки
 docker compose logs linkd | grep pay-42    # сервер ответил 201 на все — клиента уже не было
-```text
+```
+
 **2. Как ключ идемпотентности это лечит — на уровне базы.** Два терминала:
 ```sql
 CREATE TABLE idempotency_keys (key text PRIMARY KEY, request_hash text NOT NULL,
@@ -466,9 +480,9 @@ BEGIN; INSERT INTO idempotency_keys (key, request_hash) VALUES ('k-1','h1') ON C
 UPDATE idempotency_keys SET status_code = 201, response = '{"code":"ab12cd"}' WHERE key = 'k-1'; COMMIT;
 -- T2: (0 rows) → SELECT status_code, response FROM idempotency_keys WHERE key = 'k-1';
 --     201 {"code": "ab12cd"} — тот же ответ, второй ссылки нет
-```text
+```
 Повтори шаг 2, но в терминале 1 сделай `ROLLBACK` вместо `COMMIT` — терминал 2 вставит ключ
-сам и станет «первым». Встроить это в копию linkd — лаба 5 в [07_practice_labs.md](/mlops/07-practice-labs).
+сам и станет «первым». Встроить это в копию linkd — лаба 5 в [07. Практика: 6 лаб по распределённым системам](/distributed/07-practice-labs).
 
 Запиши: сколько строк создал один «успешный» запрос; почему сервер логировал 201, а клиент их не
 видел; что будет, если ретраят и шлюз, и клиент. Уборка: `docker compose down -v`.
@@ -552,13 +566,17 @@ UPDATE idempotency_keys SET status_code = 201, response = '{"code":"ab12cd"}' WH
 10. 2PC блокирует при падении координатора — между сервисами берут саги с идемпотентными
     шагами и компенсациями; обещания систем проверяют отказами, а не чтением README.
 
-➡️ Дальше: [07_practice_labs.md](/mlops/07-practice-labs) · задачи: 06_failure_modes_tasks.md
+---
 
+## Задачи
+
+> Стенд: `~/labs/distributed/06` из мини-лабы (linkd 2.0 + `postgres:17-alpine`, код linkd
+> смонтирован read-only). `PSQL="docker compose exec -T db psql -U linkd -d linkd -X"`.
+> Для задач с Kafka — кластер лабы 4, с Patroni — лаба 2 из [07. Практика: 6 лаб по распределённым системам](/distributed/07-practice-labs).
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Что такое split brain? Назови три типовые конструкции, которые его порождают.
 
@@ -772,6 +790,8 @@ in-doubt транзакции держат блокировки неопреде
 
 Клиенты выполняют операции с журналом, nemesis вносит отказы (разделения, паузы, падения,
 часы), проверяльщик (Knossos/Elle) ищет невозможную историю. Находки: Kafka 0.8 (2013) — 520 из
+987 подтверждённых записей потеряны; etcd 3.4.3 — блокировки без взаимного исключения; PostgreSQL
+12.3 — G2-item в `SERIALIZABLE`. Game day: гарантия → журнал подтверждений → отказ → сравнение.
 
 </details>
 
@@ -779,279 +799,260 @@ in-doubt транзакции держат блокировки неопреде
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```bash
 B1.  # keepalived на двух балансировщиках, VRRP по той же сети, что и трафик; третьего нет
-```text
-<details><summary>Ответ</summary>
 
-⚠️ Два узла без арбитра: при разрыве VRRP-связи оба станут MASTER и возьмут VIP — split
+B2.  # cron на pg2, раз в минуту
+     pg_isready -h pg1 -t 5 || pg_ctl -D /var/lib/postgresql/data promote
+
+B3.  # patroni.yml
+     watchdog: { mode: off }
+     etcd3: { hosts: 10.0.1.11:2379,10.0.1.12:2379 }     # etcd на двух узлах PG
+```
+
+```python
+B4.  @retry(stop=stop_after_attempt(3))          # клиент
+     def call_api(): ...                          # API ретраит payments 3 раза, драйвер БД — 3 раза
+
+B5.  def homepage_banner():                       # 5000 RPS на один ключ
+         v = cache.get("banner")
+         if v is None:
+             v = db.heavy_query()                 # 2 секунды
+             cache.set("banner", v, ttl=300)
+         return v
+
+B6.  try:
+         price = pricing_service.get(sku)
+     except Exception:
+         price = db.compute_price_from_raw_tables(sku)   # «запасной путь», тяжёлый запрос
+
+B7.  consumer = KafkaConsumer("orders", enable_auto_commit=True)
+     for msg in consumer:
+         db.insert_order(msg.value)
+
+B8.  db.execute("INSERT INTO orders ..."); db.commit()
+     producer.send("order.created", order)       # после коммита
+
+B9.  key = request.headers["Idempotency-Key"]
+     if redis.get(key):
+         return json.loads(redis.get(key))
+     resp = create_payment(request.json)          # пишет в PostgreSQL
+     redis.set(key, json.dumps(resp))
+     return resp
+
+B10. db.execute("INSERT INTO processed (msg_id) VALUES (%s)", (msg.id,)); db.commit()
+     send_email(msg.value["user"])                # письмо после отметки «обработано»
+
+B11. while True:
+         try:
+             handle(msg); break
+         except Exception:
+             time.sleep(1)                        # до победного
+
+B12. # «включили enable.idempotence=true — теперь в базе потребителя дублей не будет»
+
+B13. # два сервиса делают 2PC через PREPARE TRANSACTION; max_prepared_transactions = 100;
+     # мониторинга pg_prepared_xacts нет
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Два узла без арбитра: при разрыве VRRP-связи оба станут MASTER и возьмут VIP — split
 brain, флаппинг ARP. Отдельная сеть/линк для VRRP, track-скрипты, unicast peers, fencing или третий узел.
 
-</details>
-
-```text:no-line-numbers
-B2.  # cron на pg2, раз в минуту
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Классический генератор split brain: pg1 жив, но медленный/отрезан от pg2 — pg2
+**B2.** ⚠️ Классический генератор split brain: pg1 жив, но медленный/отрезан от pg2 — pg2
 promote, два primary. Решение без кворума и fencing. Patroni/CNPG.
 
-</details>
-
-```text:no-line-numbers
-     pg_isready -h pg1 -t 5 || pg_ctl -D /var/lib/postgresql/data promote
-```text
-```text:no-line-numbers
-B3.  # patroni.yml
-```text
-<details><summary>Ответ</summary>
-
-⚠️ etcd из двух узлов (хуже одного) на тех же узлах, что и PG; watchdog выключен —
+**B3.** ⚠️ etcd из двух узлов (хуже одного) на тех же узлах, что и PG; watchdog выключен —
 зависший Patroni не снимет роль. DCS из 3 узлов в разных доменах, `watchdog: required`.
 
-</details>
+**B4.** ⚠️ `3 × 3 × 3 = 27×` на базу в худший момент. Ретраи в одной точке, бюджет, дедлайны.
 
-```text:no-line-numbers
-     watchdog: { mode: off }
-```text
-```text:no-line-numbers
-     etcd3: { hosts: 10.0.1.11:2379,10.0.1.12:2379 }     # etcd на двух узлах PG
-```text
-```text:no-line-numbers
-B4.  @retry(stop=stop_after_attempt(3))          # клиент
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `3 × 3 × 3 = 27×` на базу в худший момент. Ретраи в одной точке, бюджет, дедлайны.
-
-</details>
-
-```text:no-line-numbers
-     def call_api(): ...                          # API ретраит payments 3 раза, драйвер БД — 3 раза
-```text
-```text:no-line-numbers
-B5.  def homepage_banner():                       # 5000 RPS на один ключ
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Cache stampede: истёк TTL — тысячи запросов за 2 с одновременно запускают тяжёлый
+**B5.** ⚠️ Cache stampede: истёк TTL — тысячи запросов за 2 с одновременно запускают тяжёлый
 запрос. Coalescing/lock, stale-while-revalidate, ранний refresh, jitter TTL.
 
-</details>
-
-```text:no-line-numbers
-         v = cache.get("banner")
-```text
-```text:no-line-numbers
-         if v is None:
-```text
-```text:no-line-numbers
-             v = db.heavy_query()                 # 2 секунды
-```text
-```text:no-line-numbers
-             cache.set("banner", v, ttl=300)
-```text
-```text:no-line-numbers
-         return v
-```text
-```text:no-line-numbers
-B6.  try:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Fallback тяжелее основного пути: pricing лёг — база получает весь поток тяжёлых
+**B6.** ⚠️ Fallback тяжелее основного пути: pricing лёг — база получает весь поток тяжёлых
 запросов и ложится следом. Ошибка/кэшированная цена, а не «запасной» тяжёлый путь.
 
-</details>
-
-```text:no-line-numbers
-         price = pricing_service.get(sku)
-```text
-```text:no-line-numbers
-     except Exception:
-```text
-```text:no-line-numbers
-         price = db.compute_price_from_raw_tables(sku)   # «запасной путь», тяжёлый запрос
-```text
-```text:no-line-numbers
-B7.  consumer = KafkaConsumer("orders", enable_auto_commit=True)
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Автокоммит по таймеру: оффсет может закоммититься до вставки (упали — потеря) или
+**B7.** ⚠️ Автокоммит по таймеру: оффсет может закоммититься до вставки (упали — потеря) или
 вставка пройти до коммита (упали — дубль). Коммит после обработки + идемпотентная вставка по `order_id`.
 
-</details>
-
-```text:no-line-numbers
-     for msg in consumer:
-```text
-```text:no-line-numbers
-         db.insert_order(msg.value)
-```text
-```text:no-line-numbers
-B8.  db.execute("INSERT INTO orders ..."); db.commit()
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Dual write: упал между `commit` и `send` — события нет; `send` таймаутнулся, но
+**B8.** ⚠️ Dual write: упал между `commit` и `send` — события нет; `send` таймаутнулся, но
 дошёл — в логике ретрая дубль. Outbox.
 
-</details>
-
-```text:no-line-numbers
-     producer.send("order.created", order)       # после коммита
-```text
-```text:no-line-numbers
-B9.  key = request.headers["Idempotency-Key"]
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Check-then-act: два параллельных запроса оба не найдут ключ и оба создадут платёж;
+**B9.** ⚠️ Check-then-act: два параллельных запроса оба не найдут ключ и оба создадут платёж;
 Redis и PostgreSQL — разные транзакции (упали между `create_payment` и `set` — повтор создаст
 второй платёж). Ключ — в той же БД, уникальное ограничение, одна транзакция.
 
-</details>
-
-```text:no-line-numbers
-     if redis.get(key):
-```text
-```text:no-line-numbers
-         return json.loads(redis.get(key))
-```text
-```text:no-line-numbers
-     resp = create_payment(request.json)          # пишет в PostgreSQL
-```text
-```text:no-line-numbers
-     redis.set(key, json.dumps(resp))
-```text
-```text:no-line-numbers
-     return resp
-```text
-```text:no-line-numbers
-B10.  db.execute("INSERT INTO processed (msg_id) VALUES (%s)", (msg.id,)); db.commit()
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Отметка «обработано» раньше эффекта: упали до `send_email` — письмо не уйдёт никогда
+**B10.** ⚠️ Отметка «обработано» раньше эффекта: упали до `send_email` — письмо не уйдёт никогда
 (at-most-once). Наоборот — дубль письма. Письмо в транзакцию не положить: outbox для письма +
 идемпотентность провайдера (ключ), или принять at-least-once.
 
-</details>
-
-```text:no-line-numbers
-     send_email(msg.value["user"])                # письмо после отметки «обработано»
-```text
-```text:no-line-numbers
-B11.  while True:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Poison message вечно блокирует партицию, а при временной ошибке ретраи без backoff
+**B11.** ⚠️ Poison message вечно блокирует партицию, а при временной ошибке ретраи без backoff
 и лимита добивают зависимость. Лимит попыток, backoff + jitter, DLQ.
 
-</details>
-
-```text:no-line-numbers
-         try:
-```text
-```text:no-line-numbers
-             handle(msg); break
-```text
-```text:no-line-numbers
-         except Exception:
-```text
-```text:no-line-numbers
-             time.sleep(1)                        # до победного
-```text
-```text:no-line-numbers
-B12.  # «включили enable.idempotence=true — теперь в базе потребителя дублей не будет»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Идемпотентный продюсер защищает только лог партиции от ретраев продюсера; дубли в
+**B12.** ⚠️ Идемпотентный продюсер защищает только лог партиции от ретраев продюсера; дубли в
 базе потребителя возникают при его падении до коммита оффсета. Нужна дедупликация у потребителя.
 
-</details>
-
-```text:no-line-numbers
-B13.  # два сервиса делают 2PC через PREPARE TRANSACTION; max_prepared_transactions = 100;
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Забытые prepared-транзакции держат блокировки и xmin — VACUUM не чистит, таблицы
+**B13.** ⚠️ Забытые prepared-транзакции держат блокировки и xmin — VACUUM не чистит, таблицы
 пухнут. Мониторинг `pg_prepared_xacts` по возрасту, runbook `COMMIT/ROLLBACK PREPARED`; лучше саги.
 
 </details>
 
-```text:no-line-numbers
-     # мониторинга pg_prepared_xacts нет
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Дубли своими глазами
+#### C1. 🔑 Дубли своими глазами
 На стенде мини-лабы повтори шаг 1 для трёх комбинаций: блокировка 6 с и `--max-time 1 --retry 3`;
 блокировка 6 с и `--retry 0`; блокировка 2 с и `--max-time 3 --retry 3`. Для каждой **сначала
 запиши прогноз** числа строк, потом проверь. Что увидел клиент в каждом случае?
 
-### C2. 🔑 Ключ идемпотентности на SQL
+<details><summary>Ответ</summary>
+
+Прогнозы: (1) 6 с блокировки, 4 попытки по 1 с — до 4 строк (обычно 3–4), клиент видит
+1–2 таймаута и 201 или все таймауты (exit 28). (2) `--retry 0` — 1 строка, клиент видит таймаут и
+думает «не создалось» — именно так рождаются ручные повторы. (3) 2 с блокировки, таймаут 3 с —
+1 строка, клиент ждёт ~1,5 с и получает 201. Мораль: дубли появляются, когда таймаут клиента
+короче задержки сервера, а работа на сервере продолжается.
+
+</details>
+
+#### C2. 🔑 Ключ идемпотентности на SQL
 В таблице `idempotency_keys` из мини-лабы: (а) повтори гонку двух сессий с `ROLLBACK` в первой —
 кто в итоге «первый»? (б) напиши один SQL-запрос, который для пары `(key, request_hash)` отвечает,
 что делать: «новый», «повтор — вернуть ответ», «тот же ключ, другое тело», «ещё выполняется».
 (в) напиши запрос чистки ключей старше 24 часов и объясни, почему удалять раньше опасно.
 
-### C3. Усиление ретраев по слоям
+<details><summary>Ответ</summary>
+
+(а) После `ROLLBACK` первой сессии вторая перестаёт ждать, **вставляет** ключ и
+становится первой — корректно: первого запроса «не было». (б) Например:
+```sql
+SELECT CASE WHEN k.key IS NULL                THEN 'new'
+            WHEN k.request_hash <> 'h2'        THEN 'conflict_422'
+            WHEN k.status_code IS NULL         THEN 'in_progress_409'
+            ELSE 'replay' END AS action, k.status_code, k.response
+FROM (SELECT 'k-1'::text AS key) q LEFT JOIN idempotency_keys k USING (key);
+```
+(в) `DELETE FROM idempotency_keys WHERE created_at < now() - interval '24 hours';` Удалить раньше,
+чем клиент может ретраить (его максимальный срок ретраев + запас), — повтор создаст новую операцию.
+
+</details>
+
+#### C3. Усиление ретраев по слоям
 Перезапусти linkd с `LINKD_FAULT_ERROR_RATE=0.5` (учебные 500 на `/r/<code>`). Поставь перед ним
 nginx с `proxy_next_upstream error timeout http_500; proxy_next_upstream_tries 3;` (в upstream —
 тот же `linkd:8080` три раза). Сделай 200 запросов `curl --retry 3` через nginx и посчитай, сколько
 запросов дошло до linkd (логи linkd). Сначала посчитай теорию для `p = 0,5` и `p = 0,9`. Почему
 POST через тот же nginx не ретраился бы?
 
-### C4. Cache stampede и `proxy_cache_lock`
+<details><summary>Ответ</summary>
+
+Теория: nginx на одну попытку curl делает в среднем `1 + p + p²` запросов и отдаёт
+ошибку с вероятностью `p³`; curl делает `1 + q + q² + q³` попыток, где `q = p³`. `p = 0,5`: nginx
+1,75, `q = 0,125`, curl ≈ 1,14 → ≈ 2,0 запроса на пользовательский (≈ 400 на 200). `p = 0,9`:
+nginx 2,71, `q ≈ 0,73`, curl ≈ 2,65 → **≈ 7,2×** — усиление растёт именно когда зависимости хуже
+всего. Подвох стенда: поставь `max_fails=0` на серверах upstream, иначе nginx пометит их
+мёртвыми и начнёт отвечать `502 no live upstreams`. POST nginx не ретраит на другой upstream без
+флага `non_idempotent` в `proxy_next_upstream` (с 1.9.13) — правильный дефолт.
+
+</details>
+
+#### C4. Cache stampede и `proxy_cache_lock`
 linkd с `LINKD_FAULT_LATENCY_MS=500`, nginx кэширует `302` от `/r/<code>` на 5 секунд. Дай
 «толпу»: `seq 50 | xargs -P50 -I{} curl -s -o /dev/null localhost:8088/r/<code>` сразу после
 истечения кэша. Сколько запросов дошло до linkd без `proxy_cache_lock` и с ним? Что стало со
 счётчиком `hits` в таблице `links` и почему это тоже «семантика»?
 
-### C5. `read_committed` против `read_uncommitted`
+<details><summary>Ответ</summary>
+
+Без блокировки почти все 50 параллельных промахов уйдут в linkd (≈ 50 строк в логе); с
+`proxy_cache_lock on` — 1: остальные ждут появления ответа в кэше (до `proxy_cache_lock_timeout`,
+5 с по умолчанию). `hits` в таблице считает только запросы, дошедшие до linkd: кэш на nginx
+«съел» клики — кэширование изменило бизнес-метрику. Считать клики тогда по логам nginx.
+
+</details>
+
+#### C5. `read_committed` против `read_uncommitted`
 На кластере лабы 4 напиши маленький продюсер (`confluent-kafka` для Python), который в транзакции
 пишет три сообщения в топик `tx-demo` и делает `abort_transaction()`, а затем в другой транзакции —
 ещё одно и `commit_transaction()`. Прочитай топик `kafka-console-consumer.sh` с
 `--isolation-level read_uncommitted` и `read_committed`. Что видно в каждом случае?
 
-### C6. Outbox-relay с `SKIP LOCKED`
+<details><summary>Ответ</summary>
+
+`read_uncommitted` (по умолчанию) — видны все 4 сообщения, включая 3 из отменённой
+транзакции. `read_committed` — только одно, закоммиченное. Консьюмеры «на дефолте» после
+продюсеров с транзакциями видят мусор отменённых транзакций.
+
+</details>
+
+#### C6. Outbox-relay с `SKIP LOCKED`
 Создай `outbox (id bigserial, payload jsonb, published_at timestamptz)` и вставь 10 строк. В двух
 `psql` одновременно выполни `BEGIN; SELECT id FROM outbox WHERE published_at IS NULL ORDER BY id
 LIMIT 5 FOR UPDATE SKIP LOCKED;`. Какие id получил каждый? Что будет без `SKIP LOCKED`? Что
 случится, если relay упадёт после «отправки», но до `UPDATE … SET published_at = now(); COMMIT`?
 
-### C7. Дедупликация у потребителя
+<details><summary>Ответ</summary>
+
+Первая сессия получит id 1–5, вторая — 6–10 (строки, заблокированные первой,
+пропускаются). Без `SKIP LOCKED` вторая будет ждать первую. Упал relay после отправки, до
+`COMMIT` — блокировки снимутся откатом, `published_at` пуст, строки уйдут повторно:
+at-least-once, потребитель дедуплицирует.
+
+</details>
+
+#### C7. Дедупликация у потребителя
 Смоделируй консьюмера в `psql`: таблицы `processed (msg_id text PRIMARY KEY)` и `balances`.
 Обработка: `BEGIN; INSERT INTO processed … ON CONFLICT DO NOTHING RETURNING 1; UPDATE balances …;
 COMMIT;`. «Упади» после `COMMIT`, но до коммита оффсета, — и доставь то же сообщение ещё раз.
 Покажи, что баланс изменился один раз. Почему `INSERT INTO processed` и `UPDATE` нельзя делать
 в разных транзакциях?
 
-### C8. Сага на бумаге
+<details><summary>Ответ</summary>
+
+Вторая доставка: `INSERT … ON CONFLICT DO NOTHING RETURNING 1` вернёт 0 строк →
+пропустить `UPDATE` → баланс изменился один раз. В разных транзакциях появляется окно: отметка
+есть, эффекта нет (потеря) или эффект есть, отметки нет (дубль) — атомарность пропадает.
+
+</details>
+
+#### C8. Сага на бумаге
 Оформление заказа: создать заказ, зарезервировать товар, списать деньги (внешний банк), отправить
 письмо. Для каждого шага запиши компенсацию, ключ идемпотентности и где нужен outbox. Какой шаг
 нельзя компенсировать «откатом»? Где пользователь видит промежуточное состояние?
 
-### C9. Хронология failover Patroni
+<details><summary>Ответ</summary>
+
+Пример: T1 заказ `PENDING` / C1 `CANCELLED`; T2 резерв / C2 снять резерв; T3 списание в
+банке с ключом = `order_id` / C3 возврат (refund) — это новая операция, а не откат; T4 письмо —
+компенсировать нечем, поэтому оно **последнее** (после pivot-шага — списания), а при отмене —
+письмо «заказ отменён». Outbox — на каждом переходе, публикующем событие. Пользователь видит
+`PENDING` («обрабатываем оплату»).
+
+</details>
+
+#### C9. Хронология failover Patroni
 `ttl=30`, `loop_wait=10`, `retry_timeout=10`. В момент T=0 сеть отрезала primary pg1 от всех
 узлов etcd (последнее продление ключа — в T=−3 с). Оцени: когда pg1 перестанет принимать записи,
 когда может появиться новый primary, есть ли окно без primary и окно с двумя. Проверь на стенде
-лабы 2 ([07_practice_labs.md](/mlops/07-practice-labs)).
+лабы 2 ([07. Практика: 6 лаб по распределённым системам](/distributed/07-practice-labs)).
+
+<details><summary>Ответ</summary>
+
+pg1 при следующем цикле (≤ 10 с после T=0) не сможет обновить ключ; после
+`retry_timeout` (≤ 10 с) — demote: записи прекращаются примерно к T+10…20 с. Ключ истекает в
+`T = −3 + 30 = 27 с`; реплики увидят это на своём цикле — новый primary примерно в T+27…37 с.
+Окно **без** primary ≈ 10–25 с (цена безопасности); окна с **двумя** нет, потому что pg1
+demote'ится раньше, чем истекает ключ (`loop_wait + 2 × retry_timeout ≤ ttl`), а зависший Patroni
+добьёт watchdog.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После моргания сети оба балансировщика keepalived держат VIP, в логах коммутатора —
 флаппинг ARP, половина запросов уходит на «старый» балансировщик со старым конфигом.
@@ -1065,6 +1066,7 @@ track-скрипты, одинаковая конфигурация через C
 </details>
 
 **D2.** Сеть между primary и etcd пропала на 40 секунд. Primary ушёл в read-only, приложение
+40 секунд получало ошибки записи. Команда предлагает «отключить demote, чтобы не было простоя».
 
 <details><summary>Ответ</summary>
 
@@ -1075,7 +1077,6 @@ demote спасает от split brain. Отключать нельзя. Вар�
 
 </details>
 
-**40.** секунд получало ошибки записи. Команда предлагает «отключить demote, чтобы не было простоя».
 **D3.** Redis с кэшем перезапускался 2 минуты. Он давно работает, а база уже час в 100% CPU,
 hit rate кэша 5% и не растёт.
 
@@ -1095,7 +1096,7 @@ hit rate кэша 5% и не растёт.
 
 Неидемпотентный POST ретраил шлюз после таймаута, первый запрос уже прошёл. Возврат дублей,
 ключ идемпотентности (от клиента, проброс через шлюз) с уникальным ограничением, ретраи POST только
-с ключом, таймаут шлюза больше таймаута сервиса ([../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns)).
+с ключом, таймаут шлюза больше таймаута сервиса ([SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns)).
 
 </details>
 
@@ -1169,14 +1170,13 @@ xmin — VACUUM не чистит. Выяснить у координатора 
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Что такое split brain и как его предотвращают?
 
 <details><summary>Ответ</summary>
 
 Две стороны разом «главные» и пишут. Предотвращают кворумом (решение большинства: etcd,
-   Patroni DCS, corosync) плюс fencing старого главного (STONITH, watchdog, токены); на стороне
-   клиентов — ходить к главному через проверку роли (HAProxy `/primary`).
+Patroni DCS, corosync) плюс fencing старого главного (STONITH, watchdog, токены); на стороне
+клиентов — ходить к главному через проверку роли (HAProxy `/primary`).
 
 </details>
 
@@ -1185,8 +1185,8 @@ xmin — VACUUM не чистит. Выяснить у координатора 
 <details><summary>Ответ</summary>
 
 Принудительное выключение соседа (IPMI, PDU, SBD). Кворум говорит, кто имеет право, но не
-   останавливает старого главного, который завис или отрезан, — STONITH гарантирует, что тот
-   больше ничего не запишет.
+останавливает старого главного, который завис или отрезан, — STONITH гарантирует, что тот
+больше ничего не запишет.
 
 </details>
 
@@ -1195,7 +1195,7 @@ xmin — VACUUM не чистит. Выяснить у координатора 
 <details><summary>Ответ</summary>
 
 Таймауты, ретраи только временных ошибок с backoff + jitter, в одной точке и в пределах бюджета;
-   неидемпотентные операции — с ключом идемпотентности, записанным в одной транзакции с операцией.
+неидемпотентные операции — с ключом идемпотентности, записанным в одной транзакции с операцией.
 
 </details>
 
@@ -1204,7 +1204,7 @@ xmin — VACUUM не чистит. Выяснить у координатора 
 <details><summary>Ответ</summary>
 
 Ретраи на нескольких слоях умножают нагрузку (r^d). Остановить: срезать ретраи и нагрузку,
-   retry budget, сигнал «не ретраить», circuit breaker; потом возвращать трафик постепенно.
+retry budget, сигнал «не ретраить», circuit breaker; потом возвращать трафик постепенно.
 
 </details>
 
@@ -1213,8 +1213,8 @@ xmin — VACUUM не чистит. Выяснить у координатора 
 <details><summary>Ответ</summary>
 
 Система после триггера остаётся в аварии из-за петли: пример — 10 с сбоя сети, ретраи удвоили
-   нагрузку, база не восстанавливается, пока не срежешь ретраи или трафик; или потеря кэша с 90%
-   попаданий — 10× на базу, кэш не прогревается.
+нагрузку, база не восстанавливается, пока не срежешь ретраи или трафик; или потеря кэша с 90%
+попаданий — 10× на базу, кэш не прогревается.
 
 </details>
 
@@ -1223,8 +1223,8 @@ xmin — VACUUM не чистит. Выяснить у координатора 
 <details><summary>Ответ</summary>
 
 Правда внутри Kafka: идемпотентный продюсер, транзакции, `read_committed`, Streams
-   `exactly_once_v2`. Между системами — at-least-once + идемпотентный потребитель или оффсет рядом
-   с результатом. «Ровно одно письмо» — маркетинг.
+`exactly_once_v2`. Между системами — at-least-once + идемпотентный потребитель или оффсет рядом
+с результатом. «Ровно одно письмо» — маркетинг.
 
 </details>
 
@@ -1233,7 +1233,7 @@ xmin — VACUUM не чистит. Выяснить у координатора 
 <details><summary>Ответ</summary>
 
 Событие пишется в таблицу outbox в той же транзакции, что и данные; relay (polling или CDC
-   Debezium) публикует; доставка at-least-once, потребитель дедуплицирует.
+Debezium) публикует; доставка at-least-once, потребитель дедуплицирует.
 
 </details>
 
@@ -1242,8 +1242,8 @@ xmin — VACUUM не чистит. Выяснить у координатора 
 <details><summary>Ответ</summary>
 
 Сагу: 2PC блокирует при падении координатора, снижает доступность и держит блокировки; брокеры
-   и API в нём не участвуют. Сага — локальные транзакции + компенсации, идемпотентные шаги, outbox;
-   цена — нет изоляции.
+и API в нём не участвуют. Сага — локальные транзакции + компенсации, идемпотентные шаги, outbox;
+цена — нет изоляции.
 
 </details>
 
@@ -1252,7 +1252,7 @@ xmin — VACUUM не чистит. Выяснить у координатора 
 <details><summary>Ответ</summary>
 
 Coalescing (один пересчёт на ключ), lock/лизы кэша, stale-while-revalidate, ранний
-   вероятностный refresh, jitter TTL, прогрев.
+вероятностный refresh, jitter TTL, прогрев.
 
 </details>
 
@@ -1261,10 +1261,8 @@ Coalescing (один пересчёт на ключ), lock/лизы кэша, st
 <details><summary>Ответ</summary>
 
 Сформулировать гарантию, писать с журналом подтверждений, вносить отказы (kill -9, пауза,
-    разделение сети, задержки, часы), сравнивать подтверждённое с прочитанным; регулярно — как
-    game day; знать Jepsen-анализы своих систем и версий.
-
----
+разделение сети, задержки, часы), сравнивать подтверждённое с прочитанным; регулярно — как
+game day; знать Jepsen-анализы своих систем и версий.
 
 </details>
 

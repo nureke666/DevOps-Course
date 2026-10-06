@@ -1,16 +1,16 @@
 ---
 title: "06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG"
-description: "Блок → Хранилища и stateful → тема 06. Опирается на"
+description: "WAL-G/pgBackRest в S3, PITR, проверка бэкапов, Patroni, CloudNativePG"
 ---
 
 # 06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG
 
 > Блок → Хранилища и stateful → тема 06. Опирается на
-> [../Left/01_Databases/05_backup_restore.md](/databases/05-backup-restore) (pg_dump,
+> [Базы данных: 05. Бэкап и восстановление](/databases/05-backup-restore) (pg_dump,
 > pg_basebackup, PITR с `cp`, RPO/RTO, 3-2-1),
-> [../Left/01_Databases/06_replication.md](/databases/06-replication) (streaming, слоты,
-> sync/async, схема Patroni), [03_nfs_minio.md](/storage/03-nfs-minio) (MinIO, политики, lock) и
-> [05_k8s_stateful.md](/storage/05-k8s-stateful) (операторы, тома).
+> [Базы данных: 06. Репликация PostgreSQL](/databases/06-replication) (streaming, слоты,
+> sync/async, схема Patroni), [03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio) (MinIO, политики, lock) и
+> [05. Stateful в Kubernetes: CSI, StatefulSet, Rook-Ceph, снапшоты](/storage/05-k8s-stateful) (операторы, тома).
 >
 > **После темы ты умеешь:** настроить непрерывный бэкап PostgreSQL в S3 (WAL-G или pgBackRest
 > с MinIO), восстановить базу на момент времени после `DROP TABLE` — рядом с продом, а не
@@ -22,7 +22,7 @@ description: "Блок → Хранилища и stateful → тема 06. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  PostgreSQL (primary) ──archive_command──► WAL-сегменты ──┐
         │                                                 ├──► S3 (MinIO, бакет pg-backups)
         └── base backup: full / diff / incr / delta ──────┘     версии · lock · lifecycle
@@ -33,7 +33,8 @@ description: "Блок → Хранилища и stateful → тема 06. Оп�
  ─────────────────────────────────────────────────────────────────────────────────────
  доступность: Patroni + etcd + HAProxy (VM)   ·   CloudNativePG (Kubernetes)
  доверие: мониторинг архивации · verify · регулярный restore-test · RPO/RTO замерены
-```text
+```
+
 ---
 
 ## 1. Что добавляем к блоку «Базы»
@@ -50,12 +51,13 @@ description: "Блок → Хранилища и stateful → тема 06. Оп�
 
 ## 2. Непрерывный бэкап: как устроен
 
-```text
+```text:no-line-numbers
  время ─────────────────────────────────────────────────────────────────────►
  full ●──────────── delta ● ──────── delta ● ─────────── full ● ─────────────
       └─ WAL ─ WAL ─ WAL ─ WAL ─ WAL ─ WAL ─ WAL ─ WAL ─ WAL ─ WAL ─ WAL ──►  (каждые ≤ archive_timeout)
       ▲ окно восстановления начинается с САМОГО СТАРОГО base backup, для которого есть все WAL
-```text
+```
+
 | Тип | Что содержит | Восстановление |
 |-----|--------------|----------------|
 | full | все файлы PGDATA | только он + WAL |
@@ -73,7 +75,7 @@ description: "Блок → Хранилища и stateful → тема 06. Оп�
 
 ## 3. WAL-G → MinIO (стенд: VM `stor1`)
 
-Бакет и пользователь в MinIO (на хосте, клиент — из [03_nfs_minio.md](/storage/03-nfs-minio)):
+Бакет и пользователь в MinIO (на хосте, клиент — из [03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio)):
 
 ```bash
 mc mb --with-versioning local/pg-backups
@@ -88,7 +90,8 @@ cat > files/pg-backup-rw.json <<'EOF'
 EOF
 mc admin policy create local pg-backup-rw /files/pg-backup-rw.json
 mc admin policy attach local pg-backup-rw --user pg-backup
-```text
+```
+
 > ⚖️ **Права на удаление — осознанный выбор.** Без `s3:DeleteObject` взломанный сервер БД не
 > уничтожит бэкапы, но и `wal-g delete retain` не сработает. Два рабочих варианта:
 > (а) retention делает **сервер** — lifecycle-правило бакета (`mc ilm rule add … --expire-days`),
@@ -104,7 +107,7 @@ curl -fsSLO https://github.com/wal-g/wal-g/releases/download/v3.0.9/wal-g-pg-ubu
 tar xzf wal-g-pg-ubuntu-22.04-amd64.tar.gz
 sudo install -m 0755 wal-g-pg-ubuntu-22.04-amd64 /usr/local/bin/wal-g   # имя файла внутри — проверь `tar tzf`
 wal-g --version
-```text
+```
 ```json
 // /var/lib/postgresql/.walg.json — $HOME пользователя postgres, WAL-G читает его по умолчанию
 {
@@ -118,17 +121,17 @@ wal-g --version
   "WALG_DELTA_MAX_STEPS": "6",
   "PGHOST": "/var/run/postgresql"
 }
-```text
+```
 ```bash
 sudo chown postgres:postgres /var/lib/postgresql/.walg.json && sudo chmod 600 /var/lib/postgresql/.walg.json
-```text
+```
 ```conf
 # /etc/postgresql/16/main/conf.d/backup.conf
 wal_level = replica
 archive_mode = on                          # рестарт
 archive_command = 'wal-g wal-push %p'
 archive_timeout = 60                       # RPO ≈ минута при малой записи
-```text
+```
 ```bash
 sudo systemctl restart postgresql@16-main
 sudo -u postgres psql -c "SELECT pg_switch_wal();"            # форсировать сегмент
@@ -136,9 +139,10 @@ sudo -u postgres psql -xc "SELECT archived_count, failed_count, last_archived_wa
 sudo -u postgres wal-g backup-push /var/lib/postgresql/16/main  # первый — full, дальше delta (до 6 подряд)
 sudo -u postgres wal-g backup-list --detail
 sudo -u postgres wal-g wal-verify integrity timeline            # нет ли дыр в цепочке WAL
-```text
+```
+
 Полезное сверх базы: `WALG_LIBSODIUM_KEY` — шифрование на клиенте (ключ хранится **не** рядом
-с бэкапом); `WALG_UPLOAD_CONCURRENCY` — параллельная загрузка; `wal-g backup-mark &lt;backup&gt;` —
+с бэкапом); `WALG_UPLOAD_CONCURRENCY` — параллельная загрузка; `wal-g backup-mark <backup>` —
 «вечный» бэкап, который retention не тронет; `wal-g delete retain FULL 7` — без `--confirm`
 только показывает, что удалит. Бэкап можно снимать с реплики — нагрузка уходит с primary.
 
@@ -148,7 +152,7 @@ sudo -u postgres wal-g wal-verify integrity timeline            # нет ли д
 
 pgBackRest 2.59.1 для S3 **всегда** использует TLS: MinIO по голому `http` не подойдёт.
 `repo1-storage-verify-tls=n` отключает только проверку сертификата, а не сам TLS. На стенде —
-самоподписанный сертификат MinIO (`--certs-dir`, [03_nfs_minio.md](/storage/03-nfs-minio)), в проде —
+самоподписанный сертификат MinIO (`--certs-dir`, [03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio)), в проде —
 нормальный сертификат и `repo1-storage-ca-file`.
 
 ```ini
@@ -175,17 +179,18 @@ log-level-console=info
 
 [main]
 pg1-path=/var/lib/postgresql/16/main
-```text
+```
 ```conf
 archive_command = 'pgbackrest --stanza=main archive-push %p'
-```text
+```
 ```bash
 sudo -u postgres pgbackrest --stanza=main stanza-create
 sudo -u postgres pgbackrest --stanza=main check              # архивация и доступ к репозиторию
 sudo -u postgres pgbackrest --stanza=main --type=full backup  # потом --type=diff / --type=incr
 sudo -u postgres pgbackrest --stanza=main info
 sudo -u postgres pgbackrest --stanza=main verify              # целостность файлов репозитория
-```text
+```
+
 > ℹ️ Статус проекта: в апреле 2026 автор объявил о прекращении поддержки, в мае 2026 развитие
 > продолжилось на деньги группы спонсоров (AWS, Supabase, Percona, Dalibo и др.). Для
 > инструмента, которому доверяешь бэкапы, такие новости стоит отслеживать.
@@ -218,7 +223,7 @@ runbook восстановления один.
 sudo -u postgres wal-g wal-fetch 000000010000000000000023 /tmp/wal/000000010000000000000023
 /usr/lib/postgresql/16/bin/pg_waldump /tmp/wal/000000010000000000000023 --rmgr=Transaction | grep 'rels:'
 # … tx: 812 … desc: COMMIT 2026-09-27 14:37:02 +05; rels: base/16384/16390 …
-```text
+```
 Точно по транзакции: `recovery_target_xid = '812'` + `recovery_target_inclusive = off` —
 остановиться **перед** её коммитом. По времени — `recovery_target_time` на секунду раньше.
 
@@ -229,14 +234,14 @@ sudo pg_createcluster 16 restore --port 5433          # каталоги …/16/
 sudo systemctl stop postgresql@16-restore
 sudo -u postgres find /var/lib/postgresql/16/restore -mindepth 1 -delete   # ⚠️ именно restore, не main; каталог (0700) оставляем
 sudo -u postgres wal-g backup-fetch /var/lib/postgresql/16/restore LATEST   # base backup ДО аварии
-```text
+```
 ```conf
 # /etc/postgresql/16/restore/conf.d/recovery.conf
 restore_command = 'wal-g wal-fetch %f %p'
 recovery_target_time = '2026-09-27 14:37:01+05'
 recovery_target_action = 'pause'   # встать на точке read-only и дать посмотреть
 archive_mode = off                 # ⭐ иначе копия начнёт писать свои WAL в архив прода
-```text
+```
 ```bash
 sudo -u postgres touch /var/lib/postgresql/16/restore/recovery.signal
 sudo systemctl start postgresql@16-restore
@@ -244,7 +249,8 @@ sudo -u postgres psql -p 5433 -c "SELECT pg_is_in_recovery(), count(*) FROM orde
 # данные есть → выгрузить таблицу и перенести в прод
 sudo -u postgres pg_dump -p 5433 -d shop -t orders -Fc -f /tmp/orders.dump
 sudo -u postgres pg_restore -p 5432 -d shop /tmp/orders.dump
-```text
+```
+
 `LATEST` подходит, только если последний бэкап снят **до** аварии; иначе укажи имя из
 `backup-list` (или `--target` сама выберет бэкап в pgBackRest). Промахнулся с точкой — копия
 не promote'нута, можно пересоздать с другой целью.
@@ -254,7 +260,8 @@ sudo -u postgres pg_restore -p 5432 -d shop /tmp/orders.dump
 ```bash
 sudo -u postgres pgbackrest --stanza=main --pg1-path=/var/lib/postgresql/16/restore --delta \
   --type=time "--target=2026-09-27 14:37:01+05" --target-action=pause --archive-mode=off restore
-```text
+```
+
 **Таймлайны.** После promote восстановленная база начинает **новый timeline** (2, 3, …) и пишет
 `.history`-файл. По умолчанию `recovery_target_timeline = 'latest'`. Если восстановленный
 инстанс с `archive_mode = on` promote'нуть в тот же префикс — в архиве появятся ветки,
@@ -278,7 +285,7 @@ sudo -u postgres pgbackrest --stanza=main --pg1-path=/var/lib/postgresql/16/rest
 
 ## 8. Как доказать, что бэкап рабочий
 
-```text
+```text:no-line-numbers
  уровень 5  учения: восстановить прод целиком по runbook, замерить RTO        раз в квартал
  уровень 4  автоматический restore-test: последний бэкап → временный инстанс
             → pg_amcheck, count(*) ключевых таблиц, свежесть max(created_at)   раз в неделю
@@ -286,7 +293,8 @@ sudo -u postgres pgbackrest --stanza=main --pg1-path=/var/lib/postgresql/16/rest
             pg_verifybackup (для pg_basebackup)                                ежедневно
  уровень 2  архивация идёт: pg_stat_archiver.failed_count, last_archived_time   алерт
  уровень 1  бэкап есть: возраст последнего УСПЕШНОГО бэкапа < 25 ч              алерт
-```text
+```
+
 - `pg_verifybackup` (PG13+) сверяет бэкап `pg_basebackup` с его `backup_manifest` и проверяет
   WAL; в PG16 — только plain-формат, tar поддерживается с PG18.
 - **Контрольные суммы данных**: `pg_checksums --check` (кластер остановлен) ловит битые
@@ -325,7 +333,8 @@ postgresql:
     superuser: { username: postgres, password: "…" }
     replication: { username: repl, password: "…" }
 watchdog: { mode: automatic, device: /dev/watchdog }
-```text
+```
+
 Как принимается решение: лидер каждые `loop_wait` продлевает ключ в DCS с TTL. Ключ истёк —
 реплики с лагом ≤ `maximum_lag_on_failover` устраивают гонку за ключ, победитель — promote,
 новый timeline. Потерял связь с DCS сам лидер — он **demote'ится** в read-only (иначе
@@ -341,8 +350,9 @@ patronictl -c /etc/patroni/patroni.yml show-config
 patronictl -c /etc/patroni/patroni.yml restart shop-pg pg2               # pending restart
 patronictl -c /etc/patroni/patroni.yml reinit shop-pg pg3                # пересоздать реплику с нуля
 patronictl -c /etc/patroni/patroni.yml pause                             # обслуживание без автo-failover
-```text
-```text
+```
+
+```text:no-line-numbers
 # haproxy.cfg: 5000 → только лидер, 5001 → реплики
 listen primary
     bind *:5000
@@ -356,7 +366,7 @@ listen replicas
     option httpchk GET /replica
     server pg1 10.0.1.11:5432 check port 8008
     server pg2 10.0.1.12:5432 check port 8008
-```text
+```
 (в Patroni 4.x эндпоинт `/master` убран — только `/primary`, `/leader`, `/replica`, `/health`.)
 
 Бэкапы в кластере Patroni: `archive_command` одинаковый на всех узлах; с `archive_mode = on`
@@ -369,7 +379,7 @@ listen replicas
 ## 10. CloudNativePG: PostgreSQL в Kubernetes
 
 CNPG не использует Patroni: лидера выбирает сам оператор через API Kubernetes, реплики —
-streaming replication, сервисы `&lt;name&gt;-rw` (primary), `-ro` (реплики), `-r` (любой).
+streaming replication, сервисы `<name>-rw` (primary), `-ro` (реплики), `-r` (любой).
 
 ```bash
 kubectl apply --server-side -f \
@@ -379,7 +389,8 @@ kubectl rollout status deployment -n cnpg-system cnpg-controller-manager
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
 kubectl apply -f https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.15.0/manifest.yaml
 kubectl -n cnpg-system rollout status deploy/barman-cloud
-```text
+```
+
 > ⚠️ Встроенный `spec.backup.barmanObjectStore` устарел с 1.26 и будет удалён в 1.31. Новые
 > кластеры — сразу с плагином barman-cloud (ObjectStore CR), старые — мигрировать.
 
@@ -391,7 +402,7 @@ spec:
   retentionPolicy: "30d"
   configuration:
     destinationPath: s3://cnpg-backups/
-    endpointURL: http://&lt;MINIO_IP&gt;:9000          # IP контейнера minio в сети kind
+    endpointURL: http://<MINIO_IP>:9000          # IP контейнера minio в сети kind
     s3Credentials:
       accessKeyId:     { name: minio-creds, key: ACCESS_KEY_ID }
       secretAccessKey: { name: minio-creds, key: ACCESS_SECRET_KEY }
@@ -417,17 +428,18 @@ spec:
   cluster: { name: pg-main }
   method: plugin
   pluginConfiguration: { name: barman-cloud.cloudnative-pg.io }
-```text
+```
 ```bash
 docker network connect kind minio
-MINIO_IP=$(docker inspect -f '&#123;&#123;(index .NetworkSettings.Networks "kind").IPAddress&#125;&#125;' minio)
+MINIO_IP=$(docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}' minio)
 kubectl -n db create secret generic minio-creds \
   --from-literal=ACCESS_KEY_ID=cnpg --from-literal=ACCESS_SECRET_KEY='cnpg-secret-123'
 kubectl cnpg status pg-main -n db                 # krew-плагин: роли, лаг, архивация WAL
 kubectl cnpg backup pg-main -n db --method=plugin --plugin-name=barman-cloud.cloudnative-pg.io
 kubectl -n db get backups
 kubectl cnpg promote pg-main pg-main-2 -n db      # switchover на конкретный инстанс
-```text
+```
+
 **PITR = новый кластер** из того же хранилища (исходный не трогаем):
 
 ```yaml
@@ -446,7 +458,7 @@ spec:
       plugin:
         name: barman-cloud.cloudnative-pg.io
         parameters: { barmanObjectName: minio-store, serverName: pg-main }
-```text
+```
 Архивацию у восстановленного кластера не включай в тот же `serverName` — оператор и так
 проверяет, что WAL-архив назначения пуст, и откажется писать поверх чужого.
 
@@ -454,7 +466,7 @@ spec:
 
 ## 11. Другие stateful-системы
 
-**Redis** (база — в [../Left/01_Databases/09_redis_mongo_clickhouse.md](/databases/09-redis-mongo-clickhouse)):
+**Redis** (база — в [Базы данных: 09. Redis, MongoDB, ClickHouse](/databases/09-redis-mongo-clickhouse)):
 - AOF: `appendfsync everysec` (по умолчанию, теряешь до ~1 с), `always` (медленно), `no` (решает ОС).
   С `aof-use-rdb-preamble yes` переписанный AOF начинается с RDB-снимка — быстрый старт.
 - `BGSAVE` и переписывание AOF делают `fork`: при активной записи copy-on-write может почти
@@ -462,7 +474,7 @@ spec:
 - Бэкап = копия `dump.rdb` после успешного `BGSAVE` (`LASTSAVE`) в S3. Реплика не бэкап:
   `FLUSHALL` уедет и на неё. Сначала реши, кэш это (бэкап не нужен) или база.
 
-**Kafka** ([../Left/05_Queues/03_kafka_ops.md](/queues/03-kafka-ops)): `retention.ms/bytes`
+**Kafka** ([Очереди: 03. Kafka: эксплуатация](/queues/03-kafka-ops)): `retention.ms/bytes`
 и compaction — это политика хранения, а не бэкап. Надёжность — `replication.factor=3`,
 `min.insync.replicas=2`, `acks=all`; DR — второй кластер и MirrorMaker 2 (асинхронно, с
 трансляцией offset'ов). Бэкапить отдельно стоит конфигурацию: топики, ACL, схемы.
@@ -505,7 +517,7 @@ spec:
 ## 💼 Как это в DevOps
 
 - Бэкап БД — сервис с SLO: «RPO ≤ 5 минут, RTO ≤ 1 часа, restore-test еженедельно зелёный».
-  Цифры — в README и в `docs/dr.md` ([07_velero_dr.md](/storage/07-velero-dr)).
+  Цифры — в README и в `docs/dr.md` ([07. Velero и disaster recovery](/storage/07-velero-dr)).
 - Алерты: возраст последнего успешного бэкапа, `pg_stat_archiver.failed_count`, размер `pg_wal`,
   лаг реплик, статус restore-test. Все — с `runbook_url`.
 - Права: сервер БД пишет, но не удаляет; retention и удаление — отдельная учётка; бакет
@@ -551,13 +563,18 @@ spec:
 9. CNPG: бэкапы — плагином barman-cloud (встроенный устарел), PITR — новым кластером из ObjectStore.
 10. Реплика — доступность, бэкап — ошибки и катастрофы; Redis/Kafka-репликация тоже не бэкап.
 
-➡️ Дальше: [07_velero_dr.md](/storage/07-velero-dr) · задачи: 06_db_backup_replication_tasks.md
+---
 
+## Задачи
+
+> Стенд: VM `stor1` (PostgreSQL 16 из PGDG, WAL-G v3.0.9), MinIO из [Хранилища](/storage/)
+> (бакет `pg-backups`, пользователь `pg-backup`; из VM — `http://192.168.121.1:9000`),
+> kind-кластер `devops` для CloudNativePG (бакет `cnpg-backups`).
+> Перед практикой: `vagrant snapshot save stor1 before_06`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Из чего состоит непрерывный бэкап PostgreSQL? С какого момента начинается окно восстановления?
 
@@ -675,7 +692,9 @@ Retention инструмента удаляет устаревшие бэкап�
 
 <details><summary>Ответ</summary>
 
-1) Возраст последнего успешного бэкапа (алерт); 2) архивация WAL идёт (`pg_stat_archiver`);
+1\) Возраст последнего успешного бэкапа (алерт); 2) архивация WAL идёт (`pg_stat_archiver`);
+3) проверка файлов (`verify`, `wal-verify`, `pg_verifybackup`); 4) автоматический restore-test с
+проверками данных; 5) учения — восстановление по runbook с замером RTO.
 
 </details>
 
@@ -716,8 +735,8 @@ Patroni управляет конфигурацией PostgreSQL: динамич
 <details><summary>Ответ</summary>
 
 CNPG — оператор Kubernetes без Patroni: лидера выбирает сам оператор через API
-Kubernetes, реплики — streaming replication, поды и PVC — его ресурсы. Сервисы: `&lt;name&gt;-rw`
-(primary), `&lt;name&gt;-ro` (только реплики), `&lt;name&gt;-r` (любой инстанс).
+Kubernetes, реплики — streaming replication, поды и PVC — его ресурсы. Сервисы: `<name>-rw`
+(primary), `<name>-ro` (только реплики), `<name>-r` (любой инстанс).
 
 </details>
 
@@ -747,320 +766,126 @@ Kubernetes, реплики — streaming replication, поды и PVC — его
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```bash
 B1.  # /etc/pgbackrest/pgbackrest.conf
-```text
-<details><summary>Ответ</summary>
+     repo1-s3-endpoint=192.168.121.1
+     repo1-storage-port=9000          # MinIO запущен без TLS
 
-⚠️ pgBackRest будет устанавливать TLS с MinIO, говорящим по http: `TLS error … wrong
+B2.  # /var/lib/postgresql/.walg.json
+     { "WALG_S3_PREFIX": "s3://pg-backups/stor1", "AWS_ENDPOINT": "http://192.168.121.1:9000",
+       "AWS_REGION": "us-east-1", "AWS_ACCESS_KEY_ID": "pg-backup", "AWS_SECRET_ACCESS_KEY": "…" }
+
+B3.  mc ilm rule add local/pg-backups --expire-days 7
+     # full бэкап — раз в две недели, delta — ежедневно, PITR «на 7 дней назад»
+
+B4.  # восстановление после DROP TABLE в 14:37
+     sudo -u postgres wal-g backup-fetch /var/lib/postgresql/16/restore LATEST
+     # последний backup-push был в 15:00 по расписанию
+
+B5.  # копия для расследования
+     archive_mode = on
+     archive_command = 'wal-g wal-push %p'
+     recovery_target_action = 'promote'
+
+B6.  recovery_target_time = '2026-09-27 14:37:01'     # без часового пояса; сервер в UTC
+
+B7.  # WALG_LIBSODIUM_KEY лежит в файле в том же бакете pg-backups/keys/
+
+B8.  # узел Patroni: правим руками /etc/postgresql/16/main/postgresql.conf: max_connections = 500
+
+B9.  # DCS Patroni: два узла etcd «для надёжности»
+
+B10. # CNPG, новый кластер
+     spec:
+       backup:
+         barmanObjectStore:
+           destinationPath: s3://cnpg-backups/
+
+B11. # ScheduledBackup CNPG
+     schedule: "0 2 * * *"
+
+B12. # «у нас синхронная реплика, бэкапы не нужны»
+
+B13. # Redis как основная БД сессий и корзин, persistence отключена, одна реплика
+
+B14. # алерт на бэкапы: «backup job failed»
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ pgBackRest будет устанавливать TLS с MinIO, говорящим по http: `TLS error … wrong
 version number`. Нужен TLS на MinIO (`--certs-dir`), на стенде + `repo1-storage-verify-tls=n`.
 
-</details>
-
-```text:no-line-numbers
-     repo1-s3-endpoint=192.168.121.1
-```text
-```text:no-line-numbers
-     repo1-storage-port=9000          # MinIO запущен без TLS
-```text
-```text:no-line-numbers
-B2.  # /var/lib/postgresql/.walg.json
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Нет `AWS_S3_FORCE_PATH_STYLE: "true"` — запросы пойдут на `pg-backups.192.168.121.1`,
+**B2.** ⚠️ Нет `AWS_S3_FORCE_PATH_STYLE: "true"` — запросы пойдут на `pg-backups.192.168.121.1`,
 ошибки DNS/подключения. Нет сжатия (`WALG_COMPRESSION_METHOD`) — мелочь.
 
-</details>
-
-```text:no-line-numbers
-     { "WALG_S3_PREFIX": "s3://pg-backups/stor1", "AWS_ENDPOINT": "http://192.168.121.1:9000",
-```text
-```text:no-line-numbers
-       "AWS_REGION": "us-east-1", "AWS_ACCESS_KEY_ID": "pg-backup", "AWS_SECRET_ACCESS_KEY": "…" }
-```text
-```text:no-line-numbers
-B3.  mc ilm rule add local/pg-backups --expire-days 7
-```text
-<details><summary>Ответ</summary>
-
-🔴 Lifecycle удалит full-бэкап через 7 дней, а delta и WAL после него станут бесполезны;
+**B3.** 🔴 Lifecycle удалит full-бэкап через 7 дней, а delta и WAL после него станут бесполезны;
 окно PITR сломано, дыры в цепочке. Lifecycle ≥ окно + интервал full (здесь больше 21 дня) или
 retention инструментом.
 
-</details>
-
-```text:no-line-numbers
-     # full бэкап — раз в две недели, delta — ежедневно, PITR «на 7 дней назад»
-```text
-```text:no-line-numbers
-B4.  # восстановление после DROP TABLE в 14:37
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `LATEST` — бэкап 15:00, снятый уже после DROP: таблицы там нет, а доиграть «назад»
+**B4.** ⚠️ `LATEST` — бэкап 15:00, снятый уже после DROP: таблицы там нет, а доиграть «назад»
 нельзя. Выбрать бэкап до 14:37 из `backup-list` по имени.
 
-</details>
-
-```text:no-line-numbers
-     sudo -u postgres wal-g backup-fetch /var/lib/postgresql/16/restore LATEST
-```text
-```text:no-line-numbers
-     # последний backup-push был в 15:00 по расписанию
-```text
-```text:no-line-numbers
-B5.  # копия для расследования
-```text
-<details><summary>Ответ</summary>
-
-🔴 Копия после promote начнёт архивировать свой timeline в префикс прода. `archive_mode = off`,
+**B5.** 🔴 Копия после promote начнёт архивировать свой timeline в префикс прода. `archive_mode = off`,
 `recovery_target_action = 'pause'`.
 
-</details>
-
-```text:no-line-numbers
-     archive_mode = on
-```text
-```text:no-line-numbers
-     archive_command = 'wal-g wal-push %p'
-```text
-```text:no-line-numbers
-     recovery_target_action = 'promote'
-```text
-```text:no-line-numbers
-B6.  recovery_target_time = '2026-09-27 14:37:01'     # без часового пояса; сервер в UTC
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Время без пояса интерпретируется в часовом поясе сервера (`timezone`); если человек
+**B6.** ⚠️ Время без пояса интерпретируется в часовом поясе сервера (`timezone`); если человек
 имел в виду местные 14:37 (UTC+5), промах — 5 часов. Всегда явный пояс: `+05` или `UTC`.
 
-</details>
-
-```text:no-line-numbers
-B7.  # WALG_LIBSODIUM_KEY лежит в файле в том же бакете pg-backups/keys/
-```text
-<details><summary>Ответ</summary>
-
-🔴 Ключ шифрования рядом с шифротекстом — шифрование ничего не защищает, а при потере
+**B7.** 🔴 Ключ шифрования рядом с шифротекстом — шифрование ничего не защищает, а при потере
 бакета потерян и ключ. Ключ — в Vault/менеджере секретов, копия офлайн.
 
-</details>
-
-```text:no-line-numbers
-B8.  # узел Patroni: правим руками /etc/postgresql/16/main/postgresql.conf: max_connections = 500
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Patroni перезапишет правку своей конфигурацией; к тому же `max_connections` на
+**B8.** ⚠️ Patroni перезапишет правку своей конфигурацией; к тому же `max_connections` на
 репликах должен быть не меньше, чем на primary. Менять через `patronictl edit-config` + restart.
 
-</details>
-
-```text:no-line-numbers
-B9.  # DCS Patroni: два узла etcd «для надёжности»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Кворум двух узлов etcd — оба: потеря любого = нет кворума, лидер Patroni demote'ится,
+**B9.** ⚠️ Кворум двух узлов etcd — оба: потеря любого = нет кворума, лидер Patroni demote'ится,
 база read-only. 3 или 5 узлов.
 
-</details>
-
-```text:no-line-numbers
-B10.  # CNPG, новый кластер
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Встроенный механизм устарел и будет удалён в 1.31 — новый кластер сразу на плагине
+**B10.** ⚠️ Встроенный механизм устарел и будет удалён в 1.31 — новый кластер сразу на плагине
 barman-cloud (ObjectStore + `spec.plugins`).
 
-</details>
-
-```text:no-line-numbers
-     spec:
-```text
-```text:no-line-numbers
-       backup:
-```text
-```text:no-line-numbers
-         barmanObjectStore:
-```text
-```text:no-line-numbers
-           destinationPath: s3://cnpg-backups/
-```text
-```text:no-line-numbers
-B11.  # ScheduledBackup CNPG
-```text
-<details><summary>Ответ</summary>
-
-⚠️ У CNPG расписание из 6 полей (секунды первыми): `"0 0 2 * * *"`. 5 полей не соответствуют
+**B11.** ⚠️ У CNPG расписание из 6 полей (секунды первыми): `"0 0 2 * * *"`. 5 полей не соответствуют
 формату.
 
-</details>
-
-```text:no-line-numbers
-     schedule: "0 2 * * *"
-```text
-```text:no-line-numbers
-B12.  # «у нас синхронная реплика, бэкапы не нужны»
-```text
-<details><summary>Ответ</summary>
-
-🔴 Синхронная реплика защищает от отказа узла с RPO 0, но `DROP TABLE`, порча данных
+**B12.** 🔴 Синхронная реплика защищает от отказа узла с RPO 0, но `DROP TABLE`, порча данных
 приложением и шифровальщик мгновенно реплицируются. Бэкап с PITR нужен всегда.
 
-</details>
-
-```text:no-line-numbers
-B13.  # Redis как основная БД сессий и корзин, persistence отключена, одна реплика
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Если это не кэш, а данные: рестарт мастера без persistence — пустая база, и реплика
+**B13.** ⚠️ Если это не кэш, а данные: рестарт мастера без persistence — пустая база, и реплика
 синхронизируется с пустым мастером (при автоперезапуске). Включить AOF (`everysec`) и/или RDB,
 бэкапить `dump.rdb`, запретить автоперезапуск мастера без данных или использовать Sentinel.
 
-</details>
-
-```text:no-line-numbers
-B14.  # алерт на бэкапы: «backup job failed»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Алерт на ошибку не сработает, если джоба не запускалась вовсе (suspend, сломан cron).
+**B14.** ⚠️ Алерт на ошибку не сработает, если джоба не запускалась вовсе (suspend, сломан cron).
 Алертить на отсутствие успеха: «последнему успешному бэкапу больше 25 часов».
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 WAL-G → MinIO
-**1.** Создай бакет `pg-backups` с версионированием, пользователя `pg-backup` с политикой без удаления.
+#### C1. 🔑 WAL-G → MinIO
+1. Создай бакет `pg-backups` с версионированием, пользователя `pg-backup` с политикой без удаления.
+2. Поставь WAL-G v3.0.9 на `stor1`, настрой `.walg.json`, `archive_command`, `archive_timeout = 60`.
+3. Добейся `failed_count = 0` в `pg_stat_archiver`, сделай full, потом два delta. Покажи `backup-list --detail`.
+4. Проверь цепочку WAL `wal-verify`.
 
 <details><summary>Ответ</summary>
 
-Команды — разделы 3 конспекта и лаба 4 ([08_practice_labs.md](/softskills/08-practice-labs)).
+Команды — разделы 3 конспекта и лаба 4 ([08. Практика: 5 лаб по хранилищам и stateful](/storage/08-practice-labs)).
 Признаки успеха: `archived_count` растёт, `failed_count = 0`; в `backup-list --detail` первый
 `base_…` полный, следующие — с `_D_` в имени (delta от предыдущего); `wal-verify` —
 `integrity: OK`, `timeline: OK`.
 
 </details>
 
-**2.** Поставь WAL-G v3.0.9 на `stor1`, настрой `.walg.json`, `archive_command`, `archive_timeout = 60`.
-
-<details><summary>Ответ</summary>
-
-Восстановление — раздел 6: `pg_createcluster 16 restore --port 5433`, очистка каталога,
-`backup-fetch` бэкапа до аварии, `recovery.conf` с `restore_command`, `recovery_target_time`
-(на секунду раньше, с `+05`), `pause`, `archive_mode = off`, `recovery.signal`, старт; проверка
-`SELECT pg_is_in_recovery(), count(*), max(created_at) FROM orders`; `pg_dump -t orders -Fc` →
-`pg_restore -p 5432`. RPO — строки между целью и DROP (при записи раз в секунду — около одной),
-RTO — от решения восстанавливать до таблицы в проде.
-
-</details>
-
-**3.** Добейся `failed_count = 0` в `pg_stat_archiver`, сделай full, потом два delta. Покажи `backup-list --detail`.
-
-<details><summary>Ответ</summary>
-
-`pg_waldump … --rmgr=Transaction | grep 'rels:'` → xid коммита с удалёнными файлами;
-в recovery-конфиге `recovery_target_xid = '&lt;xid&gt;'`, `recovery_target_inclusive = off`. Результат
-точнее: восстановлены все транзакции до DROP, включая закоммиченные в ту же секунду, которые
-цель по времени на секунду раньше отбросила бы.
-
-</details>
-
-**4.** Проверь цепочку WAL `wal-verify`.
-
-<details><summary>Ответ</summary>
-
-Команда падает с `AccessDenied` на удалении объектов. Вариант (а): lifecycle
-`mc ilm rule add local/pg-backups --expire-days 30 --noncurrent-expire-days 7` при full раз в неделю
-и окне PITR 14 дней (30 > 14 + 7). Вариант (б): отдельная учётка `pg-retention` с `DeleteObject`,
-`wal-g delete retain FULL 3 --confirm` с админ-хоста с другим `.walg.json`. Доказательство:
-`backup-list` содержит бэкап старше окна, `wal-verify` без дыр, пробный PITR на глубину окна.
-
-</details>
-
-### C2. 🔑 PITR после DROP TABLE
-**1.** Создай `shop.orders`, пиши строку в секунду.
-
-<details><summary>Ответ</summary>
-
-Команды — разделы 3 конспекта и лаба 4 ([08_practice_labs.md](/softskills/08-practice-labs)).
-Признаки успеха: `archived_count` растёт, `failed_count = 0`; в `backup-list --detail` первый
-`base_…` полный, следующие — с `_D_` в имени (delta от предыдущего); `wal-verify` —
-`integrity: OK`, `timeline: OK`.
-
-</details>
-
-**2.** Засеки время, выполни `DROP TABLE orders`, `SELECT pg_switch_wal()`.
-
-<details><summary>Ответ</summary>
-
-Восстановление — раздел 6: `pg_createcluster 16 restore --port 5433`, очистка каталога,
-`backup-fetch` бэкапа до аварии, `recovery.conf` с `restore_command`, `recovery_target_time`
-(на секунду раньше, с `+05`), `pause`, `archive_mode = off`, `recovery.signal`, старт; проверка
-`SELECT pg_is_in_recovery(), count(*), max(created_at) FROM orders`; `pg_dump -t orders -Fc` →
-`pg_restore -p 5432`. RPO — строки между целью и DROP (при записи раз в секунду — около одной),
-RTO — от решения восстанавливать до таблицы в проде.
-
-</details>
-
-**3.** Восстанови во второй кластер на порту 5433 на секунду раньше, проверь данные в режиме pause,
+#### C2. 🔑 PITR после DROP TABLE
+1. Создай `shop.orders`, пиши строку в секунду.
+2. Засеки время, выполни `DROP TABLE orders`, `SELECT pg_switch_wal()`.
+3. Восстанови во второй кластер на порту 5433 на секунду раньше, проверь данные в режиме pause,
    перенеси таблицу в прод. Посчитай фактические RPO (потерянные строки) и RTO.
 
 <details><summary>Ответ</summary>
 
-`pg_waldump … --rmgr=Transaction | grep 'rels:'` → xid коммита с удалёнными файлами;
-в recovery-конфиге `recovery_target_xid = '&lt;xid&gt;'`, `recovery_target_inclusive = off`. Результат
-точнее: восстановлены все транзакции до DROP, включая закоммиченные в ту же секунду, которые
-цель по времени на секунду раньше отбросила бы.
-
-</details>
-
-### C3. Точка по транзакции
-Повтори C2, но цель найди через `pg_waldump` и восстанови по `recovery_target_xid` с
-`recovery_target_inclusive = off`. Сравни результат с восстановлением по времени.
-
-### C4. Retention без права удаления
-Покажи, что `wal-g delete retain FULL 1 --confirm` от имени `pg-backup` падает. Настрой
-retention одним из двух способов из конспекта и докажи, что PITR на глубину окна остаётся возможен.
-
-### C5. 🔑 Restore-test скриптом
-Напиши `restore-test.sh`: разворачивает последний бэкап во временный кластер (порт 5434), ждёт
-окончания recovery, проверяет `pg_amcheck`, `count(*)` и свежесть `max(created_at)` (не старше
-N минут от времени бэкапа), удаляет кластер и возвращает ненулевой код при любой проблеме.
-
-### C6. pgBackRest с TLS (бонус)
-Включи TLS на MinIO (самоподписанный сертификат с SAN `IP:192.168.121.1`), настрой pgBackRest,
-сделай `stanza-create`, `check`, full и `restore --type=time` в отдельный кластер. Что покажет
-`check` без TLS на MinIO?
-
-### C7. 🔑 CloudNativePG с бэкапом в MinIO
-**1.** В kind поставь CNPG 1.30.1, cert-manager и plugin-barman-cloud v0.15.0.
-
-<details><summary>Ответ</summary>
-
-Команды — разделы 3 конспекта и лаба 4 ([08_practice_labs.md](/softskills/08-practice-labs)).
-Признаки успеха: `archived_count` растёт, `failed_count = 0`; в `backup-list --detail` первый
-`base_…` полный, следующие — с `_D_` в имени (delta от предыдущего); `wal-verify` —
-`integrity: OK`, `timeline: OK`.
-
-</details>
-
-**2.** Создай пользователя `cnpg` и бакет `cnpg-backups` в MinIO, секрет `minio-creds`, ObjectStore
-   с `retentionPolicy: "30d"`, Cluster из 3 инстансов с плагином-архиватором.
-
-<details><summary>Ответ</summary>
-
 Восстановление — раздел 6: `pg_createcluster 16 restore --port 5433`, очистка каталога,
 `backup-fetch` бэкапа до аварии, `recovery.conf` с `restore_command`, `recovery_target_time`
 (на секунду раньше, с `+05`), `pause`, `archive_mode = off`, `recovery.signal`, старт; проверка
@@ -1070,18 +895,22 @@ RTO — от решения восстанавливать до таблицы �
 
 </details>
 
-**3.** Сделай on-demand бэкап и ScheduledBackup; покажи `kubectl cnpg status` и `kubectl get backups`.
+#### C3. Точка по транзакции
+Повтори C2, но цель найди через `pg_waldump` и восстанови по `recovery_target_xid` с
+`recovery_target_inclusive = off`. Сравни результат с восстановлением по времени.
 
 <details><summary>Ответ</summary>
 
 `pg_waldump … --rmgr=Transaction | grep 'rels:'` → xid коммита с удалёнными файлами;
-в recovery-конфиге `recovery_target_xid = '&lt;xid&gt;'`, `recovery_target_inclusive = off`. Результат
+в recovery-конфиге `recovery_target_xid = '<xid>'`, `recovery_target_inclusive = off`. Результат
 точнее: восстановлены все транзакции до DROP, включая закоммиченные в ту же секунду, которые
 цель по времени на секунду раньше отбросила бы.
 
 </details>
 
-**4.** Сделай PITR новым кластером `pg-main-restore` на момент до удаления таблицы.
+#### C4. Retention без права удаления
+Покажи, что `wal-g delete retain FULL 1 --confirm` от имени `pg-backup` падает. Настрой
+retention одним из двух способов из конспекта и докажи, что PITR на глубину окна остаётся возможен.
 
 <details><summary>Ответ</summary>
 
@@ -1093,18 +922,98 @@ RTO — от решения восстанавливать до таблицы �
 
 </details>
 
-### C8. Switchover в CNPG
+#### C5. 🔑 Restore-test скриптом
+Напиши `restore-test.sh`: разворачивает последний бэкап во временный кластер (порт 5434), ждёт
+окончания recovery, проверяет `pg_amcheck`, `count(*)` и свежесть `max(created_at)` (не старше
+N минут от времени бэкапа), удаляет кластер и возвращает ненулевой код при любой проблеме.
+
+<details><summary>Ответ</summary>
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+C=restoretest; PORT=5434; DIR=/var/lib/postgresql/16/$C
+trap 'sudo pg_dropcluster --stop 16 $C 2>/dev/null || true' EXIT
+sudo pg_createcluster 16 $C --port $PORT >/dev/null
+sudo systemctl stop postgresql@16-$C || true
+sudo -u postgres bash -c "find $DIR -mindepth 1 -delete && wal-g backup-fetch $DIR LATEST"
+printf "restore_command = 'wal-g wal-fetch %%f %%p'\narchive_mode = off\nrecovery_target_action = 'promote'\n" \
+  | sudo tee /etc/postgresql/16/$C/conf.d/recovery.conf >/dev/null
+sudo -u postgres touch $DIR/recovery.signal
+sudo systemctl start postgresql@16-$C
+until [ "$(sudo -u postgres psql -p $PORT -tAc 'SELECT pg_is_in_recovery()')" = "f" ]; do sleep 5; done
+sudo -u postgres pg_amcheck -p $PORT -d shop
+AGE=$(sudo -u postgres psql -p $PORT -d shop -tAc "SELECT extract(epoch FROM now()-max(created_at))::int FROM orders")
+[ "$AGE" -lt 7200 ] || { echo "данные старые: ${AGE}s"; exit 1; }
+echo "restore-test OK, свежесть ${AGE}s"
+```
+Без цели восстановления база доигрывает весь доступный WAL; `promote` здесь допустим —
+кластер временный и архивация выключена.
+
+</details>
+
+#### C6. pgBackRest с TLS (бонус)
+Включи TLS на MinIO (самоподписанный сертификат с SAN `IP:192.168.121.1`), настрой pgBackRest,
+сделай `stanza-create`, `check`, full и `restore --type=time` в отдельный кластер. Что покажет
+`check` без TLS на MinIO?
+
+<details><summary>Ответ</summary>
+
+Сертификат: `openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout private.key
+-out public.crt -subj "/CN=minio" -addext "subjectAltName=IP:192.168.121.1,DNS:minio"`, файлы в
+`./certs`, MinIO с `--certs-dir /certs`. Конфиг — раздел 4. Без TLS на MinIO `check` падает с
+ошибкой TLS (`wrong version number`). Restore: `pgbackrest --stanza=main --pg1-path=… --delta
+--type=time "--target=…" --target-action=pause --archive-mode=off restore` + старт кластера.
+
+</details>
+
+#### C7. 🔑 CloudNativePG с бэкапом в MinIO
+1. В kind поставь CNPG 1.30.1, cert-manager и plugin-barman-cloud v0.15.0.
+2. Создай пользователя `cnpg` и бакет `cnpg-backups` в MinIO, секрет `minio-creds`, ObjectStore
+   с `retentionPolicy: "30d"`, Cluster из 3 инстансов с плагином-архиватором.
+3. Сделай on-demand бэкап и ScheduledBackup; покажи `kubectl cnpg status` и `kubectl get backups`.
+4. Сделай PITR новым кластером `pg-main-restore` на момент до удаления таблицы.
+
+<details><summary>Ответ</summary>
+
+`mc admin user add local cnpg 'cnpg-secret-123'`, политика на `cnpg-backups` (List/Get/Put,
+Delete — плагину нужен для retention), манифесты — раздел 10. `kubectl cnpg status pg-main -n db`
+показывает `Continuous Backup status` / архивацию WAL без ошибок; `kubectl get backups -n db` —
+`completed`. PITR — Cluster `pg-main-restore` с `bootstrap.recovery.recoveryTarget.targetTime`
+в UTC и `externalClusters` с `serverName: pg-main`.
+
+</details>
+
+#### C8. Switchover в CNPG
 Выполни `kubectl cnpg promote` на другой инстанс, пока в цикле идут запросы через сервис
 `pg-main-rw`. Сколько запросов упало? Что должно уметь приложение, чтобы не заметить switchover?
 
-### C9. Patroni на бумаге
+<details><summary>Ответ</summary>
+
+Во время switchover на несколько секунд падают соединения к `pg-main-rw` (старый primary
+становится репликой). Приложение должно переподключаться с ретраями и backoff, выполнять
+операции идемпотентно, держать короткие таймауты подключения, а пул соединений — проверять
+соединения (или стоять за PgBouncer).
+
+</details>
+
+#### C9. Patroni на бумаге
 Для трёх узлов PostgreSQL и трёх узлов etcd нарисуй схему с HAProxy (порты 5000/5001), опиши,
 что произойдёт при: падении лидера; потере связи лидера с etcd; падении двух узлов etcd из трёх.
+
+<details><summary>Ответ</summary>
+
+Падение лидера: ключ истекает через ≤ `ttl`, реплика с допустимым лагом становится лидером,
+HAProxy по `/primary` переводит 5000 на неё (≈ 30–60 с). Потеря связи лидера с etcd: лидер
+demote'ится в read-only, остальные при живом кворуме etcd выбирают нового. Потеря двух узлов
+etcd из трёх: кворума нет — ключ продлить нельзя, лидер demote'ится, все узлы read-only, пока
+etcd не восстановится (или `failsafe_mode`, если включён и все узлы Patroni видят друг друга).
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** `pg_wal` на primary вырос до 90% диска, в логах `archive command failed with exit code 1`.
 
@@ -1210,14 +1119,13 @@ Retention и RF защищают от отказа брокеров и хран�
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как ты бэкапишь PostgreSQL в проде?
 
 <details><summary>Ответ</summary>
 
 Base backup + непрерывный архив WAL в S3 вне площадки (WAL-G/pgBackRest; в k8s — CNPG с
-   barman-cloud), шифрование, сервер пишет без права удаления, алерты на возраст бэкапа и
-   архивацию, еженедельный restore-test, учения раз в квартал.
+barman-cloud), шифрование, сервер пишет без права удаления, алерты на возраст бэкапа и
+архивацию, еженедельный restore-test, учения раз в квартал.
 
 </details>
 
@@ -1226,8 +1134,8 @@ Base backup + непрерывный архив WAL в S3 вне площадк�
 <details><summary>Ответ</summary>
 
 Восстановление на момент времени: base backup до аварии + доигрывание WAL до
-   `recovery_target_time`/`xid`. Делаю во второй инстанс с `archive_mode = off` и `pause`,
-   проверяю и переношу нужное в прод.
+`recovery_target_time`/`xid`. Делаю во второй инстанс с `archive_mode = off` и `pause`,
+проверяю и переношу нужное в прод.
 
 </details>
 
@@ -1236,7 +1144,7 @@ Base backup + непрерывный архив WAL в S3 вне площадк�
 <details><summary>Ответ</summary>
 
 RPO ≈ `archive_timeout` (минута), RTO — замер на учениях: скачивание + доигрывание WAL для
-   нашего объёма; называю конкретные цифры со стенда или прода.
+нашего объёма; называю конкретные цифры со стенда или прода.
 
 </details>
 
@@ -1245,7 +1153,7 @@ RPO ≈ `archive_timeout` (минута), RTO — замер на учениях
 <details><summary>Ответ</summary>
 
 Что поддерживает платформа, и одно на компанию. WAL-G — один бинарь, http к S3, delta;
-   pgBackRest — мощный retention, diff/incr, verify, параллельность, но S3 только по TLS.
+pgBackRest — мощный retention, diff/incr, verify, параллельность, но S3 только по TLS.
 
 </details>
 
@@ -1254,7 +1162,7 @@ RPO ≈ `archive_timeout` (минута), RTO — замер на учениях
 <details><summary>Ответ</summary>
 
 Уровнями: возраст успешного бэкапа, архивация WAL, verify файлов, автоматический
-   restore-test с проверкой данных, учения с замером RTO.
+restore-test с проверкой данных, учения с замером RTO.
 
 </details>
 
@@ -1263,7 +1171,7 @@ RPO ≈ `archive_timeout` (минута), RTO — замер на учениях
 <details><summary>Ответ</summary>
 
 Сервер БД без права удаления, retention отдельной учёткой или lifecycle, versioning и object
-   lock, копия в другом месте под другими учётками, ключи шифрования вне бакета.
+lock, копия в другом месте под другими учётками, ключи шифрования вне бакета.
 
 </details>
 
@@ -1272,7 +1180,7 @@ RPO ≈ `archive_timeout` (минута), RTO — замер на учениях
 <details><summary>Ответ</summary>
 
 Лидер держит ключ с TTL в DCS (etcd/Consul/k8s); ключ истёк — реплики выбирают нового,
-   потерявший DCS лидер demote'ится. Нечётное число узлов DCS нужно для кворума большинства.
+потерявший DCS лидер demote'ится. Нечётное число узлов DCS нужно для кворума большинства.
 
 </details>
 
@@ -1281,7 +1189,7 @@ RPO ≈ `archive_timeout` (минута), RTO — замер на учениях
 <details><summary>Ответ</summary>
 
 Switchover — плановая смена лидера на здоровом кластере без потерь (учения, обслуживание);
-   failover — аварийная, когда лидер недоступен, возможна потеря неотправленных транзакций.
+failover — аварийная, когда лидер недоступен, возможна потеря неотправленных транзакций.
 
 </details>
 
@@ -1290,7 +1198,7 @@ Switchover — плановая смена лидера на здоровом к
 <details><summary>Ответ</summary>
 
 Можно через зрелый оператор при опыте команды и проверенном восстановлении; иначе — VM или
-   managed. В CNPG бэкапы — плагин barman-cloud в S3, ScheduledBackup, PITR новым кластером.
+managed. В CNPG бэкапы — плагин barman-cloud в S3, ScheduledBackup, PITR новым кластером.
 
 </details>
 
@@ -1299,8 +1207,6 @@ Switchover — плановая смена лидера на здоровом к
 <details><summary>Ответ</summary>
 
 Нет: реплика защищает от отказа узла, а ошибки людей и приложения реплицирует. Нужны оба.
-
----
 
 </details>
 

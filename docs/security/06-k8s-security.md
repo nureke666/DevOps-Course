@@ -1,14 +1,14 @@
 ---
 title: "06. Безопасность Kubernetes"
-description: "Блок → Безопасность → тема 06. Опирается на"
+description: "PSS/PSA, securityContext, Kyverno и VAP, kube-bench, Falco, cosign, encryption at rest"
 ---
 
 # 06. Безопасность Kubernetes
 
 > Блок → Безопасность → тема 06. Опирается на
-> [../Kubernetes/17_rbac.md](/kubernetes/17-rbac) · [../Kubernetes/13_networkpolicy.md](/kubernetes/13-networkpolicy) ·
-> [../Kubernetes/08_configmap_secret.md](/kubernetes/08-configmap-secret) ·
-> [../Docker/10_security_best_practices.md](/docker/10-security-best-practices).
+> [Kubernetes: 17. RBAC](/kubernetes/17-rbac) · [Kubernetes: 13. NetworkPolicy](/kubernetes/13-networkpolicy) ·
+> [Kubernetes: 08. ConfigMap и Secret](/kubernetes/08-configmap-secret) ·
+> [Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices).
 > RBAC, NetworkPolicy, Secret и «контейнер — не граница безопасности» там уже разобраны.
 > Здесь — то, что превращает кластер из «работает» в «переживёт взломанный под».
 >
@@ -21,7 +21,7 @@ description: "Блок → Безопасность → тема 06. Опира�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  kubectl apply ──► kube-apiserver
                    │ 1. authn: кто ты (сертификат, токен SA, OIDC)
                    │ 2. authz: RBAC — можно ли (../Kubernetes/17_rbac.md)
@@ -38,7 +38,8 @@ description: "Блок → Безопасность → тема 06. Опира�
                                           Falco (eBPF) ──► алерт ──► Falcosidekick
  kube-bench ─── сверяет настройки нод и control plane с CIS Benchmark
  NetworkPolicy ─ ограничивает, куда сможет ходить взломанный под
-```text
+```
+
 ---
 
 ## 1. Модель 4C: где какие меры
@@ -48,10 +49,10 @@ description: "Блок → Безопасность → тема 06. Опира�
 
 | Слой | Что защищаем | Меры | Где в волте |
 |------|--------------|------|-------------|
-| **Cloud** (или ДЦ) | Аккаунт, сеть, ноды, managed control plane | IAM, приватные ноды, API только из VPN | [05_iam_access.md](/security/05-iam-access), [../Left/04_Cloud/03_network_vpc.md](/cloud/03-network-vpc) |
-| **Cluster** | API, etcd, kubelet | RBAC, admission, audit, шифрование etcd, CIS | [../Kubernetes/17_rbac.md](/kubernetes/17-rbac), эта тема |
-| **Container** | Образ и рантайм | Non-root, drop ALL, seccomp, подписи, скан | [../Docker/10_security_best_practices.md](/docker/10-security-best-practices), эта тема |
-| **Code** | Приложение | Зависимости, секреты, TLS, валидация ввода | [04_vuln_management.md](/security/04-vuln-management), [03_web_edge_security.md](/security/03-web-edge-security) |
+| **Cloud** (или ДЦ) | Аккаунт, сеть, ноды, managed control plane | IAM, приватные ноды, API только из VPN | [05. IAM и доступ](/security/05-iam-access), [Облака: 03. Сеть в облаке: VPC](/cloud/03-network-vpc) |
+| **Cluster** | API, etcd, kubelet | RBAC, admission, audit, шифрование etcd, CIS | [Kubernetes: 17. RBAC](/kubernetes/17-rbac), эта тема |
+| **Container** | Образ и рантайм | Non-root, drop ALL, seccomp, подписи, скан | [Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices), эта тема |
+| **Code** | Приложение | Зависимости, секреты, TLS, валидация ввода | [04. Управление уязвимостями](/security/04-vuln-management), [03. Безопасность веба и периметра (edge)](/security/03-web-edge-security) |
 
 > 💡 Текущая страница «Cloud Native Security» в документации Kubernetes описывает то же через
 > **фазы жизненного цикла** из CNCF whitepaper: *Develop* → *Distribute* (сборка, скан, подпись) →
@@ -89,12 +90,13 @@ metadata:
     pod-security.kubernetes.io/enforce-version: v1.37   # зафиксировать правила при апгрейдах
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/audit: restricted
-```text
+```
 ```bash
 # ⭐ СНАЧАЛА примерка: какие существующие поды нарушат уровень (ничего не меняет)
 kubectl label --dry-run=server --overwrite ns app pod-security.kubernetes.io/enforce=restricted
 # Warning: existing pods in namespace "app" violate the new PodSecurity enforce level ...
-```text
+```
+
 Раскатка без аварии: **warn + audit = restricted, enforce = baseline** → чинишь манифесты
 (раздел 3), пока предупреждений не станет ноль → **enforce = restricted** с зафиксированной версией.
 
@@ -131,7 +133,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: api
-          image: registry.example.com/api@sha256:&lt;digest&gt;   # digest, а не тег (раздел 7)
+          image: registry.example.com/api@sha256:<digest>   # digest, а не тег (раздел 7)
           ports: [{ containerPort: 8080 }]         # > 1024 — NET_BIND_SERVICE не нужен
           securityContext:                         # уровень контейнера, перекрывает под
             allowPrivilegeEscalation: false
@@ -143,7 +145,8 @@ spec:
           volumeMounts: [{ name: tmp, mountPath: /tmp }]   # куда приложению можно писать
       volumes:
         - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
-```text
+```
+
 | Поле | От чего защищает |
 |------|------------------|
 | `runAsNonRoot` / `runAsUser` ≠ 0 | Root в контейнере = root на хосте при побеге; права на смонтированные файлы |
@@ -173,22 +176,24 @@ apiVersion: v1
 kind: ServiceAccount
 metadata: { name: api, namespace: app }
 automountServiceAccountToken: false     # дефолт для всех подов этого SA (под может переопределить)
-```text
+```
+
 | Токен | Срок | Оценка |
 |-------|------|--------|
 | **Projected (bound)** — в поде через TokenRequest | Около часа, kubelet обновляет сам; привязан к поду | ✅ Норма, если под реально ходит в API |
 | `kubectl create token api --duration=10m` | Задаёшь сам | ✅ Разовый доступ, отладка, CI |
 | Secret типа `kubernetes.io/service-account-token` | **Бессрочный**, пока жив Secret | ⚠️ Утёк — действует вечно |
 
-> ⚠️ В [../Kubernetes/17_rbac.md](/kubernetes/17-rbac) для CI создаётся именно бессрочный
+> ⚠️ В [Kubernetes: 17. RBAC](/kubernetes/17-rbac) для CI создаётся именно бессрочный
 > токен-Secret — для учёбы годится, в проде лучше: GitOps (у CI нет доступа к кластеру),
-> OIDC-федерация CI → облако → managed-кластер ([05_iam_access.md](/security/05-iam-access)) или хотя бы
+> OIDC-федерация CI → облако → managed-кластер ([05. IAM и доступ](/security/05-iam-access)) или хотя бы
 > `kubectl create token` с коротким сроком.
 
 ```bash
 kubectl auth can-i --list --as=system:serviceaccount:app:api -n app       # что может SA
 kubectl get secrets -A --field-selector type=kubernetes.io/service-account-token   # бессрочные токены
-```text
+```
+
 ---
 
 ## 5. Admission-политики: что выбрать
@@ -226,7 +231,7 @@ spec:
   validationActions: [Warn, Audit]        # сначала мягко; потом [Deny] (Deny и Warn вместе нельзя)
   matchResources:
     namespaceSelector: { matchLabels: { policy.lab/enforce: "true" } }
-```text
+```
 > `lastIndexOf(':') > lastIndexOf('/')` отличает тег от порта реестра (`localhost:5001/app` — без тега).
 > Без binding'а политика ничего не делает.
 
@@ -238,7 +243,8 @@ spec:
 helm repo add kyverno https://kyverno.github.io/kyverno/ && helm repo update
 helm upgrade --install kyverno kyverno/kyverno -n kyverno --create-namespace
 kubectl -n kyverno get pods        # по умолчанию 4 Deployment'а по 1 реплике
-```text
+```
+
 > ⭐ С Kyverno 1.17 (февраль 2026) CEL-типы — стабильный `policies.kyverno.io/v1`: `ValidatingPolicy`,
 > `MutatingPolicy`, `GeneratingPolicy`, `ImageValidatingPolicy`, `DeletingPolicy`, `PolicyException`.
 > Старые `ClusterPolicy`/`Policy` (`kyverno.io/v1`) — deprecated, удаление запланировано в 1.20.
@@ -262,12 +268,13 @@ spec:
         variables.allContainers.all(c, c.image.startsWith('registry.example.com/') ||
           c.image.startsWith('ghcr.io/kyverno/'))
       message: "Образы только из registry.example.com"
-```text
+```
 ```bash
 kubectl get policyreport -A                              # кто нарушает, по namespace
 kubectl get policyreport -n app -o yaml | grep -B3 -A6 'result: fail'
 # нарушений ноль (или все объяснены исключениями) → validationActions: [Deny]
-```text
+```
+
 **Mutate** — проставить seccomp, если забыли. Мутация идёт *до* валидации, поэтому под
 после неё проходит и PSA:
 ```yaml
@@ -292,7 +299,8 @@ spec:
               }
             }
           }
-```text
+```
+
 **Исключение** вместо «выключим политику для всех». PolicyException по умолчанию выключены:
 нужен флаг `enablePolicyException=true` и `exceptionNamespace` — где их можно создавать.
 ```yaml
@@ -304,7 +312,8 @@ spec:
   matchConditions:
     - name: only-legacy-billing
       expression: "object.metadata.namespace == 'billing' && object.metadata.name.startsWith('legacy-')"
-```text
+```
+
 **Ты встретишь это в старых чартах и статьях** — legacy-синтаксис, мигрируй на CEL:
 ```yaml
 apiVersion: kyverno.io/v1        # deprecated с 1.17, удаление в 1.20
@@ -314,7 +323,8 @@ spec:
     - name: check-registry
       match: { any: [{ resources: { kinds: [Pod] } }] }
       validate: { failureAction: Audit, pattern: { spec: { containers: [{ image: "registry.example.com/*" }] } } }
-```text
+```
+
 **В CI** политики проверяют до кластера: `kyverno apply policies/ --resource manifests/`
 (и `kyverno test` для тест-кейсов) — нарушение ломает MR, а не деплой.
 
@@ -327,8 +337,8 @@ spec:
 ## 7. Подписи образов: пускать только своё
 
 Как подписать (`cosign sign --key` или keyless) — уже в
-[../Docker/10_security_best_practices.md](/docker/10-security-best-practices) и
-[../CICD/13_quality_security.md](/cicd/13-quality-security). Здесь — проверка при деплое
+[Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices) и
+[CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security). Здесь — проверка при деплое
 на публичном тестовом образе Kyverno (теги `:signed`, `:unsigned`, `:signed-by-someone-else`):
 
 ```yaml
@@ -358,11 +368,12 @@ spec:
     - expression: >-
         images.containers.map(image, verifyImageSignatures(image, [attestors.cosign])).all(e, e > 0)
       message: "Подпись образа не прошла проверку"
-```text
+```
 ```bash
 kubectl run signed   --image=ghcr.io/kyverno/test-verify-image:signed     # создан
 kubectl run unsigned --image=ghcr.io/kyverno/test-verify-image:unsigned   # отклонён
-```text
+```
+
 | Приём | Зачем |
 |-------|-------|
 | Деплой по digest (`@sha256:…`) | Тег можно перезаписать, digest — нет; подписывается именно digest |
@@ -386,14 +397,15 @@ kubectl logs job/kube-bench > kube-bench-node.txt
 kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-master.yaml
 kubectl logs job/kube-bench-master > kube-bench-master.txt
 grep -E '^\[(FAIL|WARN)\]' kube-bench-*.txt | head -30
-```text
-```text
-[PASS] &lt;номер&gt; &lt;что проверено&gt; (Automated)   ← проверка прошла
-[FAIL] &lt;номер&gt; &lt;что проверено&gt; (Automated)   ← не соответствует — смотри Remediations
-[WARN] &lt;номер&gt; &lt;что проверено&gt; (Manual)      ← проверить руками (политики, процессы)
+```
+```text:no-line-numbers
+[PASS] <номер> <что проверено> (Automated)   ← проверка прошла
+[FAIL] <номер> <что проверено> (Automated)   ← не соответствует — смотри Remediations
+[WARN] <номер> <что проверено> (Manual)      ← проверить руками (политики, процессы)
 == Remediations master ==                    ← что поправить: манифест, флаг, права на файл
 == Summary total ==                          ← N checks PASS / FAIL / WARN / INFO
-```text
+```
+
 | Итог по пункту | Действие |
 |----------------|----------|
 | FAIL, применимо | Исправить в IaC (kubeadm config, Terraform managed-кластера), перепрогнать |
@@ -405,7 +417,7 @@ grep -E '^\[(FAIL|WARN)\]' kube-bench-*.txt | head -30
 - В managed-кластерах (EKS/GKE/AKS, Yandex Managed Kubernetes) control plane недоступен:
   проверяешь ноды и провайдер-специфичные бенчмарки (`job-eks.yaml`, `job-gke.yaml`, `job-aks.yaml`
   в репозитории kube-bench); остальное — зона провайдера.
-- Для хоста с Docker — `docker-bench-security`, для ОС — Lynis ([02_linux_hardening.md](/security/02-linux-hardening)).
+- Для хоста с Docker — `docker-bench-security`, для ОС — Lynis ([02. Харденинг Linux-сервера](/security/02-linux-hardening)).
 
 ---
 
@@ -413,17 +425,18 @@ grep -E '^\[(FAIL|WARN)\]' kube-bench-*.txt | head -30
 
 Всё выше — **профилактика**. Falco ловит то, что уже происходит: читает syscalls и сверяет с правилами.
 
-```text
+```text:no-line-numbers
  контейнер ──syscalls──► ядро ──modern eBPF──► Falco (правила) ──► stdout / gRPC
                                                     └──► Falcosidekick ──► Slack, Telegram,
                                                                            Loki, Alertmanager
-```text
+```
 ```bash
 helm repo add falcosecurity https://falcosecurity.github.io/charts && helm repo update
 helm install falco falcosecurity/falco -n falco --create-namespace \
   --set driver.kind=modern_ebpf --set tty=true
 kubectl logs -n falco -l app.kubernetes.io/name=falco -c falco -f | grep -i shell
-```text
+```
+
 Стандартное правило, которое ловит `kubectl exec -it … -- sh`:
 ```yaml
 - rule: Terminal shell in container
@@ -433,7 +446,8 @@ kubectl logs -n falco -l app.kubernetes.io/name=falco -c falco -f | grep -i shel
   output: A shell was spawned in a container with an attached terminal | user=%user.name ...
   priority: NOTICE
   tags: [maturity_stable, container, shell, mitre_execution, T1059]
-```text
+```
+
 Своё правило — через values чарта `customRules` (попадает в `/etc/falco/rules.d`):
 ```yaml
 customRules:
@@ -453,21 +467,22 @@ customRules:
           fields: container.image.repository
           comps: in
           values: [registry.example.com/ci-builder]
-```text
+```
 ```bash
 helm upgrade falco falcosecurity/falco -n falco --reuse-values -f falco-values.yaml
-```text
+```
+
 Борьба с шумом: в алертинг — `priority` ≥ WARNING, остальное — в логи; легитимное поведение —
 через `exceptions` или `override` (`condition: append`), а не выключением правила; раз в неделю —
 разбор топа сработок. Falco **детектирует, но не блокирует**: реакция — по playbook
-([07_security_incidents_compliance.md](/security/07-security-incidents-compliance)) или автоматикой
+([07. Инциденты безопасности и compliance](/security/07-security-incidents-compliance)) или автоматикой
 (Falco Talon, свой webhook).
 
 ---
 
 ## 10. Шифрование Secret в etcd
 
-Secret — это base64 ([../Kubernetes/08_configmap_secret.md](/kubernetes/08-configmap-secret)), и без
+Secret — это base64 ([Kubernetes: 08. ConfigMap и Secret](/kubernetes/08-configmap-secret)), и без
 настройки etcd хранит его открытым текстом: бэкап etcd или диск control plane = все пароли.
 
 ```yaml
@@ -480,14 +495,15 @@ resources:
       - aescbc:                      # первый провайдер ШИФРУЕТ новые записи
           keys:
             - name: key1
-              secret: &lt;base64 от 32 случайных байт&gt;   # head -c 32 /dev/urandom | base64
+              secret: <base64 от 32 случайных байт>   # head -c 32 /dev/urandom | base64
       - identity: {}                 # остальные только ЧИТАЮТ (старые незашифрованные)
-```text
+```
 ```bash
 # kube-apiserver: --encryption-provider-config=/etc/kubernetes/enc/enc.yaml (+ volume в static pod)
 kubectl get secrets --all-namespaces -o json | kubectl replace -f -   # перешифровать старые
 ETCDCTL_API=3 etcdctl get /registry/secrets/app/db-pass | hexdump -C | head   # → k8s:enc:aescbc:v1:key1
-```text
+```
+
 | Провайдер | Оценка |
 |-----------|--------|
 | `identity` | Без шифрования (по умолчанию) |
@@ -503,10 +519,10 @@ ETCDCTL_API=3 etcdctl get /registry/secrets/app/db-pass | hexdump -C | head   # 
 ## 11. Аудит и сеть: без них защита слепая
 
 - **Audit log API-сервера** включён в стенде (`k8s/audit-policy.yaml`): тела Secret не пишутся
-  (уровень `Metadata`), `pods/exec` фиксируется. Разбор — в [07_security_incidents_compliance.md](/security/07-security-incidents-compliance).
-- **NetworkPolicy default deny** ([../Kubernetes/13_networkpolicy.md](/kubernetes/13-networkpolicy)) —
+  (уровень `Metadata`), `pods/exec` фиксируется. Разбор — в [07. Инциденты безопасности и compliance](/security/07-security-incidents-compliance).
+- **NetworkPolicy default deny** ([Kubernetes: 13. NetworkPolicy](/kubernetes/13-networkpolicy)) —
   взломанный под не дойдёт до базы и соседей. В облаке закрой egress к `169.254.169.254`:
-  через SSRF оттуда воруют IAM-креды ноды ([05_iam_access.md](/security/05-iam-access)).
+  через SSRF оттуда воруют IAM-креды ноды ([05. IAM и доступ](/security/05-iam-access)).
 - **API-сервер** — только из приватной сети/VPN, люди — через OIDC, а не общий admin-kubeconfig.
 
 ---
@@ -549,8 +565,8 @@ ETCDCTL_API=3 etcdctl get /registry/secrets/app/db-pass | hexdump -C | head   # 
 |------|-----|
 | Примерить PSA | `kubectl label --dry-run=server --overwrite ns app pod-security.kubernetes.io/enforce=restricted` |
 | Почему нет подов | `kubectl describe rs -n app` → `violates PodSecurity` |
-| Права SA | `kubectl auth can-i --list --as=system:serviceaccount:&lt;ns&gt;:&lt;sa&gt;` |
-| Короткий токен | `kubectl create token &lt;sa&gt; --duration=10m` |
+| Права SA | `kubectl auth can-i --list --as=system:serviceaccount:<ns>:<sa>` |
+| Короткий токен | `kubectl create token <sa> --duration=10m` |
 | Бессрочные токены | `kubectl get secrets -A --field-selector type=kubernetes.io/service-account-token` |
 | Отчёты Kyverno | `kubectl get policyreport -A` |
 | Политики в CI | `kyverno apply policies/ --resource manifests/` |
@@ -576,13 +592,17 @@ ETCDCTL_API=3 etcdctl get /registry/secrets/app/db-pass | hexdump -C | head   # 
 9. kube-bench показывает расхождения с CIS; FAIL — это вопрос, а не приказ.
 10. Falco видит атаку в рантайме, но не блокирует; шифрование etcd не заменяет RBAC.
 
-➡️ Дальше: [07_security_incidents_compliance.md](/security/07-security-incidents-compliance) · задачи: 06_k8s_security_tasks.md
+---
 
+## Задачи
+
+> Стенд: kind-кластер `sec` из [Безопасность](/security/) (1 control-plane с аудитом + 1 worker).
+> Перед заданиями: `kubectl create ns app`. Kyverno и Falco ставятся по разделам 6 и 9 конспекта.
+> ⚠️ Всё — только в kind: политики с `Deny` и `failurePolicy: Fail` могут заблокировать создание подов.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Назови слои модели 4C и что защищает каждый. Какой рамкой её заменила документация Kubernetes?
 
@@ -623,7 +643,7 @@ workload'ов (Deployment, Job…).
 <details><summary>Ответ</summary>
 
 `enforce` проверяет только Pod, а Deployment — нет: объект создан, но ReplicaSet не может
-создать поды. Ошибка — в `kubectl describe rs -n &lt;ns&gt;` (`Error creating: … violates PodSecurity`)
+создать поды. Ошибка — в `kubectl describe rs -n <ns>` (`Error creating: … violates PodSecurity`)
 и в событиях namespace.
 
 </details>
@@ -758,217 +778,111 @@ container» — запуск shell с TTY в контейнере (типичн�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```yaml
 B1.  kubectl label ns kube-system pod-security.kubernetes.io/enforce=restricted --overwrite
-```text
-<details><summary>Ответ</summary>
 
-⚠️ Системные компоненты (CNI, kube-proxy, CoreDNS в некоторых сборках) требуют привилегий:
+B2.  # Dockerfile: USER app
+     spec:
+       securityContext: { runAsNonRoot: true }
+
+B3.  securityContext: { readOnlyRootFilesystem: true }
+     # приложение пишет временные файлы в /tmp, томов нет
+
+B4.  # namespace с enforce=baseline
+     containers:
+       - name: debug
+         securityContext:
+           privileged: true
+           capabilities: { add: ["SYS_ADMIN"] }
+
+B5.  apiVersion: admissionregistration.k8s.io/v1
+     kind: ValidatingAdmissionPolicy
+     metadata: { name: require-limits }
+     spec: { ... validations: [...] }
+     # binding не создавали, «политика не работает»
+
+B6.  kind: ValidatingAdmissionPolicyBinding
+     spec:
+       policyName: deny-latest-tag
+       validationActions: [Deny, Warn]
+
+B7.  # Kyverno ValidatingPolicy allowed-registries с validationActions: [Deny]
+     # применили в понедельник на весь кластер, без Audit и без исключений
+
+B8.  # ImageValidatingPolicy для registry.example.com/* включена,
+     # а в Deployment: image: registry.example.com/api:1.4
+
+B9.  # Falco шумит «Terminal shell in container» от отладочных джоб CI →
+     - rule: Terminal shell in container
+       enabled: false
+
+B10. apiVersion: apiserver.config.k8s.io/v1
+     kind: EncryptionConfiguration
+     resources:
+       - resources: ["secrets"]
+         providers:
+           - identity: {}
+           - aescbc: { keys: [{ name: key1, secret: <...> }] }
+
+B11. kubectl -n app apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job.yaml
+     # namespace app: enforce=restricted
+
+B12. # Kyverno установлен с одной репликой admission-контроллера,
+     # вебхук failurePolicy: Fail, на ноде с Kyverno начинается drain
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Системные компоненты (CNI, kube-proxy, CoreDNS в некоторых сборках) требуют привилегий:
 новые поды в kube-system перестанут создаваться, кластер деградирует. Системные namespace —
 `privileged`.
 
-</details>
-
-```text:no-line-numbers
-B2.  # Dockerfile: USER app
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Kubelet не проверит нечисловой USER → `CreateContainerConfigError`. `USER 10001` в
+**B2.** ⚠️ Kubelet не проверит нечисловой USER → `CreateContainerConfigError`. `USER 10001` в
 Dockerfile или `runAsUser: 10001`.
 
-</details>
+**B3.** ⚠️ Приложение упадёт с `Read-only file system`. Добавить emptyDir на `/tmp`.
 
-```text:no-line-numbers
-     spec:
-```text
-```text:no-line-numbers
-       securityContext: { runAsNonRoot: true }
-```text
-```text:no-line-numbers
-B3.  securityContext: { readOnlyRootFilesystem: true }
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Приложение упадёт с `Read-only file system`. Добавить emptyDir на `/tmp`.
-
-</details>
-
-```text:no-line-numbers
-     # приложение пишет временные файлы в /tmp, томов нет
-```text
-```text:no-line-numbers
-B4.  # namespace с enforce=baseline
-```text
-<details><summary>Ответ</summary>
-
-⚠️ baseline запрещает `privileged` и добавление `SYS_ADMIN` — под отклонён. Для отладки —
+**B4.** ⚠️ baseline запрещает `privileged` и добавление `SYS_ADMIN` — под отклонён. Для отладки —
 ephemeral debug-контейнер (`kubectl debug`) в рамках политики или отдельный namespace с осознанным
 уровнем и доступом.
 
-</details>
+**B5.** ⚠️ Без ValidatingAdmissionPolicyBinding политика не применяется ни к чему.
 
-```text:no-line-numbers
-     containers:
-```text
-```text:no-line-numbers
-       - name: debug
-```text
-```text:no-line-numbers
-         securityContext:
-```text
-```text:no-line-numbers
-           privileged: true
-```text
-```text:no-line-numbers
-           capabilities: { add: ["SYS_ADMIN"] }
-```text
-```text:no-line-numbers
-B5.  apiVersion: admissionregistration.k8s.io/v1
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без ValidatingAdmissionPolicyBinding политика не применяется ни к чему.
-
-</details>
-
-```text:no-line-numbers
-     kind: ValidatingAdmissionPolicy
-```text
-```text:no-line-numbers
-     metadata: { name: require-limits }
-```text
-```text:no-line-numbers
-     spec: { ... validations: [...] }
-```text
-```text:no-line-numbers
-     # binding не создавали, «политика не работает»
-```text
-```text:no-line-numbers
-B6.  kind: ValidatingAdmissionPolicyBinding
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `Deny` и `Warn` вместе указывать нельзя — binding не пройдёт валидацию. `[Warn, Audit]`
+**B6.** ⚠️ `Deny` и `Warn` вместе указывать нельзя — binding не пройдёт валидацию. `[Warn, Audit]`
 на этапе примерки, потом `[Deny]` (можно с `Audit`).
 
-</details>
-
-```text:no-line-numbers
-     spec:
-```text
-```text:no-line-numbers
-       policyName: deny-latest-tag
-```text
-```text:no-line-numbers
-       validationActions: [Deny, Warn]
-```text
-```text:no-line-numbers
-B7.  # Kyverno ValidatingPolicy allowed-registries с validationActions: [Deny]
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Сразу `Deny` на весь кластер: сломаются системные поды и приложения с образами из других
+**B7.** ⚠️ Сразу `Deny` на весь кластер: сломаются системные поды и приложения с образами из других
 реестров (Docker Hub, quay). Нужны Audit, отчёты, исключения для системных namespace, потом Deny.
 
-</details>
-
-```text:no-line-numbers
-     # применили в понедельник на весь кластер, без Audit и без исключений
-```text
-```text:no-line-numbers
-B8.  # ImageValidatingPolicy для registry.example.com/* включена,
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Деплой по тегу: подпись проверена для того, что тег указывал в момент проверки,
+**B8.** ⚠️ Деплой по тегу: подпись проверена для того, что тег указывал в момент проверки,
 а тег можно перезаписать. Деплоить по digest (Kyverno умеет мутировать тег в digest —
 `mutateDigest` в `validationConfigurations`).
 
-</details>
-
-```text:no-line-numbers
-     # а в Deployment: image: registry.example.com/api:1.4
-```text
-```text:no-line-numbers
-B9.  # Falco шумит «Terminal shell in container» от отладочных джоб CI →
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Выключив правило, ты перестанешь видеть и атакующего. Добавить exception для
+**B9.** ⚠️ Выключив правило, ты перестанешь видеть и атакующего. Добавить exception для
 CI-debug образов/namespace или override с `condition: append`, а правило оставить.
 
-</details>
-
-```text:no-line-numbers
-     - rule: Terminal shell in container
-```text
-```text:no-line-numbers
-       enabled: false
-```text
-```text:no-line-numbers
-B10.  apiVersion: apiserver.config.k8s.io/v1
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Первый провайдер шифрует новые записи: с `identity` первым секреты пишутся
+**B10.** ⚠️ Первый провайдер шифрует новые записи: с `identity` первым секреты пишутся
 открытым текстом. `aescbc` первым, `identity` — последним (только чтение старых), затем перешифровать.
 
-</details>
-
-```text:no-line-numbers
-     kind: EncryptionConfiguration
-```text
-```text:no-line-numbers
-     resources:
-```text
-```text:no-line-numbers
-       - resources: ["secrets"]
-```text
-```text:no-line-numbers
-         providers:
-```text
-```text:no-line-numbers
-           - identity: {}
-```text
-```text:no-line-numbers
-           - aescbc: { keys: [{ name: key1, secret: <...> }] }
-```text
-```text:no-line-numbers
-B11.  kubectl -n app apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job.yaml
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Job kube-bench использует `hostPID` и `hostPath` — PSA restricted его не пустит
+**B11.** ⚠️ Job kube-bench использует `hostPID` и `hostPath` — PSA restricted его не пустит
 (в ReplicaSet/Job-контроллере будет `violates PodSecurity`). Запускать в `default` или в namespace
 с `privileged`.
 
-</details>
-
-```text:no-line-numbers
-     # namespace app: enforce=restricted
-```text
-```text:no-line-numbers
-B12.  # Kyverno установлен с одной репликой admission-контроллера,
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Drain выселит единственный под Kyverno, вебхук с `Fail` перестанет отвечать — новые
+**B12.** ⚠️ Drain выселит единственный под Kyverno, вебхук с `Fail` перестанет отвечать — новые
 поды (включая выселенные) не создадутся. Нужны 3 реплики, PDB, anti-affinity.
 
 </details>
 
-```text:no-line-numbers
-     # вебхук failurePolicy: Fail, на ноде с Kyverno начинается drain
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Namespace restricted и починка Deployment
-**1.** Создай Deployment `web` из образа `nginx` в namespace `app`.
+#### C1. 🔑 Namespace restricted и починка Deployment
+1. Создай Deployment `web` из образа `nginx` в namespace `app`.
+2. Примерь `kubectl label --dry-run=server --overwrite ns app pod-security.kubernetes.io/enforce=restricted`.
+3. Включи `warn` и `audit` = restricted, `enforce` = restricted с `enforce-version`.
+4. Удали под, найди ошибку в ReplicaSet, почини манифест: `nginxinc/nginx-unprivileged`,
+   securityContext из раздела 3, emptyDir под `/tmp` и кэш. Под должен стать Running.
 
 <details><summary>Ответ</summary>
 
@@ -980,7 +894,11 @@ emptyDir на `/tmp` (у этого образа кэш и pid в `/tmp`). Пр�
 
 </details>
 
-**2.** Примерь `kubectl label --dry-run=server --overwrite ns app pod-security.kubernetes.io/enforce=restricted`.
+#### C2. 🔑 Kyverno: Audit → отчёт → Deny
+Установи Kyverno. Примени ValidatingPolicy `allowed-registries` в `Audit` (разрешены
+`registry.example.com/` и `ghcr.io/kyverno/`). Запусти под `busybox` — он создастся. Найди нарушение
+в `kubectl get policyreport -A`. Переключи на `Deny` и повтори. Сделай PolicyException для одного
+пода в отдельном namespace (с включёнными исключениями в Helm).
 
 <details><summary>Ответ</summary>
 
@@ -992,7 +910,10 @@ registry.example.com`. Исключения: `helm upgrade kyverno kyverno/kyver
 
 </details>
 
-**3.** Включи `warn` и `audit` = restricted, `enforce` = restricted с `enforce-version`.
+#### C3. MutatingPolicy: seccomp по умолчанию
+Примени `default-seccomp` из раздела 6. Создай под без `securityContext` в namespace без PSA
+и покажи через `kubectl get pod -o yaml`, что `seccompProfile: RuntimeDefault` появился. Объясни,
+почему мутация срабатывает до PSA.
 
 <details><summary>Ответ</summary>
 
@@ -1002,8 +923,10 @@ ValidatingPolicy) — поэтому мутированный под уже пр
 
 </details>
 
-**4.** Удали под, найди ошибку в ReplicaSet, почини манифест: `nginxinc/nginx-unprivileged`,
-   securityContext из раздела 3, emptyDir под `/tmp` и кэш. Под должен стать Running.
+#### C4. 🔑 Проверка подписи образа
+Примени ImageValidatingPolicy из раздела 7. Запусти три пода: `:signed`, `:unsigned`,
+`:signed-by-someone-else`. Запиши, какие прошли и с какими сообщениями. Как политика должна
+выглядеть для твоего реального registry и подписи из CI?
 
 <details><summary>Ответ</summary>
 
@@ -1014,52 +937,80 @@ ValidatingPolicy) — поэтому мутированный под уже пр
 
 </details>
 
-### C2. 🔑 Kyverno: Audit → отчёт → Deny
-Установи Kyverno. Примени ValidatingPolicy `allowed-registries` в `Audit` (разрешены
-`registry.example.com/` и `ghcr.io/kyverno/`). Запусти под `busybox` — он создастся. Найди нарушение
-в `kubectl get policyreport -A`. Переключи на `Deny` и повтори. Сделай PolicyException для одного
-пода в отдельном namespace (с включёнными исключениями в Helm).
-
-### C3. MutatingPolicy: seccomp по умолчанию
-Примени `default-seccomp` из раздела 6. Создай под без `securityContext` в namespace без PSA
-и покажи через `kubectl get pod -o yaml`, что `seccompProfile: RuntimeDefault` появился. Объясни,
-почему мутация срабатывает до PSA.
-
-### C4. 🔑 Проверка подписи образа
-Примени ImageValidatingPolicy из раздела 7. Запусти три пода: `:signed`, `:unsigned`,
-`:signed-by-someone-else`. Запиши, какие прошли и с какими сообщениями. Как политика должна
-выглядеть для твоего реального registry и подписи из CI?
-
-### C5. VAP: запрет `:latest`
+#### C5. VAP: запрет `:latest`
 Примени ValidatingAdmissionPolicy и binding из раздела 5 с `[Warn, Audit]` для namespace с меткой
 `policy.lab/enforce=true`. Проверь `kubectl run t --image=nginx:latest` (warning), затем переключи
 на `[Deny]`. Найди событие в аудит-логе kind (аннотации validation policy).
 
-### C6. Токены ServiceAccount
+<details><summary>Ответ</summary>
+
+С `[Warn, Audit]` — `Warning: Validation failed for ValidatingAdmissionPolicy 'deny-latest-tag'…`,
+под создан. С `[Deny]` — отклонён. В аудит-логе kind (`docker exec sec-control-plane cat
+/var/log/kubernetes/kube-apiserver-audit.log`) у события — аннотация
+`validation.policy.admission.k8s.io/validation_failure`.
+
+</details>
+
+#### C6. Токены ServiceAccount
 Запусти под с дефолтным SA, прочитай токен внутри (`cat /var/run/secrets/kubernetes.io/serviceaccount/token`)
 и проверь `kubectl auth can-i --list --as=system:serviceaccount:app:default -n app`. Выключи
 automount на SA и убедись, что в новом поде файла нет. Выпусти `kubectl create token` на 10 минут
 и найди все бессрочные токен-Secret'ы в кластере.
 
-### C7. 🔑 kube-bench и триаж
+<details><summary>Ответ</summary>
+
+У дефолтного SA обычно почти нет прав (`can-i --list` показывает self-review и discovery),
+но токен всё равно есть и валиден. После `automountServiceAccountToken: false` на SA в новом поде
+каталога `/var/run/secrets/kubernetes.io/serviceaccount` нет. Бессрочные токены:
+`kubectl get secrets -A --field-selector type=kubernetes.io/service-account-token`.
+
+</details>
+
+#### C7. 🔑 kube-bench и триаж
 Запусти `job.yaml` и `job-master.yaml` в namespace `default`. Выпиши summary (PASS/FAIL/WARN).
 Для трёх FAIL определи: применимо ли к kind, как исправить в kubeadm-конфиге, или почему это
 принятый риск стенда.
 
-### C8. 🔑 Falco ловит shell и пакетный менеджер
-Установи Falco (modern eBPF). Сделай `kubectl exec -it &lt;pod&gt; -- sh` и найди алерт «Terminal shell
+<details><summary>Ответ</summary>
+
+Логи: `kubectl logs job/kube-bench`, `kubectl logs job/kube-bench-master`. Пример триажа:
+`--profiling` у API-сервера — применимо, исправляется флагом `profiling: "false"` в kubeadm
+ClusterConfiguration; права на файлы kubelet в контейнере-ноде — особенность kind; ручные WARN
+по политикам — закрываются PSA/NetworkPolicy/RBAC-ревью. Каждый пункт — «исправить» или «принять с причиной».
+
+</details>
+
+#### C8. 🔑 Falco ловит shell и пакетный менеджер
+Установи Falco (modern eBPF). Сделай `kubectl exec -it <pod> -- sh` и найди алерт «Terminal shell
 in container» в логах Falco. Добавь правило «Package manager in container» через `customRules`,
 выполни в поде `apk add curl` (или `apt-get update`) и найди свой алерт с именем пода и namespace.
 
-### C9. Шифрование Secret в etcd (по желанию)
+<details><summary>Ответ</summary>
+
+В логах Falco: `Notice A shell was spawned in a container with an attached terminal …`
+с именем пода/namespace. После `helm upgrade … -f falco-values.yaml` и `apk add curl` в поде —
+`Warning Package manager in container (cmd=apk add curl … pod=…)`.
+
+</details>
+
+#### C9. Шифрование Secret в etcd (по желанию)
 На отдельном kind-кластере включи `EncryptionConfiguration` с `aescbc`: `extraMounts` с конфигом +
 патч kubeadm (`encryption-provider-config` и `extraVolumes`). Создай Secret, покажи через `etcdctl`
 в контейнере etcd префикс `k8s:enc:aescbc:v1:key1`, перешифруй старые Secret'ы.
 
+<details><summary>Ответ</summary>
+
+В etcd: `docker exec sec-control-plane sh -c 'ETCDCTL_API=3 etcdctl --cacert /etc/kubernetes/pki/etcd/ca.crt
+--cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key get
+/registry/secrets/app/db-pass' | hexdump -C | head` — в начале `k8s:enc:aescbc:v1:key1`
+(если `etcdctl` нет в ноде — выполнить в поде etcd через `kubectl -n kube-system exec`).
+Старые — `kubectl get secrets -A -o json | kubectl replace -f -`.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** После установки Kyverno ночью обновляли ноды; утром новые поды ни в одном прикладном
 namespace не создаются, в событиях — `failed calling webhook "…kyverno…"`.
@@ -1152,14 +1103,13 @@ Security-инцидент: не удалять под. Audit log — кто сд
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как бы ты защитил кластер Kubernetes? Назови уровни.
 
 <details><summary>Ответ</summary>
 
 Слоями: Cloud (IAM, приватный API, ноды), Cluster (RBAC, PSA, admission-политики, audit,
-   шифрование etcd, CIS/kube-bench), Container (non-root, drop ALL, seccomp, подписи, сканы),
-   Code; плюс NetworkPolicy и рантайм-детект (Falco).
+шифрование etcd, CIS/kube-bench), Container (non-root, drop ALL, seccomp, подписи, сканы),
+Code; плюс NetworkPolicy и рантайм-детект (Falco).
 
 </details>
 
@@ -1168,7 +1118,7 @@ Security-инцидент: не удалять под. Audit log — кто сд
 <details><summary>Ответ</summary>
 
 PSS — три уровня требований к подам; PSA — встроенный контроллер, применяющий их по меткам
-   namespace в режимах enforce/audit/warn.
+namespace в режимах enforce/audit/warn.
 
 </details>
 
@@ -1177,7 +1127,7 @@ PSS — три уровня требований к подам; PSA — встр
 <details><summary>Ответ</summary>
 
 Числовой non-root UID, `allowPrivilegeEscalation: false`, drop ALL, seccomp RuntimeDefault,
-   read-only FS + emptyDir, без токена SA, с requests/limits, образ по digest.
+read-only FS + emptyDir, без токена SA, с requests/limits, образ по digest.
 
 </details>
 
@@ -1194,7 +1144,7 @@ RCE в поде даёт атакующему токен с правами SA в
 <details><summary>Ответ</summary>
 
 Контроллеры, которые проверяют/меняют объекты до записи в etcd. VAP — встроенный CEL без
-   вебхука; Kyverno — платформа политик на YAML+CEL с мутацией, подписями, отчётами; Gatekeeper — OPA/Rego.
+вебхука; Kyverno — платформа политик на YAML+CEL с мутацией, подписями, отчётами; Gatekeeper — OPA/Rego.
 
 </details>
 
@@ -1203,7 +1153,7 @@ RCE в поде даёт атакующему токен с правами SA в
 <details><summary>Ответ</summary>
 
 Подпись в CI (cosign, лучше keyless), деплой по digest, ImageValidatingPolicy Kyverno с ключом
-   или identity пайплайна, плюс проверка аттестаций (SBOM, provenance).
+или identity пайплайна, плюс проверка аттестаций (SBOM, provenance).
 
 </details>
 
@@ -1212,7 +1162,7 @@ RCE в поде даёт атакующему токен с правами SA в
 <details><summary>Ответ</summary>
 
 CIS Benchmark — рекомендации по безопасной настройке компонентов; kube-bench прогоняет их
-   на нодах и показывает PASS/FAIL/WARN с remediation.
+на нодах и показывает PASS/FAIL/WARN с remediation.
 
 </details>
 
@@ -1221,7 +1171,7 @@ CIS Benchmark — рекомендации по безопасной настр�
 <details><summary>Ответ</summary>
 
 Рантайм-детект по syscalls: shell в контейнере, чтение `/etc/shadow`, пакетный менеджер,
-   неожиданные сетевые соединения, запись в бинарные каталоги; алерты через Falcosidekick.
+неожиданные сетевые соединения, запись в бинарные каталоги; алерты через Falcosidekick.
 
 </details>
 
@@ -1230,7 +1180,7 @@ CIS Benchmark — рекомендации по безопасной настр�
 <details><summary>Ответ</summary>
 
 Сам по себе нет: base64. Защита — RBAC на `secrets`, шифрование etcd (KMS), секреты вне git
-   (SOPS/ESO/Vault), монтирование файлом, ротация.
+(SOPS/ESO/Vault), монтирование файлом, ротация.
 
 </details>
 
@@ -1239,9 +1189,7 @@ CIS Benchmark — рекомендации по безопасной настр�
 <details><summary>Ответ</summary>
 
 Audit → отчёты командам → исправления → Deny с PolicyException; политики в git с `kyverno apply`
-    в CI; системные namespace — отдельно.
-
----
+в CI; системные namespace — отдельно.
 
 </details>
 

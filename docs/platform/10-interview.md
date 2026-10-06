@@ -1,6 +1,6 @@
 ---
 title: "10. Вопросы с собеседований: Platform Engineering"
-description: "Блок → Platform Engineering → собеседование."
+description: "Главные вопросы с развёрнутыми ответами + ~40 коротких + ситуационные задачи"
 ---
 
 # 10. Вопросы с собеседований: Platform Engineering
@@ -10,8 +10,8 @@ description: "Блок → Platform Engineering → собеседование."
 > «как устроен оператор», «как не положить кластер политиками», «canary с анализом»,
 > «Crossplane или Terraform», «как мерить». Собеседующий проверяет не список инструментов,
 > а **продуктовое мышление**: кто пользователь, какую боль снимаем, чем платим.
-> Базовые вопросы по Kubernetes — [../Kubernetes/23_interview.md](/kubernetes/23-interview),
-> по SRE — [../SRE/08_interview.md](/mlops/08-interview), по ArgoCD — [../Left/07_ArgoCD/07_interview.md](/english/07-interview).
+> Базовые вопросы по Kubernetes — [Kubernetes: 23. Вопросы с собеседований](/kubernetes/23-interview),
+> по SRE — [SRE: 08. Вопросы с собеседований: SRE и observability](/sre/08-interview), по ArgoCD — [ArgoCD: 07. Вопросы с собеседований](/argocd/07-interview).
 
 ---
 
@@ -218,17 +218,18 @@ description: "Блок → Platform Engineering → собеседование."
 
 ### 1. «Ваш webhook положил кластер: ничего не создаётся»
 
-```text
+```text:no-line-numbers
 1. Подтвердить     kubectl get pods → ошибки "failed calling webhook ... context deadline";
                    события API-сервера; какой webhook — в тексте ошибки
-2. Остановить урон  kubectl delete validatingwebhookconfiguration/mutatingwebhookconfiguration &lt;name&gt;
+2. Остановить урон  kubectl delete validatingwebhookconfiguration/mutatingwebhookconfiguration <name>
                    (или patch failurePolicy: Ignore) — admission-конфиг не проходит через сам webhook
 3. Восстановить     поднять поды webhook (если их не пускал он же — теперь пустит), вернуть конфиг
 4. Разобрать        почему упал: OOM, истёк сертификат caBundle, нода, сетевая политика
 5. Исправить        namespaceSelector без kube-system и своего ns, timeoutSeconds 2–3, 2+ реплики,
                    PDB, алерт на ошибки вызова webhook (apiserver_admission_webhook_*), для
                    простых правил — перенос в VAP; постмортем
-```text
+```
+
 > «Первым делом — снять конфигурацию webhook, это разрешено даже когда всё остальное блокируется.
 > Потом уже чинить сам сервис. В постмортеме — почему webhook мог заблокировать собственное
 > восстановление: у него не было исключения для своего namespace.»
@@ -249,7 +250,7 @@ description: "Блок → Platform Engineering → собеседование."
 
 ### 3. «Canary прошёл анализ, а после 100% начался инцидент»
 
-```text
+```
 1. Смягчить       откат: git revert образа (или kubectl argo rollouts undo как временная мера)
 2. Понять, что не увидел анализ:
    - смесь stable+canary в запросе? есть ли фильтр по rollouts-pod-template-hash
@@ -259,7 +260,8 @@ description: "Блок → Platform Engineering → собеседование."
    - миграция/общее состояние: сломалось то, что canary не изолировал
 3. Исправить      метрики насыщения в анализ, postPromotion/последний шаг с анализом,
                   минимальный объём событий, синтетическая нагрузка; постмортем
-```text
+```
+
 ---
 
 ### 4. «Namespace команды висит в Terminating уже час»
@@ -305,7 +307,7 @@ description: "Блок → Platform Engineering → собеседование."
    кластер как точка отказа, webhook — путь каждого запроса. Кто называет цену, тому верят.
 3. **Числа.** «Canary 20%, анализ каждые 30 секунд, abort за 1–2 минуты», «time to first deploy
    с 3 дней до 40 минут», «90% сервисов с владельцем в каталоге».
-4. **Свой стенд как опыт.** Мини-платформа из [09_practice_labs.md](/python/09-practice-labs): оператор
+4. **Свой стенд как опыт.** Мини-платформа из [09. Практика: мини-платформа в kind](/platform/09-practice-labs): оператор
    на kopf, VAP и Kyverno, canary с автооткатом, Crossplane с CNPG, шаблон Backstage — честно
    говори, что это стенд, и что поменял бы для прода.
 5. **Умей сказать «не нужно».** «Для 8 сервисов я бы не ставил mesh и Backstage» — сильный ответ,
@@ -330,5 +332,5 @@ description: "Блок → Platform Engineering → собеседование."
 - [ ] Назову метрики успеха платформы и план adoption
 - [ ] Разберу ситуации: webhook положил кластер, зависший namespace, обход платформы, устаревший каталог
 
-➡️ Назад к карте блока: [00_INDEX.md](/platform/) · Практика: [09_practice_labs.md](/python/09-practice-labs) ·
-Смежные собесы: [../Kubernetes/23_interview.md](/kubernetes/23-interview) · [../SRE/08_interview.md](/mlops/08-interview)
+➡️ Назад к карте блока: [Platform Engineering](/platform/) · Практика: [09. Практика: мини-платформа в kind](/platform/09-practice-labs) ·
+Смежные собесы: [Kubernetes: 23. Вопросы с собеседований](/kubernetes/23-interview) · [SRE: 08. Вопросы с собеседований: SRE и observability](/sre/08-interview)

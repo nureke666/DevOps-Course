@@ -1,12 +1,12 @@
 ---
 title: "06. Практика: 5 лаб по FinOps"
-description: "Блок → FinOps и оптимизация ресурсов → практика."
+description: "5 лаб: rightsizing с таблицей «до/после», OpenCost + showback, dev спит ночью (KEDA), Infracost в MR + политики, cost review счёта"
 ---
 
 # 06. Практика: 5 лаб по FinOps
 
 > Блок → FinOps и оптимизация ресурсов → практика.
-> Лабы 1–3 — на локальном кластере kind из [00_INDEX.md](/finops/) (раздел «Стенд»),
+> Лабы 1–3 — на локальном кластере kind из [FinOps](/finops/) (раздел «Стенд»),
 > лаба 4 — Terraform + Infracost + GitLab, лаба 5 — письменная. **Облачный аккаунт не нужен.**
 > Всё складывай в репозиторий `finops-lab/` — после блока есть что показать на собесе:
 > таблица rightsizing «до/после», showback по командам, dev, который спит ночью, Infracost
@@ -135,14 +135,14 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 16Mi }
             limits:   { memory: 32Mi }
-```text
+```
 ```bash
 kubectl apply -f demo.yaml
 kubectl -n demo get pods -o wide
 kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090 &
 # PrometheusRule с recording rules — из 02_k8s_rightsizing.md, раздел 4
 kubectl apply -f finops-rightsizing-rules.yaml
-```text
+```
 Дай стенду поработать **минимум 2 часа** (лучше ночь). В проде то же самое — за 7–14 дней.
 
 ### Требования
@@ -166,13 +166,14 @@ q 'quantile_over_time(0.95, workload_container:cpu_usage_cores:max_rate5m{namesp
 q 'max_over_time(workload_container:memory_working_set_bytes:max{namespace="demo"}[2h]) / 2^20'
 kubectl -n demo get pods -o custom-columns=NAME:.metadata.name,RESTARTS:.status.containerStatuses[0].restartCount
 kubectl get events -n demo --field-selector reason=OOMKilling   # пусто
-```text
+```
 `rightsizing.md`:
-```text
+```text:no-line-numbers
 | workload | реплик | CPU req до → p95 → после | Mem req до → max → после | освобождено |
 | эффективность CPU namespace: до X% → после Y% | памяти: до X% → после Y% |
 | итог: −N vCPU, −M GiB ≈ −$K/мес; на kind это не деньги, в облаке — ноды (объясни почему) |
-```text
+```
+
 ### Вопросы себе
 - Почему на kind rightsizing не уменьшил «счёт», а в облаке уменьшил бы? Что должно произойти с нодами?
 - Почему VPA для `nginx` рекомендует больше памяти, чем ты насчитал?
@@ -194,7 +195,7 @@ showback по namespace и по лейблу `team`, распределяем о
 kubectl create namespace team-data
 kubectl label namespace team-data owner=team-data env=dev
 # перенеси worker в team-data (поменяй namespace в манифесте и примени), podinfo/nginx оставь в demo
-```text
+```
 2. Посчитай цены (запиши расчёт в `pricing.md`): «сервер 32 vCPU / 128 GiB, полная стоимость
    $600/мес, 50/50 CPU/RAM, storage $0,05/ГБ·мес» — по разделу 4 темы 04.
 3. `values-opencost.yaml` — из темы 04 (раздел 3) со своими ценами. Установка:
@@ -202,7 +203,7 @@ kubectl label namespace team-data owner=team-data env=dev
 helm repo add opencost-charts https://opencost.github.io/opencost-helm-chart && helm repo update
 helm install opencost opencost-charts/opencost -n opencost --create-namespace -f values-opencost.yaml
 kubectl -n opencost port-forward svc/opencost 9003:9003 9091:9090 &
-```text
+```
 4. Showback-скрипт:
 ```bash
 #!/usr/bin/env bash
@@ -216,7 +217,8 @@ curl -sG localhost:9003/allocation/compute \
        (.value.pvCost*1000|round/1000), (.value.totalCost*1000|round/1000),
        ((.value.totalEfficiency // 0)*100|round)] | @tsv' \
 | (printf 'namespace\tcpu$\tram$\tpv$\ttotal$\teff%%\n'; cat) | column -t -s$'\t'
-```text
+```
+
 ### Требования
 - [ ] OpenCost `Running`, таргет в Prometheus `UP`, `node_total_hourly_cost` возвращает значения
 - [ ] `pricing.md`: расчёт цен за vCPU·ч, GiB·ч, GiB·ч storage и обратная проверка до $600/мес
@@ -238,7 +240,8 @@ curl -sG localhost:9003/allocation/compute -d window=1d -d aggregate=label:team 
   | jq '.data[0] | map_values(.totalCost)'
 curl -s -G localhost:9090/api/v1/query --data-urlencode 'query=sum(node_total_hourly_cost) * 730' | jq '.data.result[0].value[1]'
 curl -s localhost:9090/api/v1/rules | jq -r '.data.groups[].rules[] | select(.name|test("opencost|Cost")) | "\(.name) \(.health)"'
-```text
+```
+
 ### Вопросы себе
 - Почему сумма расходов команд меньше стоимости кластера и куда деть разницу в chargeback?
 - Idle на kind огромный — почему, и что сделало бы с ним облако с Karpenter?
@@ -262,7 +265,7 @@ kubectl create namespace dev
 kubectl -n dev create deployment api --image=nginx:1.29 --replicas=2
 kubectl -n dev create deployment web --image=nginx:1.29 --replicas=2
 kubectl -n dev set resources deployment/api deployment/web --requests=cpu=100m,memory=64Mi --limits=memory=64Mi
-```text
+```
 ```yaml
 # dev-office-hours.yaml — окно поставь на ближайшие 10 минут, чтобы увидеть оба перехода
 apiVersion: keda.sh/v1alpha1
@@ -280,12 +283,13 @@ spec:
         start: 30 14 * * *           # ← подставь «сейчас + 2 мин»
         end: 40 14 * * *             # ← «сейчас + 12 мин»
         desiredReplicas: "2"
-```text
+```
 Второй ScaledObject — для `web` (тот же шаблон). Затем:
 ```bash
 kubectl apply -f dev-office-hours.yaml
 kubectl -n dev get so,hpa,deploy -w
-```text
+```
+
 ### Требования
 - [ ] ScaledObject'ы в статусе `READY=True`; найдены HPA `keda-hpa-*`, созданные KEDA
 - [ ] Замерено: когда реплики поднялись после `start` и когда стало 0 после `end`; сравнено
@@ -305,7 +309,8 @@ kubectl -n dev get scaledobject          # колонки READY / ACTIVE / FALLB
 kubectl -n dev get hpa
 kubectl -n dev get deploy               # вне окна: 0/0
 kubectl -n keda logs deploy/keda-operator --tail=50 | grep -i -E 'scal|cron'
-```text
+```
+
 ### Вопросы себе
 - Почему `desiredReplicas: "0"` — ошибка, а ноль даёт `minReplicaCount`?
 - Что будет с базой данных в dev, если гасить её вместе с приложением, и в каком порядке поднимать?
@@ -321,7 +326,7 @@ kubectl -n keda logs deploy/keda-operator --tail=50 | grep -i -E 'scal|cron'
 которая пишет дифф стоимости в MR, добавляем conftest-политики и tflint на теги.
 
 ### Каркас
-```text
+```text:no-line-numbers
 finops-lab/infra/
 ├── aws/dev/main.tf             # код из шапки 05_infracost_iac_tasks.md + default_tags и variables
 ├── aws/dev/dev.tfvars
@@ -331,7 +336,7 @@ finops-lab/infra/
 └── policy/
     ├── cost/cost.rego          # лимит роста $200/мес
     └── plan/plan.rego          # теги, gp2, типы инстансов в dev
-```text
+```
 Отдельно попробуй Infracost на проекте из практики Terraform —
 `11-blueprint`
 (`~/Projects/devops/11-blueprint/environments/dev`): там провайдер `docker`, и Infracost
@@ -346,7 +351,7 @@ infracost breakdown --config-file infracost.yml --format json --out-file /tmp/ba
 infracost diff --config-file infracost.yml --compare-to /tmp/base.json
 
 infracost breakdown --path ~/Projects/devops/11-blueprint/environments/dev --show-skipped
-```text
+```
 `.gitlab-ci.yml` — джобы `infracost` и `cost-policy` из темы 05 (раздел 3–4) плюс `tflint`:
 ```yaml
 tflint:
@@ -355,7 +360,8 @@ tflint:
   rules: [{ if: $CI_PIPELINE_SOURCE == "merge_request_event" }]
   script:
     - cd infra && tflint --init && tflint --recursive
-```text
+```
+
 ### Требования
 - [ ] `breakdown` работает без AWS-кредов; в отчёте объяснено, какие строки — почасовые,
       какие — «depends on usage»
@@ -375,7 +381,7 @@ infracost breakdown --config-file infracost.yml --format json | jq -r '.totalMon
 conftest test /tmp/infracost.json -p policy/cost; echo "exit=$?"
 conftest test plan-sample.json -p policy/plan; echo "exit=$?"     # exit=1, три deny
 tflint --recursive; echo "exit=$?"
-```text
+```
 + ссылка на MR (или скриншот) с комментарием Infracost и упавшей/прошедшей `cost-policy`.
 
 ### Вопросы себе
@@ -423,7 +429,7 @@ savings plans и резервов нет.
 ## Итог
 Счёт $20 072; $ за 1000 запросов: …; потенциал экономии: $… (…%)
 ## Находки
-### 1. &lt;название&gt;
+### 1. <название>
 - Доказательство: строки счёта / метрики
 - Действие: что именно сделать (с командами/манифестами, если уместно)
 - Экономия: расчёт по шагам → $…/мес
@@ -432,7 +438,8 @@ savings plans и резервов нет.
 ### 2. … ### 5. …
 ## Что НЕ трогаем и почему
 ## Action items (таблица: что, кто, когда, $)
-```text
+```
+
 ### Требования
 - [ ] Посчитана юнит-метрика «$ за 1000 запросов» до и после предложенных мер
 - [ ] 5 находок, у каждой — доказательство, действие, **расчёт** экономии по шагам, риск, владелец
@@ -449,7 +456,7 @@ savings plans и резервов нет.
 <details>
 <summary>Ориентиры для самопроверки (не подглядывай до своей версии)</summary>
 
-```text
+```text:no-line-numbers
 Юнит-метрика: $20 072 / 60 000 = $0,335 за 1000 запросов.
 
 1. Rightsizing prod + savings plan (строка 1)
@@ -471,7 +478,7 @@ savings plans и резервов нет.
 общий ALB через Ingress (−$200+), RDS prod — меньший класс после наблюдения (осторожно).
 
 Топ-5 ≈ $9 460 → новый счёт ≈ $10 600 (−47%), ≈ $0,18 за 1000 запросов.
-```text
+```
 </details>
 
 ### Вопросы себе
@@ -484,7 +491,7 @@ savings plans и резервов нет.
 
 ## 🏁 Что должно остаться после блока
 
-```text
+```text:no-line-numbers
 finops-lab/
 ├── README.md                     # что сделано и главные цифры «до/после»
 ├── k8s/
@@ -500,8 +507,7 @@ finops-lab/
 ├── grafana/finops-dashboard.json
 ├── infra/                        # Terraform + infracost.yml + usage + .tflint.hcl + policy/
 └── .gitlab-ci.yml                # tflint → infracost → cost-policy
-```text
+```
+
 Это превращает «знаю, что такое FinOps» в «вот как я нашёл 47% экономии в счёте, вот
 Infracost в MR, вот showback по командам и dev, который спит ночью».
-
-➡️ Дальше: [07_interview.md](/english/07-interview)

@@ -1,6 +1,6 @@
 ---
 title: "10. Вопросы с собеседований: Python для DevOps"
-description: "Блок → Python для DevOps → собеседование."
+description: "8 главных вопросов, 40 коротких, 7 задач «напиши скрипт» с решениями"
 ---
 
 # 10. Вопросы с собеседований: Python для DevOps
@@ -30,7 +30,7 @@ description: "Блок → Python для DevOps → собеседование."
 ```python
 r = subprocess.run(["pg_dump", "-Fc", "-f", out, db],
                    check=True, capture_output=True, text=True, timeout=900)
-```text
+```
 > «Через `subprocess.run` со списком аргументов: `check=True` превращает ненулевой код в исключение,
 > `timeout` не даёт висеть вечно, `text=True` — строки вместо байтов. Обрабатываю
 > `CalledProcessError` (с `stderr` в сообщении), `TimeoutExpired` и `FileNotFoundError`.
@@ -47,7 +47,7 @@ r = subprocess.run(["pg_dump", "-Fc", "-f", out, db],
 > `pip install` в систему (PEP 668). У каждого проекта свой venv, зависимости зафиксированы
 > lock-файлом: `uv.lock` или `requirements.txt` с точными версиями, собранный `pip-compile`/`uv pip compile`.
 > В CI ставлю строго по lock (`uv sync --locked`). CLI-утилиты вроде ruff или ansible ставлю через
-> `pipx`/`uv tool`. На серверах скрипт живёт в `/opt/&lt;tool&gt;` со своим venv и запускается абсолютным
+> `pipx`/`uv tool`. На серверах скрипт живёт в `/opt/<tool>` со своим venv и запускается абсолютным
 > путём к его python, либо доставляется Docker-образом.»
 
 ---
@@ -198,7 +198,7 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-```text
+```
 Что оценивают: dry-run по умолчанию, защита от `/`, `missing_ok`, логи, код выхода.
 
 ---
@@ -217,7 +217,7 @@ with open(sys.argv[1], encoding="utf-8", errors="replace") as f:
             counts[ip] += 1
 for ip, n in counts.most_common(10):
     print(f"{n:>8}  {ip}")
-```text
+```
 Bash-эквивалент, который стоит назвать сразу: `awk '{print $1}' access.log | sort | uniq -c | sort -rn | head`.
 
 ---
@@ -240,9 +240,9 @@ urls = [u.strip() for u in open(sys.argv[1], encoding="utf-8") if u.strip()]
 with ThreadPoolExecutor(max_workers=20) as pool:
     results = list(pool.map(check, urls))
 for url, ok, info in results:
-    print(f"{'OK ' if ok else 'ERR'} {info:&lt;16} {url}")
+    print(f"{'OK ' if ok else 'ERR'} {info:<16} {url}")
 sys.exit(0 if all(ok for _, ok, _ in results) else 1)
-```text
+```
 Что оценивают: таймаут, обработка исключений, параллельность для I/O, код выхода.
 
 ---
@@ -273,8 +273,8 @@ def retry(times: int = 5, base: float = 1.0, max_delay: float = 30.0,
     return decorator
 
 @retry(times=4, exceptions=(ConnectionError, TimeoutError))
-def fetch_status() -&gt; str: ...
-```text
+def fetch_status() -> str: ...
+```
 Что оценивают: декоратор с параметрами, `wraps`, ограниченный список исключений, backoff + jitter,
 повторный `raise` исходной ошибки.
 
@@ -303,7 +303,7 @@ def find_duplicates(root: Path) -> list[list[Path]]:
 
 for group in find_duplicates(Path(sys.argv[1])):
     print(*group, sep="\n  ", end="\n\n")
-```text
+```
 Что оценивают: предфильтр по размеру (не хешировать всё подряд), потоковое хеширование, `defaultdict`.
 
 ---
@@ -324,7 +324,7 @@ for pod in client.CoreV1Api().list_pod_for_all_namespaces(_request_timeout=30).i
 for restarts, ns, name in sorted(rows, reverse=True):
     print(f"{restarts:>5}  {ns}/{name}")
 sys.exit(1 if rows else 0)
-```text
+```
 Что оценивают: явный контекст, `container_statuses or []`, snake_case-поля, сортировка, код выхода.
 Устный бонус: `kubectl get pods -A --sort-by='.status.containerStatuses[0].restartCount'`.
 
@@ -348,13 +348,13 @@ bad = 0
 for host in sys.argv[1:]:
     try:
         d = days_left(host)
-        print(f"{host:&lt;30} {d:&gt;4} дн. {'⚠️' if d < 14 else ''}")
+        print(f"{host:<30} {d:>4} дн. {'⚠️' if d < 14 else ''}")
         bad += d < 14
     except (OSError, ssl.SSLError) as e:                     # истёкший/невалидный — тоже SSLError
         print(f"{host:<30} ошибка: {e}")
         bad += 1
 sys.exit(1 if bad else 0)
-```text
+```
 Что оценивают: таймаут соединения, SNI (`server_hostname`), aware-даты, обработка невалидных сертификатов.
 
 ---

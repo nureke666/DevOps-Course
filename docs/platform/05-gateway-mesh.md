@@ -1,13 +1,13 @@
 ---
 title: "05. Gateway API глубже и service mesh"
-description: "Блок → Platform Engineering → трафик. Основы Gateway API (GatewayClass → Gateway →"
+description: "Мультитенантный Gateway API, ReferenceGrant, policy attachment, GRPCRoute, mesh руками: mTLS, трафик, наблюдаемость; когда mesh не нужен"
 ---
 
 # 05. Gateway API глубже и service mesh
 
 > Блок → Platform Engineering → **трафик**. Основы Gateway API (GatewayClass → Gateway →
 > HTTPRoute, веса, фильтры, ReferenceGrant, `allowedRoutes`) — в
-> [../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §7, здесь их не повторяем.
+> [Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §7, здесь их не повторяем.
 > Вопросы собеса: *«Как дать десяти командам один вход и не дать им сломать друг друга?»*,
 > *«Зачем вам service mesh и что он стоит?»*, *«Чем ambient отличается от sidecar?»*
 > **После темы ты умеешь:** разделить один Gateway между командами так, чтобы никто не угнал
@@ -20,7 +20,7 @@ description: "Блок → Platform Engineering → трафик. Основы G
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  клиенты ──► ns infra (платформа): GatewayClass eg ─► Gateway web, listener на домен команды
              политики на Gateway: ClientTrafficPolicy (real IP, таймауты), базовый rate limit
                     │ allowedRoutes по метке namespace (метку ставит платформа)
@@ -31,7 +31,8 @@ description: "Блок → Platform Engineering → трафик. Основы G
           │ east-west: сервис → сервис
    MESH: sidecar (прокси в поде) или ambient (ztunnel на ноде: L4 + mTLS; waypoint: L7)
          → идентичность SPIFFE и mTLS, L7-политики, метрики без правки кода
-```text
+```
+
 ---
 
 ## 1. Что изменилось в Gateway API к v1.6
@@ -56,7 +57,7 @@ Envoy Gateway v1.9.1 (проверь, сентябрь 2026).
 
 > 💡 С v1.6 новые экспериментальные ресурсы — в **отдельной группе** `gateway.networking.x-k8s.io`
 > с префиксом `X`; при переходе в Standard они переедут в `gateway.networking.k8s.io` без префикса.
-> ⚠️ В [../Kubernetes/12_ingress.md](/kubernetes/12-ingress) TCPRoute/UDPRoute ещё экспериментальные,
+> ⚠️ В [Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) TCPRoute/UDPRoute ещё экспериментальные,
 > а ReferenceGrant — `v1beta1`: так было до v1.5/v1.6. Что умеет **твоя** реализация — в
 > `status.supportedFeatures` у GatewayClass (v1.4+), а не в блогах.
 
@@ -103,7 +104,8 @@ spec:
           from: Selector
           selector: { matchLabels: { platform.example.com/team: linkd } }   # метку ставит платформа
     # listener shop — так же: hostname "*.shop.example.com", selector team: shop
-```text
+```
+
 Маршрут команды не может выйти за свой listener: hostname маршрута должен пересекаться
 с hostname listener'а, иначе `Accepted=False` (`NoMatchingListenerHostname`).
 
@@ -122,7 +124,8 @@ spec:
   listeners:                           # свой «красивый» домен; Secret — в ns linkd
     - { name: short-kz, protocol: HTTPS, port: 443, hostname: s.example.kz,
         tls: { certificateRefs: [{ name: s-example-kz }] } }
-```text
+```
+
 HTTPRoute цепляется к нему через `parentRefs: [{ kind: ListenerSet, name: linkd-vanity }]`.
 Статус ListenerSet (`Accepted`, `Programmed`, по listener'ам) показывает, принял ли его Gateway.
 
@@ -151,7 +154,8 @@ metadata: { name: linkd-to-auth, namespace: auth }   # ⭐ namespace ЦЕЛИ
 spec:
   from: [{ group: gateway.networking.k8s.io, kind: HTTPRoute, namespace: linkd }]
   to: [{ group: "", kind: Service, name: auth-api }]   # name сужает до одного Service
-```text
+```
+
 Без ReferenceGrant маршрут получает `ResolvedRefs=False` с причиной `RefNotPermitted`,
 а Envoy отвечает **500** на это правило. Удаление ReferenceGrant отзывает доступ сразу —
 это такой же объект безопасности, как RoleBinding, и его ревьюит владелец цели.
@@ -191,7 +195,8 @@ spec:
             backendRef: { name: linkd-v2, port: 80 }
             percent: 10
       backendRefs: [{ name: linkd, port: 80 }]
-```text
+```
+
 - Внутри одного `matches[]` условия объединяются через **И**, элементы списка — через **ИЛИ**.
 - Зеркалирование проверяет новую версию на реальном трафике без риска для пользователя —
   но только для **идемпотентных** запросов: зеркальный `POST /api/links` создаст ссылку
@@ -199,11 +204,11 @@ spec:
 - `timeouts.request` ≥ `backendRequest`; при превышении Envoy отвечает **504**.
 - **Ретраи**: поле `retry` в HTTPRoute пока Experimental. В Envoy Gateway ретраи задают
   `BackendTrafficPolicy` (§6). Ретраи + таймауты считают вместе, иначе retry storm —
-  [../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns).
+  [SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns).
 
 ### GRPCRoute
 
-gRPC — это HTTP/2 с путём `/&lt;package.Service&gt;/&lt;Method&gt;`, но матчить его HTTPRoute'ом
+gRPC — это HTTP/2 с путём `/<package.Service>/<Method>`, но матчить его HTTPRoute'ом
 неудобно. GRPCRoute (GA с v1.1) матчит по сервису и методу:
 
 ```yaml
@@ -220,7 +225,8 @@ spec:
       backendRefs: [{ name: linkd-stats-grpc, port: 9090 }]
     - matches: [{ method: { service: linkd.stats.v1.Stats } }]          # весь сервис
       backendRefs: [{ name: linkd-stats-grpc, port: 9090 }]
-```text
+```
+
 У Service бэкенда укажи `appProtocol: kubernetes.io/h2c` (gRPC без TLS) — иначе реализация
 может ходить к нему по HTTP/1.1. HTTPRoute и GRPCRoute с пересекающимися hostnames
 на одном listener'е спецификация разрешает реализации **отклонить**: тот маршрут, что
@@ -247,7 +253,8 @@ spec:
   validation:
     caCertificateRefs: [{ group: "", kind: ConfigMap, name: billing-ca }]   # или wellKnownCACertificates: System
     hostname: billing.billing.svc     # SNI и проверка сертификата пода
-```text
+```
+
 Если сертификатом управляет mesh (§7), BackendTLSPolicy не нужна: mTLS делает сам mesh.
 Клиентский сертификат Gateway к бэкенду (mTLS «наверх») — `spec.tls.backend.clientCertificateRef`
 у Gateway (v1.5).
@@ -310,7 +317,8 @@ spec:
   apiKeyAuth:
     credentialRefs: [{ group: "", kind: Secret, name: linkd-api-keys }]   # ключи Secret = client-id, значения = ключи
     extractFrom: [{ headers: [x-api-key] }]
-```text
+```
+
 Ответы Envoy: **429** + `x-envoy-ratelimited: true` — rate limit; **401** — нет или неверный
 ключ/JWT/пароль; **403** — запретил `authorization` (IP, claim).
 
@@ -329,8 +337,8 @@ spec:
 ## 7. Service mesh: что он добавляет
 
 Gateway закрывает **north-south** (клиент → кластер). Mesh — про **east-west**
-(сервис → сервис внутри кластера). Обзор — [../Kubernetes/21_advanced_paths.md](/kubernetes/21-advanced-paths) §3,
-устройство Envoy — [../Network/18_modern_proxies.md](/network/18-modern-proxies) §3.
+(сервис → сервис внутри кластера). Обзор — [Kubernetes: 21. Развилка: куда дальше](/kubernetes/21-advanced-paths) §3,
+устройство Envoy — [Сети: 18. Современные прокси](/network/18-modern-proxies) §3.
 
 | Что даёт | Как | Без mesh |
 |----------|-----|----------|
@@ -363,7 +371,7 @@ Istio, Linkerd и Cilium понимают один и тот же YAML — эт�
 
 ## 🧪 Мини-лаба: Istio ambient + linkd в kind
 
-Стенд: кластер `platform` (`kindest/node:v1.36.4`) с Envoy Gateway из [00_INDEX.md](/platform/);
+Стенд: кластер `platform` (`kindest/node:v1.36.4`) с Envoy Gateway из [Platform Engineering](/platform/);
 образ `linkd:2.0.0` собран в `12-autopilot/app` (`docker build -t linkd:2.0.0 -f ../04-shipyard/docker/Dockerfile .`)
 и загружен `kind load docker-image linkd:2.0.0 --name platform`. Нужно ~1,5 ГБ RAM сверх стенда.
 
@@ -384,7 +392,8 @@ spec:
         - { name: linkd, image: "linkd:2.0.0", imagePullPolicy: Never, ports: [{ containerPort: 8080 }],
             readinessProbe: { httpGet: { path: /readyz, port: 8080 } },
             volumeMounts: [{ name: data, mountPath: /var/lib/linkd }] }
-```text
+```
+
 ```bash
 kubectl create namespace linkd && kubectl create namespace client
 kubectl apply -f linkd-v1.yaml
@@ -396,7 +405,8 @@ for s in "linkd:app=linkd" "linkd-v1:app=linkd,version=v1" "linkd-v2:app=linkd,v
     | kubectl set selector --local -f - "${s#*:}" -o yaml | kubectl -n linkd apply -f -
 done
 kubectl -n client run curl --image=curlimages/curl --command -- sleep infinity
-```text
+```
+
 **Шаг 2. Istio ambient и mesh без рестарта подов.**
 
 ```bash
@@ -411,7 +421,8 @@ kubectl -n client exec curl -- curl -s linkd.linkd/healthz
 kubectl -n istio-system logs ds/ztunnel --tail=20 | grep linkd
 # ... src.identity="spiffe://cluster.local/ns/client/sa/default"
 #     dst.identity="spiffe://cluster.local/ns/linkd/sa/default" direction="outbound"
-```text
+```
+
 **Шаг 3. Строгий mTLS.**
 
 ```bash
@@ -424,7 +435,8 @@ YAML
 kubectl -n client exec curl -- curl -s -o /dev/null -w "%{http_code}\n" linkd.linkd/healthz   # 200
 kubectl run outsider --image=curlimages/curl --rm -it --restart=Never -- \
   curl -s -m 3 linkd.linkd/healthz; echo "exit=$?"    # default вне mesh → соединение сброшено
-```text
+```
+
 > ⚠️ Envoy Gateway (`envoy-gateway-system`) тоже вне mesh: после `STRICT` вход через Gateway
 > в linkd сломается. Добавь namespace Gateway в ambient и проверь curl'ом через port-forward.
 
@@ -432,7 +444,8 @@ kubectl run outsider --image=curlimages/curl --rm -it --restart=Never -- \
 
 ```bash
 istioctl waypoint apply -n linkd --enroll-namespace --wait    # Gateway класса istio-waypoint
-```text
+```
+
 ```yaml
 # l7.yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -452,7 +465,8 @@ spec:
   rules:
     - from: [{ source: { principals: ["cluster.local/ns/client/sa/default"] } }]
       to: [{ operation: { methods: ["GET"] } }]
-```text
+```
+
 ```bash
 kubectl apply -f l7.yaml
 kubectl -n client exec curl -- sh -c \
@@ -460,18 +474,20 @@ kubectl -n client exec curl -- sh -c \
 #  ~180 404   ← v1: такого кода нет
 #   ~20 500   ← v2: учебный сбой
 kubectl -n client exec curl -- curl -s -X POST -d '{"url":"https://kz"}' linkd.linkd/api/links  # RBAC: access denied (403)
-```text
+```
+
 **Шаг 5. Золотые метрики без кода и цена.**
 
 ```bash
 kubectl apply -f istio-1.31.1/samples/addons/prometheus.yaml && istioctl dashboard prometheus &
-```text
+```
 ```promql
 # ошибки по версиям считает waypoint — linkd о mesh ничего не знает
 sum by (destination_workload, response_code) (rate(istio_requests_total{destination_service_namespace="linkd"}[1m]))
 # L4 от ztunnel: соединения с mutual_tls
 sum by (source_workload, connection_security_policy) (rate(istio_tcp_connections_opened_total[5m]))
-```text
+```
+
 `kubectl top pods -n istio-system` и `kubectl top pods -n linkd`: запиши память ztunnel,
 istiod и waypoint и сравни с памятью самого linkd.
 
@@ -508,7 +524,7 @@ istiod и waypoint и сравни с памятью самого linkd.
 - Нет требования шифровать трафик **внутри** кластера (регулятор, PCI DSS, zero trust) — а это
   главный честный повод для mesh.
 - Нужна только canary — хватит Gateway API на входе (тема 06); только телеметрия — OpenTelemetry
-  ([../SRE/03_tracing_opentelemetry.md](/sre/03-tracing-opentelemetry)).
+  ([SRE: 03. Трейсинг и OpenTelemetry](/sre/03-tracing-opentelemetry)).
 - Нет людей, готовых дежурить по mesh и обновлять его два раза в год.
 
 **Когда нужен:** десятки сервисов нескольких команд, требование mTLS и авторизации по
@@ -590,13 +606,16 @@ istiod и waypoint и сравни с памятью самого linkd.
 12. ⭐ Mesh стоит памяти, задержки, обновлений и отладки; без требования mTLS и десятков
     сервисов он чаще не нужен.
 
-➡️ Дальше: [06_progressive_delivery.md](/platform/06-progressive-delivery) · Задачи: 05_gateway_mesh_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«Как делить один вход между командами?»*, *«Зачем mesh и сколько он стоит?»*,
+> *«Sidecar или ambient?»* — важно не только назвать механизм, но и сказать, где он ломается.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Какие ресурсы и фичи Gateway API перешли в Standard в версиях 1.4, 1.5 и 1.6?
 
@@ -676,6 +695,7 @@ GatewayClass и Gateway (listeners, сертификаты, `allowedRoutes`, б�
 
 Отдельный объект с listeners (и их сертификатами) в namespace команды, который контроллер
 сливает с Gateway. Решает: правку общего Gateway ради каждого домена, делегирование TLS и лимит
+64 listeners. Gateway должен пустить namespace через `allowedListeners`.
 
 </details>
 
@@ -822,7 +842,7 @@ Enterprise for Linkerd по лицензии.
 
 <details><summary>Ответ</summary>
 
-Имя сервиса в формате SPIFFE: `spiffe://&lt;trust domain&gt;/ns/&lt;namespace&gt;/sa/&lt;ServiceAccount&gt;`.
+Имя сервиса в формате SPIFFE: `spiffe://<trust domain>/ns/<namespace>/sa/<ServiceAccount>`.
 Mesh выпускает на него короткоживущий сертификат и ротирует его сам; политики пишут по этому имени.
 
 </details>
@@ -851,232 +871,231 @@ Mesh выпускает на него короткоживущий сертиф�
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```yaml
 # B1 — Gateway в infra
-```text
-```text:no-line-numbers
 listeners:
-```text
-```text:no-line-numbers
   - name: http
-```text
-```text:no-line-numbers
     protocol: HTTP
-```text
-```text:no-line-numbers
     port: 80
-```text
-```text:no-line-numbers
     hostname: "*.example.com"
-```text
-```text:no-line-numbers
     allowedRoutes: { namespaces: { from: All } }
-```text
-```text:no-line-numbers
 # команда shop создаёт HTTPRoute с hostnames: ["pay.example.com"]
-```text
+```
 Вопрос: примет ли Gateway маршрут? Чем это плохо?
 
-```text:no-line-numbers
+```yaml
 # B2 — listener linkd: hostname "*.linkd.example.com", selector team: linkd
-```text
-```text:no-line-numbers
 # HTTPRoute в ns linkd:
-```text
-```text:no-line-numbers
 hostnames: ["go.example.com"]
-```text
+```
 Вопрос: какой статус получит маршрут?
 
-```text:no-line-numbers
+```yaml
 # B3 — HTTPRoute в ns linkd
-```text
-```text:no-line-numbers
 backendRefs:
-```text
-```text:no-line-numbers
   - { name: auth-api, namespace: auth, port: 80 }
-```text
-```text:no-line-numbers
 # ReferenceGrant в ns linkd: from HTTPRoute/linkd, to Service
-```text
+```
 Вопрос: заработает ли? Что ответит Envoy?
 
-```text:no-line-numbers
+```yaml
 # B4
-```text
-```text:no-line-numbers
 filters:
-```text
-```text:no-line-numbers
   - type: RequestMirror
-```text
-```text:no-line-numbers
     requestMirror: { backendRef: { name: linkd-v2, port: 80 }, percent: 100 }
-```text
-```text:no-line-numbers
 # правило ловит POST /api/links; v1 и v2 смотрят в одну базу PostgreSQL
-```text
+```
 Вопрос: что увидят пользователи и что будет в базе?
 
-```text:no-line-numbers
+```yaml
 # B5 — ns infra
-```text
-```text:no-line-numbers
 kind: BackendTrafficPolicy
-```text
-```text:no-line-numbers
 metadata: { name: base, namespace: infra }
-```text
-```text:no-line-numbers
 spec:
-```text
-```text:no-line-numbers
   targetRefs: [{ kind: Gateway, name: web }]
-```text
-```text:no-line-numbers
   rateLimit: { local: { rules: [{ limit: { requests: 100, unit: Second } }] } }
-```text
-```text:no-line-numbers
 ---
-```text
-```text:no-line-numbers
 # ns linkd
-```text
-```text:no-line-numbers
 kind: BackendTrafficPolicy
-```text
-```text:no-line-numbers
 metadata: { name: linkd-retry, namespace: linkd }
-```text
-```text:no-line-numbers
 spec:
-```text
-```text:no-line-numbers
   targetRefs: [{ kind: HTTPRoute, name: linkd }]
-```text
-```text:no-line-numbers
   retry: { numRetries: 2 }
-```text
+```
 Вопрос: действует ли базовый лимит на маршрут linkd?
 
-```text:no-line-numbers
+```yaml
 # B6
-```text
-```text:no-line-numbers
 rateLimit: { local: { rules: [{ limit: { requests: 20, unit: Minute } }] } }
-```text
-```text:no-line-numbers
 # у Gateway 3 реплики Envoy, балансировщик распределяет равномерно
-```text
+```
 Вопрос: сколько запросов в минуту реально пройдёт?
 
-```text:no-line-numbers
+```yaml
 # B7 — ClientTrafficPolicy отсутствует; за Envoy стоит облачный L7-балансировщик
-```text
-```text:no-line-numbers
 kind: SecurityPolicy
-```text
-```text:no-line-numbers
 spec:
-```text
-```text:no-line-numbers
   authorization:
-```text
-```text:no-line-numbers
     defaultAction: Deny
-```text
-```text:no-line-numbers
     rules: [{ action: Allow, principal: { clientCIDRs: ["203.0.113.0/24"] } }]
-```text
+```
 Вопрос: пустит ли офис из 203.0.113.0/24?
 
-```text:no-line-numbers
+```bash
 # B8 — Istio ambient
-```text
-```text:no-line-numbers
 kubectl label namespace linkd istio.io/dataplane-mode=ambient
-```text
+```
 Вопрос: что будет с работающими подами linkd? А при `linkerd.io/inject=enabled`?
 
-```text:no-line-numbers
+```yaml
 # B9 — ns linkd в ambient, PeerAuthentication STRICT
-```text
-```text:no-line-numbers
 # Envoy Gateway (ns envoy-gateway-system) не в mesh
-```text
+```
 Вопрос: что будет с внешним трафиком через Gateway?
 
-```text:no-line-numbers
+```yaml
 # B10 — ambient, waypoint не создан
-```text
-```text:no-line-numbers
 kind: HTTPRoute
-```text
-```text:no-line-numbers
 spec:
-```text
-```text:no-line-numbers
   parentRefs: [{ group: "", kind: Service, name: linkd, port: 80 }]
-```text
-```text:no-line-numbers
   rules: [{ backendRefs: [{ name: linkd-v1, weight: 90 }, { name: linkd-v2, weight: 10 }] }]
-```text
+```
 Вопрос: разделится ли трафик?
+
+<details><summary>Ответы</summary>
+
+**B1.** Да, примет: listener пускает все namespace, hostname пересекается с `*.example.com`.
+Это угон домена: `shop` перехватит трафик платёжного сервиса. Нужны listeners по доменам команд
+и политика на `hostnames`.
+
+**B2.** `Accepted=False` с причиной `NoMatchingListenerHostname`: `go.example.com` не пересекается
+с `*.linkd.example.com`.
+
+**B3.** Нет: ReferenceGrant создан не в том namespace. Он должен лежать в `auth` (namespace цели).
+Маршрут получит `ResolvedRefs=False` (`RefNotPermitted`), Envoy ответит 500 на это правило.
+
+**B4.** Пользователи ответов зеркала не видят. Но v2 тоже выполнит каждый `POST`, и в общей базе
+появятся дубли ссылок. Зеркалить только идемпотентные запросы или давать зеркалу отдельную базу.
+
+**B5.** Нет. Маршрутная политика более конкретная и без `mergeType` полностью заменяет базовую
+для этого маршрута — лимита 100/с у linkd больше нет. Нужен `mergeType` или лимит в маршрутной политике.
+
+**B6.** До 60: `local` лимит считается в каждом поде Envoy отдельно (3 × 20).
+
+**B7.** Скорее всего нет: без `clientIPDetection` Envoy видит IP облачного балансировщика,
+а не офиса, и `defaultAction: Deny` отказывает всем. Нужна ClientTrafficPolicy
+с `xForwardedFor` и правильным числом доверенных хопов.
+
+**B8.** Ambient: поды не перезапускаются, ztunnel начинает перехватывать их трафик, PROTOCOL
+становится HBONE. Linkerd (sidecar): метка действует только на новые поды — нужен `rollout restart`.
+
+**B9.** Envoy Gateway ходит в linkd открытым текстом, STRICT его отвергает — внешний трафик
+получит сброс соединения или 503. Нужно включить namespace Gateway в mesh или выбрать другой вариант.
+
+**B10.** Нет. В ambient L7-маршрутизацию делает waypoint; без него ztunnel работает на L4 и
+HTTPRoute на Service не применится.
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Мультитенантный Gateway
+#### C1. 🔑 Мультитенантный Gateway
 Подними на стенде Gateway `web` в `infra` с двумя listeners: `*.linkd.example.com` для
 namespace с меткой `platform.example.com/team: linkd` и `*.shop.example.com` для `team: shop`.
 Разверни в обоих namespace echo-сервер и маршруты. Проверь: маршрут `shop` на `go.linkd.example.com`
 получает `Accepted=False`; запросы по обоим доменам доходят до своих сервисов.
 
-### C2. Защита меток
+<details><summary>Ответ</summary>
+
+Маршрут `shop` с чужим hostname получает `Accepted=False` (`NoMatchingListenerHostname`
+или `NotAllowedByListeners`, если он пытается прицепиться к listener'у linkd).
+
+</details>
+
+#### C2. Защита меток
 Создай для «команды» ServiceAccount с Role на HTTPRoute в своём namespace. Проверь
 `kubectl auth can-i patch namespace shop --as=system:serviceaccount:shop:dev`. Объясни, почему
 это проверяют в первую очередь.
 
-### C3. 🔑 ReferenceGrant
+<details><summary>Ответ</summary>
+
+Ответ должен быть `no`. Если `yes` — команда может выдать себе доступ к любому listener'у.
+
+</details>
+
+#### C3. 🔑 ReferenceGrant
 Вынеси Service `auth-api` в namespace `auth`. Сошлись на него из HTTPRoute в `linkd` — посмотри
 `ResolvedRefs` и код ответа. Добавь ReferenceGrant в правильный namespace, проверь снова,
 затем удали его и засеки, через сколько доступ пропал.
 
-### C4. Маршруты глубже
+<details><summary>Ответ</summary>
+
+Без гранта — `ResolvedRefs=False` (`RefNotPermitted`) и 500; после создания в `auth` —
+обычно секунды до `True`; после удаления доступ пропадает так же быстро.
+
+</details>
+
+#### C4. Маршруты глубже
 Для linkd: правило `POST /api/links` с таймаутами 5s/2s, правило «бета» по `?beta=1` или
 заголовку `X-Linkd-Beta` в linkd-v2, зеркалирование 10% `/r/*` в linkd-v2. Проверь каждое
 curl'ом; для зеркала — по логам linkd-v2.
 
-### C5. 🔑 Политики Envoy Gateway
+#### C5. 🔑 Политики Envoy Gateway
 Повесь на правило `api-write` лимит 5 запросов в минуту и API-ключ. Получи 401 без ключа,
-**201.** с ключом и 429 на шестом запросе. Проверь, как лимит зависит от числа реплик Envoy.
-### C6. Порядок политик
+201 с ключом и 429 на шестом запросе. Проверь, как лимит зависит от числа реплик Envoy.
+
+<details><summary>Ответ</summary>
+
+Первый запрос без ключа — 401, с ключом — 201; шестой с ключом в пределах минуты — 429
+с `x-envoy-ratelimited: true`. При двух репликах Envoy в среднем проходит до 10.
+
+</details>
+
+#### C6. Порядок политик
 Создай базовую BackendTrafficPolicy на Gateway (rate limit) и маршрутную (retry) без `mergeType`.
 Проверь, действует ли базовый лимит на маршрут. Затем добавь `mergeType` и проверь снова.
 
-### C7. 🔑 Мини-лаба ambient
+<details><summary>Ответ</summary>
+
+Без `mergeType` базовый лимит на маршруте не действует; с `mergeType` действуют оба.
+
+</details>
+
+#### C7. 🔑 Мини-лаба ambient
 Пройди мини-лабу конспекта: HBONE в `ztunnel-config`, идентичности в логах ztunnel,
 STRICT и «чужой» под, waypoint, 90/10 по кодам ответа, L7-запрет POST.
 
-### C8. Вход через Gateway в mesh
+#### C8. Вход через Gateway в mesh
 После STRICT почини вход через Envoy Gateway в linkd. Опиши, какой вариант выбрал и почему.
 
-### C9. Цена mesh в цифрах
+<details><summary>Ответ</summary>
+
+Типичный вариант — пометить `envoy-gateway-system` меткой ambient: Envoy-поды получают
+идентичность и ходят в linkd через HBONE. Альтернатива — Istio как реализация Gateway API.
+
+</details>
+
+#### C9. Цена mesh в цифрах
 Заполни таблицу: память istiod, ztunnel (на ноду), waypoint, linkd; p50/p99 задержки `curl`
 к linkd без mesh, с ztunnel, с waypoint (100 запросов, `-w "%{time_total}"`).
 
-### C10. Решение «нужен ли mesh» (со звёздочкой)
+#### C10. Решение «нужен ли mesh» (со звёздочкой)
 Опиши на полстраницы для компании из 8 сервисов, 2 команд и требования «шифровать трафик
 внутри кластера к платёжному сервису». Что выберешь и почему?
+
+<details><summary>Ответ</summary>
+
+Сильный ответ: mesh целиком не нужен; Istio ambient только-L4 для namespace платёжного
+сервиса и его клиентов (mTLS и авторизация по идентичности), без waypoint; остальное — Gateway API,
+NetworkPolicy и метрики приложения. Пересмотреть, когда сервисов станет 20+.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Команда жалуется: их новый HTTPRoute `Accepted=True`, но запросы идут в чужой сервис.
 Что проверить?
@@ -1164,14 +1183,13 @@ AuthorizationPolicy запрещает всё — смотреть логи ztun
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Как бы вы разделили один вход между десятью командами?
 
 <details><summary>Ответ</summary>
 
 Gateway и сертификаты у платформы в GitOps; listener на домен команды с `allowedRoutes`
-   по метке namespace, которую ставит платформа; ListenerSet для своих доменов; политика на
-   `hostnames`; маршруты и маршрутные политики — у команд; ReferenceGrant — у владельцев целей.
+по метке namespace, которую ставит платформа; ListenerSet для своих доменов; политика на
+`hostnames`; маршруты и маршрутные политики — у команд; ReferenceGrant — у владельцев целей.
 
 </details>
 
@@ -1180,7 +1198,7 @@ Gateway и сертификаты у платформы в GitOps; listener на
 <details><summary>Ответ</summary>
 
 Разрешение владельца namespace на ссылки из чужого namespace (Service, Secret); без него
-   маршрут `RefNotPermitted`; создаётся в namespace цели.
+маршрут `RefNotPermitted`; создаётся в namespace цели.
 
 </details>
 
@@ -1189,7 +1207,7 @@ Gateway и сертификаты у платформы в GitOps; listener на
 <details><summary>Ответ</summary>
 
 Роли разделены по объектам, `allowedRoutes`, ссылки через namespace с ReferenceGrant,
-   единая спецификация вместо аннотаций контроллера, статусы на каждом объекте.
+единая спецификация вместо аннотаций контроллера, статусы на каждом объекте.
 
 </details>
 
@@ -1198,8 +1216,8 @@ Gateway и сертификаты у платформы в GitOps; listener на
 <details><summary>Ответ</summary>
 
 Ядро API — таймауты, заголовки, CORS; остальное — политики реализации: у Envoy Gateway
-   BackendTrafficPolicy (rate limit, local/global) и SecurityPolicy (JWT, API-ключ, IP),
-   плюс ClientTrafficPolicy для реального IP; платформа оборачивает их в свой API.
+BackendTrafficPolicy (rate limit, local/global) и SecurityPolicy (JWT, API-ключ, IP),
+плюс ClientTrafficPolicy для реального IP; платформа оборачивает их в свой API.
 
 </details>
 
@@ -1208,7 +1226,7 @@ Gateway и сертификаты у платформы в GitOps; listener на
 <details><summary>Ответ</summary>
 
 mTLS и идентичность, авторизация по ней, L7-политики внутри кластера, метрики без кода;
-   цена — память, задержка, обновления, отладка.
+цена — память, задержка, обновления, отладка.
 
 </details>
 
@@ -1217,7 +1235,7 @@ mTLS и идентичность, авторизация по ней, L7-пол�
 <details><summary>Ответ</summary>
 
 Ambient для новых внедрений: без рестартов, L7 только где нужен, дешевле по памяти;
-   sidecar — если нужен полный L7 везде или требования зрелости/совместимости.
+sidecar — если нужен полный L7 везде или требования зрелости/совместимости.
 
 </details>
 
@@ -1226,7 +1244,7 @@ Ambient для новых внедрений: без рестартов, L7 то
 <details><summary>Ответ</summary>
 
 Istio — мощнее, ambient, огромная экосистема; Linkerd — проще и легче, но OSS только
-   edge, stable — у Buoyant. Решает матрица версий, нужные фичи и кто будет сопровождать.
+edge, stable — у Buoyant. Решает матрица версий, нужные фичи и кто будет сопровождать.
 
 </details>
 
@@ -1243,8 +1261,8 @@ Istio — мощнее, ambient, огромная экосистема; Linkerd 
 <details><summary>Ответ</summary>
 
 `istioctl ztunnel-config workloads` (HBONE), идентичности в логах ztunnel,
-   `connection_security_policy="mutual_tls"` в метриках, tcpdump на порт 15008, STRICT и
-   проверка, что plaintext отвергается.
+`connection_security_policy="mutual_tls"` в метриках, tcpdump на порт 15008, STRICT и
+проверка, что plaintext отвергается.
 
 </details>
 
@@ -1253,9 +1271,7 @@ Istio — мощнее, ambient, огромная экосистема; Linkerd 
 <details><summary>Ответ</summary>
 
 HTTPRoute с `parentRefs` на Service (GAMMA) и весами между Service версий; в ambient нужен
-    waypoint; автоматизирует это Argo Rollouts (тема 06).
-
----
+waypoint; автоматизирует это Argo Rollouts (тема 06).
 
 </details>
 

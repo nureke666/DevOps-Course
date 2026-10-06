@@ -1,15 +1,15 @@
 ---
 title: "03. NFS и MinIO: файловое и объектное хранилище своими руками"
-description: "Блок → Хранилища и stateful → тема 03. Опирается на"
+description: "NFS в k8s, своё S3: erasure coding, mc, политики, версии, lock, lifecycle"
 ---
 
 # 03. NFS и MinIO: файловое и объектное хранилище своими руками
 
 > Блок → Хранилища и stateful → тема 03. Опирается на
-> [../Linux/16_network_sharing.md](/linux/16-network-sharing) (NFS-сервер и клиент, опции
-> экспорта, `hard`/`soft`), [../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage)
+> [Linux: 16. Network Sharing](/linux/16-network-sharing) (NFS-сервер и клиент, опции
+> экспорта, `hard`/`soft`), [Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage)
 > (S3: бакеты, политики, versioning, object lock, lifecycle) и
-> [01_storage_basics.md](/storage/01-storage-basics) (block/file/object, erasure coding).
+> [01. Основы хранения: блок, файл, объект, IOPS, RAID](/storage/01-storage-basics) (block/file/object, erasure coding).
 >
 > **После темы ты умеешь:** выбрать версию NFS и опции монтирования, дать Kubernetes
 > RWX-тома через csi-driver-nfs, поднять self-hosted S3 в docker compose, управлять им через
@@ -20,7 +20,7 @@ description: "Блок → Хранилища и stateful → тема 03. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                     «нужно общее хранилище для нескольких серверов/подов»
                                          │
              ┌───────────────────────────┴────────────────────────────┐
@@ -34,13 +34,14 @@ description: "Блок → Хранилища и stateful → тема 03. Оп�
              │                                                        │
    ⚠️ один сервер = SPOF,                                  erasure coding, IAM-политики,
       размер PVC не ограничивается                         versioning + object lock + lifecycle
-```text
+```
+
 ---
 
 ## 1. NFS глазами девопса: что добавить к основам
 
 Как поднять сервер и клиент, что значат `root_squash`, `sync` и `hard` — в
-[../Linux/16_network_sharing.md](/linux/16-network-sharing). Ниже — то, о что спотыкаются в проде.
+[Linux: 16. Network Sharing](/linux/16-network-sharing). Ниже — то, о что спотыкаются в проде.
 
 ### Версии протокола
 
@@ -61,7 +62,8 @@ description: "Блок → Хранилища и stateful → тема 03. Оп�
 sudo mount -t nfs -o vers=4.2,hard,timeo=600,retrans=2,rsize=1048576,wsize=1048576,nconnect=4,noatime \
   192.168.60.10:/srv/nfs/shared /mnt/nfs
 nfsstat -m                  # какие опции РЕАЛЬНО применились (сервер мог урезать rsize/версию)
-```text
+```
+
 | Опция | Смысл |
 |-------|-------|
 | `vers=4.2` | Явная версия: иначе клиент договаривается сам и может скатиться на v3 |
@@ -87,12 +89,13 @@ rpcinfo -p 192.168.60.10         # какие RPC-сервисы живы (ну�
 cat /proc/fs/nfsd/versions       # на сервере: какие версии включены (+4.2 +4.1 ...)
 nfsstat -s / nfsstat -c          # счётчики сервера / клиента (retrans — плохой знак)
 nfsiostat 5                      # задержка и throughput по каждому mount (пакет nfs-common)
-```text
+```
+
 ### Высокая доступность
 
 Один NFS-сервер — **единая точка отказа**, а с `hard`-монтированием его падение вешает
 процессы клиентов в `D`-состоянии. Варианты HA: Pacemaker + DRBD (active/passive),
-NFS-Ganesha поверх CephFS (тема [04_ceph.md](/storage/04-ceph)), аппаратный NAS с кластерным
+NFS-Ganesha поверх CephFS (тема [04. Ceph: распределённое хранилище](/storage/04-ceph)), аппаратный NAS с кластерным
 контроллером. Если HA нет — честно впиши NFS в список SPOF и в DR-план.
 
 ---
@@ -116,7 +119,8 @@ helm repo add csi-driver-nfs https://raw.githubusercontent.com/kubernetes-csi/cs
 helm install csi-driver-nfs csi-driver-nfs/csi-driver-nfs --namespace kube-system --version 4.13.4
 kubectl get csidrivers                                     # nfs.csi.k8s.io
 kubectl -n kube-system get pods -l app.kubernetes.io/instance=csi-driver-nfs
-```text
+```
+
 ```yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -139,13 +143,15 @@ spec:
   accessModes: [ReadWriteMany]   # ⭐ ради этого NFS и берут
   storageClassName: nfs-csi
   resources: { requests: { storage: 5Gi } }
-```text
+```
+
 Альтернатива для уже живущих кластеров:
 ```bash
 helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
 helm install nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \
   --set nfs.server=192.168.60.10 --set nfs.path=/srv/nfs/k8s
-```text
+```
+
 ⚠️ Что важно знать про NFS в кубере:
 
 1. **Размер PVC на NFS не ограничивается.** `storage: 5Gi` — это метка для планировщика,
@@ -207,14 +213,15 @@ RELEASE.2026-04-11). Замораживать старый образ «навс
 **Erasure coding.** Диски пула делятся на **erasure sets** (2–16 дисков). Каждый объект режется
 на K частей данных и M частей чётности: `N (размер set) = K + M`. Потерять можно до M частей.
 
-```text
+```text:no-line-numbers
 erasure set из 4 дисков, EC:2  →  K=2 данных + M=2 чётности
 объект ──► [D1] [D2] [P1] [P2]        полезная ёмкость = K/N = 50%
              │    │    │    │
            disk1 disk2 disk3 disk4
 чтение: нужно любых K = 2 части       запись: нужен кворум K (K+1, если K = M) = 3 диска
 ⇒ минус 2 диска: читать можно, писать уже нельзя
-```text
+```
+
 | Параметр | Значение |
 |----------|----------|
 | Минимум для EC | 2 диска технически (EC:1); на практике — от 4, классические примеры документации — с 4+ |
@@ -229,7 +236,7 @@ erasure set из 4 дисков, EC:2  →  K=2 данных + M=2 чётнос�
 minio server https://minio{1...4}.example.net/mnt/disk{1...4}
 # расширение: второй пул дописывается в ту же команду на ВСЕХ нодах
 minio server https://minio{1...4}.example.net/mnt/disk{1...4} https://minio{5...8}.example.net/mnt/disk{1...4}
-```text
+```
 (В форке бинарь называется `silo`, аргументы те же.) Перед кластером — балансировщик
 (nginx/HAProxy) на `/minio/health/live`, синхронное время, одинаковые env на всех нодах.
 
@@ -239,7 +246,7 @@ minio server https://minio{1...4}.example.net/mnt/disk{1...4} https://minio{5...
 
 ```bash
 mkdir -p ~/labs/storage/minio/files && cd ~/labs/storage/minio
-```text
+```
 ```yaml
 # ~/labs/storage/minio/docker-compose.yml
 services:
@@ -258,14 +265,15 @@ services:
       - d4:/data4
       - ./files:/files          # файлы с хоста для mc cp/mirror
 volumes: { d1: {}, d2: {}, d3: {}, d4: {} }
-```text
+```
 ```bash
 docker compose up -d && docker compose logs minio | tail -20
 alias mc='docker exec -i minio mcli'           # клиент mc в образе форка называется mcli
 mc alias set local http://127.0.0.1:9000 admin admin-secret-123
 mc admin info local                            # 4 drives online, строка EC:N — парность
 # консоль: http://localhost:9001 (admin / admin-secret-123)
-```text
+```
+
 Четыре тома в одном контейнере — это **один erasure set из 4 дисков**: удобно потрогать EC
 руками (задача C2). Пути в `mc` — это пути **внутри** контейнера: файлы с хоста кладёшь в
 `./files` и обращаешься к ним как к `/files/...`.
@@ -274,7 +282,7 @@ mc admin info local                            # 4 drives online, строка E
 |-------------------|----------|
 | Хост | `http://127.0.0.1:9000` |
 | Vagrant-VM (libvirt) | `http://192.168.121.1:9000` — шлюз сети `default` |
-| Поды kind | `docker network connect kind minio`, затем IP: `docker inspect -f '&#123;&#123;(index .NetworkSettings.Networks "kind").IPAddress&#125;&#125;' minio` |
+| Поды kind | `docker network connect kind minio`, затем IP: <code v-pre>docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}' minio</code> |
 
 ---
 
@@ -293,7 +301,8 @@ mc mirror --watch /files/inbox local/demo/inbox              # следить и
 mc mirror local/demo remote/demo-copy          # бакет → бакет (между кластерами)
 mc anonymous set download local/demo/public    # публичное чтение префикса (осознанно!)
 mc admin trace -v local                        # живой трейс S3-запросов — отладка клиентов
-```text
+```
+
 > ⚠️ `mc mirror --remove` — аналог `rsync --delete`: сначала прогон без флага, проверь,
 > что источник и приёмник не перепутаны. `mc mirror` — синхронизация, а **не бэкап**:
 > удаление в источнике с `--remove` приедет и в копию.
@@ -307,7 +316,7 @@ AWS IAM) → действия над ресурсами `arn:aws:s3:::бакет
 `readonly`, `readwrite`, `writeonly`, `diagnostics`, `consoleAdmin`. Root (`MINIO_ROOT_USER`)
 используй только для администрирования.
 
-Пользователь для бэкапов PostgreSQL (он же будет в [06_db_backup_replication.md](/storage/06-db-backup-replication)):
+Пользователь для бэкапов PostgreSQL (он же будет в [06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication)):
 пишет и читает, но **не удаляет**.
 
 ```json
@@ -326,7 +335,7 @@ AWS IAM) → действия над ресурсами `arn:aws:s3:::бакет
     }
   ]
 }
-```text
+```
 ```bash
 cat > files/pg-backup-rw.json      # вставь JSON выше (файл на хосте → /files в контейнере)
 mc mb --with-versioning local/pg-backups
@@ -340,7 +349,8 @@ mc alias set pgb http://127.0.0.1:9000 pg-backup 'pg-backup-secret-123'
 mc cp /files/pg-backup-rw.json pgb/pg-backups/test.json    # ok
 mc rm pgb/pg-backups/test.json                             # Access Denied — так и задумано
 mc ls pgb                                                  # тоже отказ: нет s3:ListAllMyBuckets
-```text
+```
+
 Почему это защищает бэкапы:
 - **Versioning** на бакете: перезапись создаёт новую версию, старая остаётся.
 - Обычный `DELETE` в бакете с версиями не удаляет данные, а ставит **delete marker**;
@@ -355,7 +365,7 @@ mc ls pgb                                                  # тоже отказ
 
 ## 8. Versioning, object lock, lifecycle — на практике
 
-Концепции — в [../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage). Здесь — как это
+Концепции — в [Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage). Здесь — как это
 выглядит в `mc` и где подвохи.
 
 ```bash
@@ -374,14 +384,15 @@ mc mb --with-lock local/locked                # lock включается ТОЛ
 mc retention set --default GOVERNANCE "1d" local/locked
 mc cp /files/note.txt local/locked/
 mc ls --versions local/locked                 # запомни version id
-mc rm --version-id &lt;VID&gt; local/locked/note.txt    # отказ: объект под WORM
+mc rm --version-id <VID> local/locked/note.txt    # отказ: объект под WORM
 mc legalhold set local/locked/note.txt        # бессрочная блокировка до снятия (legalhold clear)
 
 # --- lifecycle ---
 mc ilm rule add local/pg-backups --expire-days 30
 mc ilm rule add local/pg-backups --noncurrent-expire-days 7 --expire-delete-marker
 mc ilm rule ls local/pg-backups
-```text
+```
+
 | Подвох | Что знать |
 |--------|-----------|
 | Object lock не мешает delete marker | Обычный `rm` «удаляет» объект из листинга, но заблокированная версия цела |
@@ -404,7 +415,7 @@ mc admin config set local notify_webhook:primary endpoint="http://10.0.0.5:8080/
 mc admin service restart local
 mc event add local/demo arn:minio:sqs::primary:webhook --event put,delete
 mc event ls local/demo
-```text
+```
 Зачем девопсу: «появился новый бэкап → запустить restore-test», аудит удалений,
 обработка загруженных файлов (превью, антивирус) без поллинга бакета.
 
@@ -419,19 +430,19 @@ cd ~/labs/storage/minio && mkdir -p certs
 openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
   -keyout certs/private.key -out certs/public.crt -subj "/CN=minio" \
   -addext "subjectAltName=DNS:minio,DNS:localhost,IP:127.0.0.1,IP:192.168.121.1"
-```text
+```
 ```yaml
     command: server /data{1...4} --console-address ":9001" --certs-dir /certs
     volumes:
       - ./certs:/certs:ro         # public.crt + private.key — имена фиксированы
-```text
+```
 ```bash
 docker compose up -d
 mc alias set local https://127.0.0.1:9000 admin admin-secret-123
 mc --insecure admin info local       # самоподписанный: --insecure или CA в доверенные
-```text
+```
 Кому TLS обязателен: **pgBackRest всегда ходит в S3 по TLS** (подробности — в
-[06_db_backup_replication.md](/storage/06-db-backup-replication)); в проде — всем. SAN должен содержать
+[06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication)); в проде — всем. SAN должен содержать
 то имя/IP, по которому ходят клиенты, иначе ошибка проверки сертификата.
 
 ---
@@ -440,7 +451,7 @@ mc --insecure admin info local       # самоподписанный: --insecur
 
 | | Лицензия | Архитектура | Когда |
 |---|----------|-------------|-------|
-| **Ceph RGW** | LGPL | S3/Swift-шлюз поверх RADOS | Ceph уже есть (блок + файл + объект в одной системе) — [04_ceph.md](/storage/04-ceph) |
+| **Ceph RGW** | LGPL | S3/Swift-шлюз поверх RADOS | Ceph уже есть (блок + файл + объект в одной системе) — [04. Ceph: распределённое хранилище](/storage/04-ceph) |
 | **SeaweedFS** | Apache-2.0 | master + volume-серверы + filer, S3-шлюз, FUSE | Много мелких файлов, нужна «разрешительная» лицензия |
 | **Garage** | AGPL | Лёгкий, geo-distributed, работает на слабом железе | Несколько площадок, homelab, edge |
 | **AIStor / pgsty/silo** | коммерческая / AGPL | Код MinIO | Совместимость с существующим MinIO |
@@ -522,13 +533,17 @@ presigned URL, multipart — поддержка у всех разная.
 9. Object lock включается только при создании бакета и не мешает delete marker'ам.
 10. S3 без TLS — ключи открытым текстом; pgBackRest без TLS к S3 не подключится вовсе.
 
-➡️ Дальше: [04_ceph.md](/storage/04-ceph) · задачи: 03_nfs_minio_tasks.md
+---
 
+## Задачи
+
+> Стенд: MinIO в compose из [Хранилища](/storage/) (`~/labs/storage/minio`, алиас
+> `mc='docker exec -i minio mcli'`, `mc alias set local http://127.0.0.1:9000 admin admin-secret-123`);
+> для NFS — VM `stor1` (192.168.60.10) и kind-кластер `devops`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем NFSv3 отличается от NFSv4.1 по портам, блокировкам и состоянию? Почему для
 Kubernetes и firewall проще v4?
@@ -641,6 +656,9 @@ erasure set?
 
 Лицензия AGPLv3 с 2021; весной 2025 из консоли Community убрали администрирование;
 с 2025-10-15 только исходники без бинарей и образов; декабрь 2025 — maintenance mode; февраль
+2026 — репозиторий заархивирован; июль 2026 — архивирован `mc`, `dl.min.io` отвечает 410;
+сентябрь 2026 — образ удалён с Docker Hub. Варианты: AIStor (коммерческий, есть Free на
+одну ноду), форк `pgsty/silo`, другое хранилище (Ceph RGW, SeaweedFS, Garage).
 
 </details>
 
@@ -697,215 +715,95 @@ pgBackRest всегда использует TLS для S3; `repo1-storage-verif
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
 ```text:no-line-numbers
 B1.  # /etc/fstab на веб-серверах
-```text
-<details><summary>Ответ</summary>
+     10.0.0.5:/srv/uploads  /var/www/uploads  nfs  defaults  0 0
 
-⚠️ Нет `_netdev,nofail` — при недоступном сервере загрузка встанет; нет явной версии
+B2.  # /etc/exports
+     /srv/nfs/k8s  *(rw,sync,no_subtree_check,no_root_squash)
+
+B3.  # StatefulSet PostgreSQL
+     volumeClaimTemplates: [{ spec: { storageClassName: nfs-csi, accessModes: [ReadWriteMany] } }]
+
+B4.  # docker-compose.yml, сентябрь 2026
+     image: minio/minio:latest
+
+B5.  # MinIO на сервере с аппаратным RAID6 из 8 дисков, один том /dev/sdb → /data
+     minio server /data
+
+B6.  # политика бэкап-пользователя
+     { "Effect": "Allow", "Action": ["s3:*"], "Resource": ["arn:aws:s3:::pg-backups/*"] }
+
+B7.  mc mb local/backups
+     mc retention set --default COMPLIANCE "30d" local/backups
+
+B8.  # «ночной бэкап» статики
+     mc mirror --overwrite --remove /var/www/static local/static-backup
+
+B9.  # стенд: 4 тома, EC:2; удалили содержимое двух томов
+     mc cp /files/new.txt local/demo/
+
+B10. mc ilm rule add local/pg-backups --expire-days 30 --expire-delete-marker
+
+B11. # приложение в k8s ходит в MinIO с root-ключом из Secret
+     MINIO_ACCESS_KEY: admin
+
+B12. openssl req -x509 ... -subj "/CN=minio"      # без -addext subjectAltName
+     # клиент ходит на https://192.168.121.1:9000
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Нет `_netdev,nofail` — при недоступном сервере загрузка встанет; нет явной версии
 (`vers=4.2`); `defaults` = `hard`: при падении сервера процессы висят в D. Добавить
 `vers=4.2,_netdev,nofail`, осознанно выбрать `hard`.
 
-</details>
-
-```text:no-line-numbers
-     10.0.0.5:/srv/uploads  /var/www/uploads  nfs  defaults  0 0
-```text
-```text:no-line-numbers
-B2.  # /etc/exports
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Экспорт на весь мир с `no_root_squash`: любой хост (и любой под с inline `nfs:`)
+**B2.** ⚠️ Экспорт на весь мир с `no_root_squash`: любой хост (и любой под с inline `nfs:`)
 получает root на шаре. Ограничить IP нод, убрать `no_root_squash` или компенсировать PSA
 restricted.
 
-</details>
-
-```text:no-line-numbers
-     /srv/nfs/k8s  *(rw,sync,no_subtree_check,no_root_squash)
-```text
-```text:no-line-numbers
-B3.  # StatefulSet PostgreSQL
-```text
-<details><summary>Ответ</summary>
-
-⚠️ БД на NFS — антипаттерн, да ещё RWX для StatefulSet бессмысленен (у каждого пода
+**B3.** ⚠️ БД на NFS — антипаттерн, да ещё RWX для StatefulSet бессмысленен (у каждого пода
 свой PVC). Нужен блочный RWO-класс.
 
-</details>
-
-```text:no-line-numbers
-     volumeClaimTemplates: [{ spec: { storageClassName: nfs-csi, accessModes: [ReadWriteMany] } }]
-```text
-```text:no-line-numbers
-B4.  # docker-compose.yml, сентябрь 2026
-```text
-<details><summary>Ответ</summary>
-
-⚠️ С сентября 2026 образ удалён с Docker Hub — `pull access denied`; до этого `latest`
+**B4.** ⚠️ С сентября 2026 образ удалён с Docker Hub — `pull access denied`; до этого `latest`
 застыл на старой сборке с уязвимостями. Пиннить конкретный тег поддерживаемого образа (форк
 или AIStor).
 
-</details>
-
-```text:no-line-numbers
-     image: minio/minio:latest
-```text
-```text:no-line-numbers
-B5.  # MinIO на сервере с аппаратным RAID6 из 8 дисков, один том /dev/sdb → /data
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Один том поверх RAID6 — это SNSD: EC MinIO не работает, bitrot внутри RAID MinIO не
+**B5.** ⚠️ Один том поверх RAID6 — это SNSD: EC MinIO не работает, bitrot внутри RAID MinIO не
 вылечит, а отказ контроллера убивает всё. Отдать 8 дисков напрямую: `minio server /data{1...8}`
 (JBOD, XFS).
 
-</details>
-
-```text:no-line-numbers
-     minio server /data
-```text
-```text:no-line-numbers
-B6.  # политика бэкап-пользователя
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `s3:*` включает `DeleteObject`/`DeleteObjectVersion` — ключ с прод-сервера удалит
+**B6.** ⚠️ `s3:*` включает `DeleteObject`/`DeleteObjectVersion` — ключ с прод-сервера удалит
 бэкапы. И `ListBucket` на `pg-backups/*` не сработает: это действие над бакетом (ресурс без `/*`).
 
-</details>
-
-```text:no-line-numbers
-     { "Effect": "Allow", "Action": ["s3:*"], "Resource": ["arn:aws:s3:::pg-backups/*"] }
-```text
-```text:no-line-numbers
-B7.  mc mb local/backups
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Retention требует бакета с lock — `mc retention set` на обычном бакете выдаст ошибку.
+**B7.** ⚠️ Retention требует бакета с lock — `mc retention set` на обычном бакете выдаст ошибку.
 А COMPLIANCE на стенде заблокирует место на 30 дней без возможности удалить.
 
-</details>
-
-```text:no-line-numbers
-     mc retention set --default COMPLIANCE "30d" local/backups
-```text
-```text:no-line-numbers
-B8.  # «ночной бэкап» статики
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Это зеркало, а не бэкап: удалённый или испорченный файл через ночь исчезнет и в копии.
+**B8.** ⚠️ Это зеркало, а не бэкап: удалённый или испорченный файл через ночь исчезнет и в копии.
 Нужны versioning на приёмнике (или датированные копии) и retention.
 
-</details>
+**B9.** ⚠️ Запись упадёт: при K=M=2 нужен кворум 3 диска, осталось 2. Чтение при этом работает.
 
-```text:no-line-numbers
-     mc mirror --overwrite --remove /var/www/static local/static-backup
-```text
-```text:no-line-numbers
-B9.  # стенд: 4 тома, EC:2; удалили содержимое двух томов
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Запись упадёт: при K=M=2 нужен кворум 3 диска, осталось 2. Чтение при этом работает.
-
-</details>
-
-```text:no-line-numbers
-     mc cp /files/new.txt local/demo/
-```text
-```text:no-line-numbers
-B10.  mc ilm rule add local/pg-backups --expire-days 30 --expire-delete-marker
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `ExpiredObjectDeleteMarker` нельзя сочетать с `Days` в одном Expiration по спецификации
+**B10.** ⚠️ `ExpiredObjectDeleteMarker` нельзя сочетать с `Days` в одном Expiration по спецификации
 S3 — разнести на два правила (`--expire-days` и `--noncurrent-expire-days` + `--expire-delete-marker`).
 
-</details>
-
-```text:no-line-numbers
-B11.  # приложение в k8s ходит в MinIO с root-ключом из Secret
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Root-ключ в приложении: взлом пода = полный контроль над хранилищем, нельзя
+**B11.** ⚠️ Root-ключ в приложении: взлом пода = полный контроль над хранилищем, нельзя
 ротировать без простоя всех. Отдельный пользователь с политикой на один бакет.
 
-</details>
-
-```text:no-line-numbers
-     MINIO_ACCESS_KEY: admin
-```text
-```text:no-line-numbers
-B12.  openssl req -x509 ... -subj "/CN=minio"      # без -addext subjectAltName
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Современные клиенты проверяют SAN, а не CN: сертификат не валиден для IP
+**B12.** ⚠️ Современные клиенты проверяют SAN, а не CN: сертификат не валиден для IP
 `192.168.121.1`. Добавить `-addext "subjectAltName=...,IP:192.168.121.1"`.
 
 </details>
 
-```text:no-line-numbers
-     # клиент ходит на https://192.168.121.1:9000
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Стенд MinIO и первый бакет
-**1.** Подними compose из конспекта, настрой алиас `mc` и `local`.
-
-<details><summary>Ответ</summary>
-
-`mc admin info local` покажет `4 drives online, 0 drives offline` и `EC:2` (для set из 4 дисков).
-Файлы: `cp ~/file{1,2,3} ~/labs/storage/minio/files/`, затем `mc mb local/demo`,
-`mc cp /files/file1 /files/file2 /files/file3 local/demo/`, `mc ls local/demo`, `mc du local/demo`.
-В консоли видна навигация по объектам.
-
-</details>
-
-**2.** `mc admin info local`: сколько дисков, какой EC?
-
-<details><summary>Ответ</summary>
-
-После стирания `d4`: чтение и запись работают, `mc admin info` покажет проблему с
-одним диском (offline/unformatted). После стирания `d3`: чтение работает (нужно K=2 части),
-запись падает (кворум 3). После рестарта MinIO видит пустые диски как новые, форматирует
-и лечит (heal) данные в фоне; `mc admin info` вернётся к 4 online.
-
-</details>
-
-**3.** Создай бакет `demo`, загрузи через `./files` 3 файла, выведи список и размер бакета.
-
-<details><summary>Ответ</summary>
-
-`mc mb --with-versioning local/pg-backups`, политика и пользователь — как в конспекте.
-Загрузка и чтение проходят, `mc rm` → `Access Denied`, `mc ls pgb` → отказ (нет
-`s3:ListAllMyBuckets`), `mc ls pgb/pg-backups` работает. Версии: `mc ls --versions local/pg-backups`
-от имени `admin` покажет три версии файла.
-
-</details>
-
-**4.** Зайди в консоль `http://localhost:9001` и найди файлы.
-
-<details><summary>Ответ</summary>
-
-`mc version enable local/demo`; три `mc cp`; `mc rm local/demo/note.txt`;
-`mc undo local/demo/note.txt` снимает delete marker — снова видна последняя версия. Первая
-версия: `mc ls --versions local/demo/note.txt` → взять её ID →
-`mc cp --version-id &lt;VID1&gt; local/demo/note.txt /files/note-v1.txt`.
-
-</details>
-
-### C2. 🔑 Erasure coding руками
-**1.** Загрузи в `demo` файл `hello.txt`.
+#### C1. 🔑 Стенд MinIO и первый бакет
+1. Подними compose из конспекта, настрой алиас `mc` и `local`.
+2. `mc admin info local`: сколько дисков, какой EC?
+3. Создай бакет `demo`, загрузи через `./files` 3 файла, выведи список и размер бакета.
+4. Зайди в консоль `http://localhost:9001` и найди файлы.
 
 <details><summary>Ответ</summary>
 
@@ -916,8 +814,13 @@ B12.  openssl req -x509 ... -subj "/CN=minio"      # без -addext subjectAltNa
 
 </details>
 
-**2.** ⚠️ Сотри содержимое тома `d4` (только на стенде!):
+#### C2. 🔑 Erasure coding руками
+1. Загрузи в `demo` файл `hello.txt`.
+2. ⚠️ Сотри содержимое тома `d4` (только на стенде!):
    `docker run --rm -v minio_d4:/d alpine find /d -mindepth 1 -delete`.
+3. Прочитай `hello.txt`, загрузи новый файл. Что показывает `mc admin info local`?
+4. Сотри ещё и `d3`. Что с чтением, что с записью? Почему?
+5. `docker compose restart minio` и понаблюдай за восстановлением.
 
 <details><summary>Ответ</summary>
 
@@ -928,7 +831,11 @@ B12.  openssl req -x509 ... -subj "/CN=minio"      # без -addext subjectAltNa
 
 </details>
 
-**3.** Прочитай `hello.txt`, загрузи новый файл. Что показывает `mc admin info local`?
+#### C3. 🔑 Бэкап-пользователь без права удаления
+1. Создай бакет `pg-backups` с versioning.
+2. Создай политику `pg-backup-rw` из конспекта и пользователя `pg-backup`.
+3. От его имени: загрузи файл, прочитай, попробуй удалить, попробуй `mc ls` без бакета.
+4. Перезапиши файл дважды и найди все версии от имени `admin`.
 
 <details><summary>Ответ</summary>
 
@@ -939,18 +846,23 @@ B12.  openssl req -x509 ... -subj "/CN=minio"      # без -addext subjectAltNa
 
 </details>
 
-**4.** Сотри ещё и `d3`. Что с чтением, что с записью? Почему?
+#### C4. Versioning и откат
+В `demo` с versioning: загрузи `note.txt` трижды с разным содержимым, удали его,
+восстанови последнюю версию, затем достань самую первую версию в отдельный файл.
 
 <details><summary>Ответ</summary>
 
 `mc version enable local/demo`; три `mc cp`; `mc rm local/demo/note.txt`;
 `mc undo local/demo/note.txt` снимает delete marker — снова видна последняя версия. Первая
 версия: `mc ls --versions local/demo/note.txt` → взять её ID →
-`mc cp --version-id &lt;VID1&gt; local/demo/note.txt /files/note-v1.txt`.
+`mc cp --version-id <VID1> local/demo/note.txt /files/note-v1.txt`.
 
 </details>
 
-**5.** `docker compose restart minio` и понаблюдай за восстановлением.
+#### C5. Object lock
+1. Создай `locked` с lock, retention по умолчанию GOVERNANCE 1d.
+2. Загрузи файл, попробуй удалить его версию. Затем обычный `mc rm` — что изменилось?
+3. Поставь legal hold и объясни, чем он отличается от retention.
 
 <details><summary>Ответ</summary>
 
@@ -962,141 +874,68 @@ B12.  openssl req -x509 ... -subj "/CN=minio"      # без -addext subjectAltNa
 
 </details>
 
-### C3. 🔑 Бэкап-пользователь без права удаления
-**1.** Создай бакет `pg-backups` с versioning.
-
-<details><summary>Ответ</summary>
-
-`mc admin info local` покажет `4 drives online, 0 drives offline` и `EC:2` (для set из 4 дисков).
-Файлы: `cp ~/file{1,2,3} ~/labs/storage/minio/files/`, затем `mc mb local/demo`,
-`mc cp /files/file1 /files/file2 /files/file3 local/demo/`, `mc ls local/demo`, `mc du local/demo`.
-В консоли видна навигация по объектам.
-
-</details>
-
-**2.** Создай политику `pg-backup-rw` из конспекта и пользователя `pg-backup`.
-
-<details><summary>Ответ</summary>
-
-После стирания `d4`: чтение и запись работают, `mc admin info` покажет проблему с
-одним диском (offline/unformatted). После стирания `d3`: чтение работает (нужно K=2 части),
-запись падает (кворум 3). После рестарта MinIO видит пустые диски как новые, форматирует
-и лечит (heal) данные в фоне; `mc admin info` вернётся к 4 online.
-
-</details>
-
-**3.** От его имени: загрузи файл, прочитай, попробуй удалить, попробуй `mc ls` без бакета.
-
-<details><summary>Ответ</summary>
-
-`mc mb --with-versioning local/pg-backups`, политика и пользователь — как в конспекте.
-Загрузка и чтение проходят, `mc rm` → `Access Denied`, `mc ls pgb` → отказ (нет
-`s3:ListAllMyBuckets`), `mc ls pgb/pg-backups` работает. Версии: `mc ls --versions local/pg-backups`
-от имени `admin` покажет три версии файла.
-
-</details>
-
-**4.** Перезапиши файл дважды и найди все версии от имени `admin`.
-
-<details><summary>Ответ</summary>
-
-`mc version enable local/demo`; три `mc cp`; `mc rm local/demo/note.txt`;
-`mc undo local/demo/note.txt` снимает delete marker — снова видна последняя версия. Первая
-версия: `mc ls --versions local/demo/note.txt` → взять её ID →
-`mc cp --version-id &lt;VID1&gt; local/demo/note.txt /files/note-v1.txt`.
-
-</details>
-
-### C4. Versioning и откат
-В `demo` с versioning: загрузи `note.txt` трижды с разным содержимым, удали его,
-восстанови последнюю версию, затем достань самую первую версию в отдельный файл.
-
-### C5. Object lock
-**1.** Создай `locked` с lock, retention по умолчанию GOVERNANCE 1d.
-
-<details><summary>Ответ</summary>
-
-`mc admin info local` покажет `4 drives online, 0 drives offline` и `EC:2` (для set из 4 дисков).
-Файлы: `cp ~/file{1,2,3} ~/labs/storage/minio/files/`, затем `mc mb local/demo`,
-`mc cp /files/file1 /files/file2 /files/file3 local/demo/`, `mc ls local/demo`, `mc du local/demo`.
-В консоли видна навигация по объектам.
-
-</details>
-
-**2.** Загрузи файл, попробуй удалить его версию. Затем обычный `mc rm` — что изменилось?
-
-<details><summary>Ответ</summary>
-
-После стирания `d4`: чтение и запись работают, `mc admin info` покажет проблему с
-одним диском (offline/unformatted). После стирания `d3`: чтение работает (нужно K=2 части),
-запись падает (кворум 3). После рестарта MinIO видит пустые диски как новые, форматирует
-и лечит (heal) данные в фоне; `mc admin info` вернётся к 4 online.
-
-</details>
-
-**3.** Поставь legal hold и объясни, чем он отличается от retention.
-
-<details><summary>Ответ</summary>
-
-`mc mb --with-versioning local/pg-backups`, политика и пользователь — как в конспекте.
-Загрузка и чтение проходят, `mc rm` → `Access Denied`, `mc ls pgb` → отказ (нет
-`s3:ListAllMyBuckets`), `mc ls pgb/pg-backups` работает. Версии: `mc ls --versions local/pg-backups`
-от имени `admin` покажет три версии файла.
-
-</details>
-
-### C6. Lifecycle для бэкапов
+#### C6. Lifecycle для бэкапов
 Настрой на `pg-backups`: текущие объекты живут 30 дней, неактуальные версии — 7 дней,
 осиротевшие delete marker'ы чистятся. Проверь правила и объясни, почему это два правила.
 
-### C7. RWX-том через NFS в kind
-**1.** На `stor1` экспортируй `/srv/nfs/k8s` для сети, из которой ходят ноды kind.
-
 <details><summary>Ответ</summary>
 
-`mc admin info local` покажет `4 drives online, 0 drives offline` и `EC:2` (для set из 4 дисков).
-Файлы: `cp ~/file{1,2,3} ~/labs/storage/minio/files/`, затем `mc mb local/demo`,
-`mc cp /files/file1 /files/file2 /files/file3 local/demo/`, `mc ls local/demo`, `mc du local/demo`.
-В консоли видна навигация по объектам.
+`mc ilm rule add local/pg-backups --expire-days 30` и
+`mc ilm rule add local/pg-backups --noncurrent-expire-days 7 --expire-delete-marker`;
+`mc ilm rule ls local/pg-backups`. Два правила, потому что по спецификации S3 флаг удаления
+delete marker'ов нельзя совмещать с `Days` в одном Expiration.
 
 </details>
 
-**2.** Установи csi-driver-nfs, создай StorageClass и PVC `ReadWriteMany`.
-
-<details><summary>Ответ</summary>
-
-После стирания `d4`: чтение и запись работают, `mc admin info` покажет проблему с
-одним диском (offline/unformatted). После стирания `d3`: чтение работает (нужно K=2 части),
-запись падает (кворум 3). После рестарта MinIO видит пустые диски как новые, форматирует
-и лечит (heal) данные в фоне; `mc admin info` вернётся к 4 online.
-
-</details>
-
-**3.** Запусти Deployment из 2 реплик, которые пишут в общий файл своё имя пода. Убедись,
+#### C7. RWX-том через NFS в kind
+1. На `stor1` экспортируй `/srv/nfs/k8s` для сети, из которой ходят ноды kind.
+2. Установи csi-driver-nfs, создай StorageClass и PVC `ReadWriteMany`.
+3. Запусти Deployment из 2 реплик, которые пишут в общий файл своё имя пода. Убедись,
    что оба пишут, и найди подкаталог PV на сервере.
 
 <details><summary>Ответ</summary>
 
-`mc mb --with-versioning local/pg-backups`, политика и пользователь — как в конспекте.
-Загрузка и чтение проходят, `mc rm` → `Access Denied`, `mc ls pgb` → отказ (нет
-`s3:ListAllMyBuckets`), `mc ls pgb/pg-backups` работает. Версии: `mc ls --versions local/pg-backups`
-от имени `admin` покажет три версии файла.
+На stor1: `sudo mkdir -p /srv/nfs/k8s`, в `/etc/exports`:
+`/srv/nfs/k8s 192.168.121.0/24(rw,sync,no_subtree_check)` плюс подсеть, из которой реально
+приходят ноды (трафик kind идёт с хоста — смотри адрес в `journalctl -u nfs-server`/отказах
+монтирования), `exportfs -ra`. Установка чарта и SC/PVC — из конспекта (`server: 192.168.60.10`).
+Deployment с `replicas: 2` и командой `sh -c 'while true; do echo $HOSTNAME >> /data/log; sleep 5; done'`.
+На сервере: `ls /srv/nfs/k8s/` → подкаталог `pvc-...` с файлом `log`, где чередуются имена
+обоих подов. Если под пишет `Permission denied` — см. D4.
 
 </details>
 
-### C8. TLS для MinIO
+#### C8. TLS для MinIO
 Сгенерируй самоподписанный сертификат с SAN на `localhost`, `127.0.0.1` и
 `192.168.121.1`, перезапусти MinIO с `--certs-dir`, подключись `mc` по https.
 
-### C9. Уведомления
+<details><summary>Ответ</summary>
+
+Команда `openssl req` из конспекта; в compose — `--certs-dir /certs` и том
+`./certs:/certs:ro`; `docker compose up -d`; `mc alias set local https://127.0.0.1:9000 admin admin-secret-123`
+и `mc --insecure admin info local` (или добавить `public.crt` в доверенные CA клиента).
+
+</details>
+
+#### C9. Уведомления
 Подними простой приёмник (`python3 -m http.server` не подойдёт — нужен POST; используй
 `nc -lk 8080` на хосте), настрой webhook и событие `put` на `demo`, загрузи файл и найди
 событие в выводе.
 
+<details><summary>Ответ</summary>
+
+На хосте `nc -lk 8080`. Контейнер ходит на хост по шлюзу bridge-сети compose:
+`mc admin config set local notify_webhook:primary endpoint="http://172.17.0.1:8080"` (адрес
+шлюза — `docker network inspect minio_default`), `mc admin service restart local`,
+`mc event add local/demo arn:minio:sqs::primary:webhook --event put`. После `mc cp` в `nc`
+появится HTTP POST с JSON: `EventName: s3:ObjectCreated:Put`, бакет, ключ. `nc` не отвечает
+200 — MinIO будет повторять отправку, для стенда это нормально.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Ночью NFS-сервер перезагрузился. Утром на веб-серверах load average 80, CPU простаивает,
 `ls /var/www/uploads` висит. Что происходит и как лечить?
@@ -1204,13 +1043,12 @@ SAN (например, `minio.storage.svc`), или перевыпустить �
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Когда выберешь NFS, а когда S3?
 
 <details><summary>Ответ</summary>
 
 S3 — для бэкапов, артефактов, медиа, логов: HTTP API, дёшево, версии и lock. NFS — когда
-   приложению нужна POSIX-папка на нескольких серверах (legacy, RWX); БД — ни туда, ни туда.
+приложению нужна POSIX-папка на нескольких серверах (legacy, RWX); БД — ни туда, ни туда.
 
 </details>
 
@@ -1219,7 +1057,7 @@ S3 — для бэкапов, артефактов, медиа, логов: HTTP
 <details><summary>Ответ</summary>
 
 Сервер — SPOF; `hard`-монтирование вешает клиентов в D; close-to-open consistency и кэш
-   атрибутов; права по UID/GID и squash; нет квот на уровне PVC; плохо для БД.
+атрибутов; права по UID/GID и squash; нет квот на уровне PVC; плохо для БД.
 
 </details>
 
@@ -1228,7 +1066,7 @@ S3 — для бэкапов, артефактов, медиа, логов: HTTP
 <details><summary>Ответ</summary>
 
 csi-driver-nfs с внешним NFS (или CephFS через Rook — тема 05): StorageClass
-   `nfs.csi.k8s.io`, PVC `ReadWriteMany`, экспорт только на IP нод, квоты на сервере.
+`nfs.csi.k8s.io`, PVC `ReadWriteMany`, экспорт только на IP нод, квоты на сервере.
 
 </details>
 
@@ -1237,8 +1075,8 @@ csi-driver-nfs с внешним NFS (или CephFS через Rook — тема
 <details><summary>Ответ</summary>
 
 Объект режется на K частей данных и M чётности, можно потерять M. Экономнее репликации
-   (4+2 — 67% полезных вместо 33% при 3 копиях), но больше CPU, сетевых операций и задержка
-   на запись и восстановление.
+(4+2 — 67% полезных вместо 33% при 3 копиях), но больше CPU, сетевых операций и задержка
+на запись и восстановление.
 
 </details>
 
@@ -1247,7 +1085,7 @@ csi-driver-nfs с внешним NFS (или CephFS через Rook — тема
 <details><summary>Ответ</summary>
 
 N серверов × M дисков, диски делятся на erasure sets, объекты раскладываются по set
-   хешированием; перед кластером — балансировщик. Расширение — новым server pool, set не меняется.
+хешированием; перед кластером — балансировщик. Расширение — новым server pool, set не меняется.
 
 </details>
 
@@ -1256,7 +1094,7 @@ N серверов × M дисков, диски делятся на erasure set
 <details><summary>Ответ</summary>
 
 Отдельный бакет, versioning, object lock, у бэкап-пользователя нет `DeleteObject*`,
-   удаление старого — lifecycle на сервере, копия вне площадки, мониторинг и restore-тесты.
+удаление старого — lifecycle на сервере, копия вне площадки, мониторинг и restore-тесты.
 
 </details>
 
@@ -1265,7 +1103,7 @@ N серверов × M дисков, диски делятся на erasure set
 <details><summary>Ответ</summary>
 
 WORM-блокировка версий объекта на срок. GOVERNANCE обходится спецправом, COMPLIANCE — никем
-   до конца срока; включается только при создании бакета.
+до конца срока; включается только при создании бакета.
 
 </details>
 
@@ -1274,8 +1112,8 @@ WORM-блокировка версий объекта на срок. GOVERNANCE 
 <details><summary>Ответ</summary>
 
 Community урезали, перевели на исходники, заархивировали, убрали образы. Выбор: при
-   наличии Ceph — RGW; иначе SeaweedFS или Garage, а если нужна совместимость с MinIO — форк
-   `pgsty/silo` или AIStor по подписке; решение — по лицензии, поддержке и выходу security-фиксов.
+наличии Ceph — RGW; иначе SeaweedFS или Garage, а если нужна совместимость с MinIO — форк
+`pgsty/silo` или AIStor по подписке; решение — по лицензии, поддержке и выходу security-фиксов.
 
 </details>
 
@@ -1284,7 +1122,7 @@ Community урезали, перевели на исходники, заархи
 <details><summary>Ответ</summary>
 
 Отдельный пользователь (или access key), политика с `ListBucket` на бакет и нужными
-   `Get/PutObject` на `бакет/*`, ключ — в Secret/Vault, ротация.
+`Get/PutObject` на `бакет/*`, ключ — в Secret/Vault, ротация.
 
 </details>
 
@@ -1293,8 +1131,6 @@ Community урезали, перевели на исходники, заархи
 <details><summary>Ответ</summary>
 
 Ceph RGW, SeaweedFS, Garage, AIStor, форк `pgsty/silo`, облачные S3-совместимые сервисы.
-
----
 
 </details>
 

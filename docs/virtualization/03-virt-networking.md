@@ -1,14 +1,14 @@
 ---
 title: "03. Сеть для VM: libvirt-сети, bridge, macvtap, VLAN, bonding"
-description: "Блок → Виртуализация on-prem → тема 03. Опирается на"
+description: "⭐ Сети libvirt, bridge, macvtap, VLAN (trunk/access, VLAN-aware bridge), bonding, MTU, разбор по слоям"
 ---
 
 # 03. Сеть для VM: libvirt-сети, bridge, macvtap, VLAN, bonding
 
 > Блок → Виртуализация on-prem → тема 03. Опирается на
-> [../Network/02_l2_ethernet_arp.md](/network/02-l2-ethernet-arp) (MAC, свитч, VLAN, bridge),
-> [../Linux/20_network_config.md](/linux/20-network-config) (`ip`, netplan, nmcli, как не
-> потерять сервер) и [../Network/03_l3_ip_icmp.md](/network/03-l3-ip-icmp) (маршруты, NAT, MTU).
+> [Сети: 02. L2: Ethernet, MAC, ARP, VLAN](/network/02-l2-ethernet-arp) (MAC, свитч, VLAN, bridge),
+> [Linux: 20. Network Config](/linux/20-network-config) (`ip`, netplan, nmcli, как не
+> потерять сервер) и [Сети: 03. L3: IP, маршрутизация, ICMP](/network/03-l3-ip-icmp) (маршруты, NAT, MTU).
 >
 > **После темы ты умеешь:** выбирать режим сети libvirt (NAT, isolated, routed, bridge, macvtap),
 > выводить VM в LAN через Linux bridge (ip, netplan, nmcli), объяснять ограничение macvtap,
@@ -19,13 +19,13 @@ description: "Блок → Виртуализация on-prem → тема 03. �
 > ⚠️ **Правило темы.** Любая правка сети хоста может отрезать тебя от него. Эксперименты —
 > внутри VM или в изолированных сетях libvirt (лаба 2). На реальном сервере — только
 > с консолью (IPMI/iLO/iDRAC) и через `netplan try`
-> (см. «Как не потерять сервер» в [../Linux/20_network_config.md](/linux/20-network-config)).
+> (см. «Как не потерять сервер» в [Linux: 20. Network Config](/linux/20-network-config)).
 
 ---
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                        ┌──────────────────────── ХОСТ-ГИПЕРВИЗОР ───────────────────────────┐
   VM1 eth0 ── vnet0 ──►│ virbr0 (NAT) ── dnsmasq ── MASQUERADE ──┐                          │
                        │                                         ├──► eno1 ─┐               │
@@ -36,14 +36,15 @@ description: "Блок → Виртуализация on-prem → тема 03. �
                        └────────────────────────────────────────────────────────────────────┘
    vnetX / macvtapN — «кабель» VM в хост; bridge — программный свитч; bond — два кабеля как один;
    bond0.20 — тег VLAN 20; свитч должен быть настроен в пару (trunk, LACP)
-```text
+```
+
 ---
 
 ## 1. Как VM подключается к сети
 
 Каждая сетевая карта VM на хосте — **tap-устройство** `vnetN`: с одной стороны его читает
 процесс QEMU, с другой — он воткнут в **bridge** (программный свитч, как `docker0` —
-[../Network/02_l2_ethernet_arp.md](/network/02-l2-ethernet-arp), раздел 6).
+[Сети: 02. L2: Ethernet, MAC, ARP, VLAN](/network/02-l2-ethernet-arp), раздел 6).
 
 ```bash
 virsh domiflist vm1
@@ -53,7 +54,8 @@ ip -br link show master virbr-lab     # какие vnet воткнуты в бр
 bridge link                           # все порты всех бриджей
 virsh domif-getlink vm1 vnet3         # «кабель» воткнут? (up/down)
 virsh domif-setlink vm1 vnet3 down    # выдернуть кабель у VM (удобно для тестов failover)
-```text
+```
+
 ---
 
 ## 2. Сети libvirt
@@ -62,52 +64,53 @@ virsh domif-setlink vm1 vnet3 down    # выдернуть кабель у VM (�
 |-------|---------------|-----------|----------|--------|-------|
 | **NAT** (`default`, `virt-lab`) | Да, через MASQUERADE | Да | Нет (только проброс портов) | dnsmasq libvirt | Стенд, ноутбук |
 | **routed** | Да, если роутер знает маршрут назад | Да | Да | dnsmasq libvirt | Есть доступ к роутеру, NAT не нужен |
-| **isolated** | Нет | Да, если у сети есть `&lt;ip&gt;` | Нет | dnsmasq или никто | Внутренние сети между VM, «трансляция» L2 |
+| **isolated** | Нет | Да, если у сети есть `<ip>` | Нет | dnsmasq или никто | Внутренние сети между VM, «трансляция» L2 |
 | **bridge** (готовый `br0` хоста) | Как обычный хост в LAN | Да | Да | DHCP/статика сети LAN | Серверы: VM «как железные» |
 | **macvtap** (direct) | Как хост в LAN | ❌ Нет | Да | DHCP/статика LAN | Быстро вывести VM в LAN без правки сети хоста |
 
 ```xml
 <!-- NAT: сеть стенда virt-lab (полное определение — в 00_INDEX.md) -->
-&lt;network&gt;
-  &lt;name&gt;virt-lab</name>
-  &lt;forward mode='nat'/&gt;
-  &lt;bridge name='virbr-lab' stp='on' delay='0'/&gt;
-  &lt;ip address='10.10.10.1' netmask='255.255.255.0'&gt;
-    &lt;dhcp&gt;&lt;range start='10.10.10.100' end='10.10.10.199'/&gt;</dhcp>
+<network>
+  <name>virt-lab</name>
+  <forward mode='nat'/>
+  <bridge name='virbr-lab' stp='on' delay='0'/>
+  <ip address='10.10.10.1' netmask='255.255.255.0'>
+    <dhcp><range start='10.10.10.100' end='10.10.10.199'/></dhcp>
   </ip>
 </network>
 
 <!-- isolated без IP на хосте: чистый L2-свитч между VM (лаба 2) -->
-&lt;network&gt;
-  &lt;name&gt;lab-trunk</name>
-  &lt;bridge name='virbr-trunk' stp='off' delay='0'/&gt;
+<network>
+  <name>lab-trunk</name>
+  <bridge name='virbr-trunk' stp='off' delay='0'/>
 </network>
 
-<!-- routed: без NAT; на роутере нужен маршрут 10.20.0.0/24 via &lt;IP хоста&gt; -->
-&lt;network&gt;
-  &lt;name&gt;routed-lab</name>
-  &lt;forward mode='route' dev='enp3s0'/&gt;
-  &lt;bridge name='virbr-rt' stp='on' delay='0'/&gt;
-  &lt;ip address='10.20.0.1' netmask='255.255.255.0'&gt;
-    &lt;dhcp&gt;&lt;range start='10.20.0.100' end='10.20.0.199'/&gt;</dhcp>
+<!-- routed: без NAT; на роутере нужен маршрут 10.20.0.0/24 via <IP хоста> -->
+<network>
+  <name>routed-lab</name>
+  <forward mode='route' dev='enp3s0'/>
+  <bridge name='virbr-rt' stp='on' delay='0'/>
+  <ip address='10.20.0.1' netmask='255.255.255.0'>
+    <dhcp><range start='10.20.0.100' end='10.20.0.199'/></dhcp>
   </ip>
 </network>
 
 <!-- использовать готовый bridge хоста -->
-&lt;network&gt;
-  &lt;name&gt;host-bridge</name>
-  &lt;forward mode='bridge'/&gt;
-  &lt;bridge name='br0'/&gt;
+<network>
+  <name>host-bridge</name>
+  <forward mode='bridge'/>
+  <bridge name='br0'/>
 </network>
 
 <!-- macvtap поверх физического NIC -->
-&lt;network&gt;
-  &lt;name&gt;macvtap-lan</name>
-  &lt;forward mode='bridge'&gt;
-    &lt;interface dev='enp3s0'/&gt;
+<network>
+  <name>macvtap-lan</name>
+  <forward mode='bridge'>
+    <interface dev='enp3s0'/>
   </forward>
 </network>
-```text
+```
+
 ```bash
 virsh net-define lab-trunk.xml && virsh net-start lab-trunk && virsh net-autostart lab-trunk
 virsh net-list --all
@@ -115,13 +118,14 @@ virsh net-dumpxml virt-lab
 virsh net-edit virt-lab                    # изменения — после net-destroy/net-start
 virsh net-dhcp-leases virt-lab             # кто какой IP получил
 virsh net-update virt-lab add ip-dhcp-host \
-  "&lt;host mac='52:54:00:6b:1a:02' name='vm1' ip='10.10.10.50'/&gt;" --live --config   # резерв IP
-ps -ef | grep [d]nsmasq                    # на каждую сеть с &lt;ip&gt; — свой dnsmasq (DHCP + DNS)
+  "<host mac='52:54:00:6b:1a:02' name='vm1' ip='10.10.10.50'/>" --live --config   # резерв IP
+ps -ef | grep [d]nsmasq                    # на каждую сеть с <ip> — свой dnsmasq (DHCP + DNS)
 sudo nft list ruleset | grep -i libvirt    # NAT и фильтры (libvirt ≥ 10.4 умеет nftables;
 sudo iptables -t nat -S | grep -i libvirt  #  в 10.0 на Ubuntu 24.04 — правила iptables)
-```text
+```
+
 > 💡 NAT-сеть = маленький домашний роутер: шлюз `10.10.10.1` на хосте, DHCP и DNS от dnsmasq,
-> наружу — MASQUERADE (подробно про NAT — [../Network/03_l3_ip_icmp.md](/network/03-l3-ip-icmp),
+> наружу — MASQUERADE (подробно про NAT — [Сети: 03. L3: IP, маршрутизация, ICMP](/network/03-l3-ip-icmp),
 > раздел 6). Снаружи в VM не попасть без проброса портов — ровно как в облаке без публичного IP.
 
 ---
@@ -131,14 +135,15 @@ sudo iptables -t nat -S | grep -i libvirt  #  в 10.0 на Ubuntu 24.04 — пр
 Нужно, чтобы VM получила адрес из сети офиса/ЦОДа и была доступна «как железный сервер».
 Физический NIC превращается в порт бриджа, а IP хоста переезжает с NIC **на бридж**.
 
-```text
+```text:no-line-numbers
   БЫЛО                                  СТАЛО
   enp3s0: 192.168.1.20/24               enp3s0: без IP, порт бриджа
                                         br0:    192.168.1.20/24  ← IP хоста здесь
                                           ├── enp3s0 ──► свитч LAN
                                           ├── vnet0 (VM1: 192.168.1.31)
                                           └── vnet1 (VM2: 192.168.1.32)
-```text
+```
+
 > ⚠️ В момент переноса IP с `enp3s0` на `br0` SSH-сессия через `enp3s0` оборвётся.
 > Делай это с консоли или через `netplan try`. Сначала потренируйся в VM с двумя NIC.
 
@@ -151,7 +156,8 @@ sudo ip addr flush dev enp3s0          # ← здесь SSH через enp3s0 р
 sudo ip addr add 192.168.1.20/24 dev br0
 sudo ip link set br0 up
 sudo ip route add default via 192.168.1.1
-```text
+```
+
 **Постоянно — netplan (Ubuntu):**
 ```yaml
 # /etc/netplan/60-br0.yaml  (chmod 600; применять: sudo netplan try)
@@ -174,14 +180,16 @@ network:
       parameters:
         stp: false
         forward-delay: 0
-```text
+```
+
 **Постоянно — NetworkManager (RHEL, Rocky, десктопы):**
 ```bash
 sudo nmcli con add type bridge ifname br0 con-name br0 bridge.stp no \
      ipv4.method manual ipv4.addresses 192.168.1.20/24 ipv4.gateway 192.168.1.1 ipv4.dns 192.168.1.1
 sudo nmcli con add type ethernet ifname enp3s0 con-name br0-port master br0
 sudo nmcli con down "Wired connection 1"; sudo nmcli con up br0    # ← одной строкой: связь моргнёт
-```text
+```
+
 **Подключить VM:** `virt-install ... --network bridge=br0,model=virtio` или через сеть
 `host-bridge` из раздела 2 (`--network network=host-bridge`).
 
@@ -204,7 +212,8 @@ macvtap создаёт у VM «виртуальный NIC-двойник» пр�
 ```bash
 virt-install ... --network type=direct,source=enp3s0,source.mode=bridge,model=virtio
 # или --network network=macvtap-lan
-```text
+```
+
 | Режим | Что делает |
 |-------|-----------|
 | `vepa` | Весь трафик, даже между VM, уходит на внешний свитч (нужен свитч с hairpin/reflective relay) |
@@ -221,32 +230,33 @@ virt-install ... --network type=direct,source=enp3s0,source.mode=bridge,model=vi
 
 ## 5. VLAN на гипервизоре
 
-Что такое VLAN и тег 802.1Q — в [../Network/02_l2_ethernet_arp.md](/network/02-l2-ethernet-arp),
+Что такое VLAN и тег 802.1Q — в [Сети: 02. L2: Ethernet, MAC, ARP, VLAN](/network/02-l2-ethernet-arp),
 раздел 5. Здесь — как это раскладывается на хосте с VM.
 
-```text
+```text:no-line-numbers
   Порт свитча в режиме ACCESS  — один VLAN, кадры БЕЗ тега (untagged) → обычный сервер/ПК
   Порт свитча в режиме TRUNK   — много VLAN, кадры С тегом (tagged)   → гипервизор
   Native VLAN (на транке)      — VLAN, кадры которого идут без тега   → частый источник путаницы
-```text
+```
+
 Гипервизор почти всегда подключён **транком**, а внутри хоста VLAN раскладывают двумя
 способами.
 
 ### Способ A. Бридж на каждый VLAN (классика)
 
-```text
+```text:no-line-numbers
  bond0 (trunk) ──┬── bond0.10 ── br10 ── VM «управление»
                  ├── bond0.20 ── br20 ── VM прода
                  └── bond0.30 ── br30 ── VM БД
  Хост снимает тег на bond0.N, VM ничего не знают о VLAN (для них это access-порт)
-```text
+```
 ```bash
 sudo ip link add link bond0 name bond0.20 type vlan id 20
 sudo ip link add br20 type bridge
 sudo ip link set bond0.20 master br20
 sudo ip link set bond0.20 up && sudo ip link set br20 up
 ip -d link show bond0.20 | grep vlan           # vlan protocol 802.1Q id 20
-```text
+```
 Просто и наглядно, но 50 VLAN = 50 бриджей и 50 интерфейсов.
 
 ### Способ B. Один VLAN-aware bridge
@@ -265,13 +275,13 @@ bridge vlan show
 #          10
 #          20
 # vnet3    20 PVID Egress Untagged
-```text
+```
 IP хоста в VLAN 10 на таком бридже: `bridge vlan add dev br0 vid 10 self` и интерфейс
 `ip link add link br0 name br0.10 type vlan id 10`.
 
 **Кто ставит VLAN на порт VM:**
 - **Proxmox** — сам: `qm set 101 --net0 virtio,bridge=vmbr0,tag=20` при `bridge-vlan-aware yes` (тема 04).
-- **libvirt** — `&lt;vlan&gt;&lt;tag id='20'/&gt;</vlan>` в интерфейсе VM работает на обычных Linux-бриджах
+- **libvirt** — `<vlan><tag id='20'/></vlan>` в интерфейсе VM работает на обычных Linux-бриджах
   только с libvirt 11.0 (раньше — лишь с Open vSwitch и SR-IOV). В Ubuntu 24.04 libvirt 10.0,
   поэтому на ней — способ A, `bridge vlan` руками или hook-скрипт `/etc/libvirt/hooks/qemu`.
   Номер `vnetN` меняется при каждом старте VM, ручные `bridge vlan` не переживают перезапуск.
@@ -311,7 +321,8 @@ cat /proc/net/bonding/bond0
 # Slave Interface: trunk1
 # MII Status: up
 # Link Failure Count: 0
-```text
+```
+
 Что важно понимать:
 - `miimon 100` — проверка линка каждые 100 мс по carrier. Не видит проблему «линк есть,
   а свитч дальше мёртв» — для этого `arp_ip_target` (ARP-мониторинг) или LACP.
@@ -327,7 +338,7 @@ cat /proc/net/bonding/bond0
 
 ## 7. Типовой хост гипервизора: bond + VLAN + bridge
 
-```text
+```text:no-line-numbers
                      свитч A ─┐  стек/MLAG, LACP port-channel, trunk: 10, 20, 30
                      свитч B ─┤
                               │
@@ -342,7 +353,8 @@ cat /proc/net/bonding/bond0
   10.0.10.11    │
   (IP хоста,    ├── vnet0 ── VM app1
    SSH, API)    └── vnet1 ── VM app2
-```text
+```
+
 ```yaml
 # /etc/netplan/60-hypervisor.yaml — ⚠️ только с консолью и через netplan try
 network:
@@ -380,7 +392,8 @@ network:
     br-prod:
       interfaces: [bond0.20]
       parameters: { stp: false, forward-delay: 0 }
-```text
+```
+
 Зачем так: два кабеля на два свитча — переживаем смерть линка и свитча; управление, VM
 и хранилище в разных VLAN — трафик бэкапа не душит SSH, а VM прода не видят сеть хранения;
 хост без IP в VLAN прода — VM не могут «постучаться» в гипервизор. Та же схема в Proxmox —
@@ -392,7 +405,7 @@ network:
 
 Сеть хранения (NFS, iSCSI, Ceph) и живой миграции часто переводят на **MTU 9000**: меньше
 пакетов на гигабайт — меньше нагрузка на CPU. Что такое MTU и почему «большие пакеты
-пропадают» — [../Network/03_l3_ip_icmp.md](/network/03-l3-ip-icmp), раздел 5.
+пропадают» — [Сети: 03. L3: IP, маршрутизация, ICMP](/network/03-l3-ip-icmp), раздел 5.
 
 Правило: **MTU одинаковый на всём L2-пути** — порты свитча (часто 9216), bond, VLAN,
 bridge, tap, интерфейс VM. Один порт с 1500 в цепочке — и большие кадры тихо теряются.
@@ -403,12 +416,13 @@ bridge, tap, интерфейс VM. Один порт с 1500 в цепочке 
 ip link show bond0.30 | grep -o 'mtu [0-9]*'
 ping -M do -s 8972 -c 3 10.0.30.12     # 9000 − 20 (IP) − 8 (ICMP) = 8972; должно проходить
 ping -M do -s 8973 -c 1 10.0.30.12     # на 1 байт больше — «message too long» локально
-```text
+```
+
 ---
 
 ## 9. Разбор «VM не видит сеть» по слоям
 
-```text
+```
  1. Линк       ethtool eno1 | grep -E 'Speed|Link detected'; ip -s link show eno1 (ошибки/дропы)
  2. Bond       cat /proc/net/bonding/bond0 — активный слейв, MII Status, LACP partner
  3. VLAN       ip -d link show bond0.20 — тот ли id; совпадает ли с транком на свитче
@@ -420,7 +434,8 @@ ping -M do -s 8973 -c 1 10.0.30.12     # на 1 байт больше — «mess
                sudo tcpdump -eni bond0 vlan 20 — выходят ли они на транк с тегом 20
  7. Фильтры    sysctl net.bridge.bridge-nf-call-iptables; sudo iptables -S FORWARD (Docker!)
  8. Гость      ip a, ip r, ping шлюза, arp/ip neigh (дальше — как с любым Linux-хостом)
-```text
+```
+
 Главный инструмент — `tcpdump -e` на vnet-интерфейсе: видно, отправляет ли VM вообще
 что-то, дошёл ли ответ до бриджа, и с каким VLAN-тегом кадр ушёл в физику.
 
@@ -439,7 +454,7 @@ ping -M do -s 8973 -c 1 10.0.30.12     # на 1 байт больше — «mess
 | LACP-бонд поднят, трафика нет | На свитче порты не в LACP port-channel | Сначала свитч, потом хост; `/proc/net/bonding/bond0` — partner MAC |
 | «Бонд 2×10G, а копия идёт на 10G» | Один поток хэшируется в один линк | Это норма; несколько потоков → оба линка |
 | Большие пакеты теряются, SSH работает | MTU 9000 не на всём пути | `ping -M do -s 8972`, выровнять MTU |
-| `bridge vlan` для VM пропал после рестарта | vnetN создаётся заново при старте VM | Proxmox, libvirt ≥ 11 `&lt;vlan&gt;`, hook или способ A |
+| `bridge vlan` для VM пропал после рестарта | vnetN создаётся заново при старте VM | Proxmox, libvirt ≥ 11 `<vlan>`, hook или способ A |
 | `balance-alb` + бридж: VM теряют связь | alb подменяет MAC в ARP-ответах | Для хостов с VM — `active-backup` или LACP |
 
 ---
@@ -462,9 +477,9 @@ ping -M do -s 8973 -c 1 10.0.30.12     # на 1 байт больше — «mess
 
 | Хочу | Как |
 |------|-----|
-| Сети libvirt / аренды | `virsh net-list --all`, `virsh net-dhcp-leases &lt;сеть&gt;` |
+| Сети libvirt / аренды | `virsh net-list --all`, `virsh net-dhcp-leases <сеть>` |
 | Создать сеть из XML | `virsh net-define f.xml && virsh net-start N && virsh net-autostart N` |
-| Резерв IP в DHCP libvirt | `virsh net-update N add ip-dhcp-host "&lt;host mac=.. ip=../&gt;" --live --config` |
+| Резерв IP в DHCP libvirt | `virsh net-update N add ip-dhcp-host "<host mac=.. ip=../>" --live --config` |
 | Порты VM | `virsh domiflist vm`, `virsh domif-setlink vm vnetX down/up` |
 | Бридж руками | `ip link add br0 type bridge; ip link set eth1 master br0` |
 | VM в бридж | `--network bridge=br0,model=virtio` |
@@ -476,7 +491,7 @@ ping -M do -s 8973 -c 1 10.0.30.12     # на 1 байт больше — «mess
 | MAC-таблица бриджа | `bridge fdb show br br0` |
 | VLAN на портах | `bridge vlan show` |
 | Трафик VM с MAC и тегами | `sudo tcpdump -eni vnetX` |
-| Проверить jumbo | `ping -M do -s 8972 &lt;IP&gt;` |
+| Проверить jumbo | `ping -M do -s 8972 <IP>` |
 | Docker режет бридж? | `sysctl net.bridge.bridge-nf-call-iptables`, `iptables -S FORWARD` |
 
 ---
@@ -494,13 +509,18 @@ ping -M do -s 8973 -c 1 10.0.30.12     # на 1 байт больше — «mess
 9. Jumbo frames работают, только если MTU 9000 на всём L2-пути; проверка — `ping -M do -s 8972`.
 10. Разбор идёт по слоям: линк → bond → VLAN → bridge/fdb → порт VM → tcpdump → фильтры → гость.
 
-➡️ Дальше: [04_proxmox.md](/virtualization/04-proxmox) · задачи: 03_virt_networking_tasks.md
+---
 
+## Задачи
+
+> Стенд: сеть `virt-lab` из [Виртуализация](/virtualization/), изолированная сеть `lab-trunk`
+> (раздел 2 конспекта) и две VM `hv1`, `hv2` с тремя NIC: `mgmt0` в `virt-lab`, `trunk0` и `trunk1`
+> в `lab-trunk` — готовый каркас в лабе 2 [07. Практика: 5 лаб по виртуализации on-prem](/virtualization/07-practice-labs).
+> ⚠️ Сеть **хоста** в этих задачах не трогаем: всё внутри VM и в сетях libvirt.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Что такое `vnetN` на хосте и как он связан с бриджем и процессом QEMU?
 
@@ -518,7 +538,7 @@ ping -M do -s 8973 -c 1 10.0.30.12     # на 1 байт больше — «mess
 
 NAT: VM выходит наружу через MASQUERADE, хост видит VM, LAN — нет; адреса от dnsmasq.
 Routed: без NAT, LAN видит VM, если роутер знает маршрут в подсеть VM; адреса от dnsmasq.
-Isolated: только VM между собой (и хост, если у сети есть `&lt;ip&gt;`). Bridge: VM — полноправные
+Isolated: только VM между собой (и хост, если у сети есть `<ip>`). Bridge: VM — полноправные
 узлы LAN, адреса от DHCP LAN или статика. macvtap: как bridge для LAN, но хост и VM на одном
 NIC не видят друг друга.
 
@@ -632,7 +652,7 @@ MII проверяет carrier (есть ли «свет» на порту). ARP
 
 В сетях хранения (NFS, iSCSI, Ceph) и живой миграции — меньше пакетов, меньше
 нагрузка на CPU. Обязательно одинаковый MTU на всём L2-пути: порты свитча, bond, VLAN,
-бридж, tap, интерфейс VM. Проверка: `ping -M do -s 8972 &lt;IP&gt;`.
+бридж, tap, интерфейс VM. Проверка: `ping -M do -s 8972 <IP>`.
 
 </details>
 
@@ -660,311 +680,122 @@ Docker ставит политику `FORWARD DROP` в iptables и загруж�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
 ```text:no-line-numbers
 B1.  # по SSH на удалённый сервер через enp3s0
-```text
-<details><summary>Ответ</summary>
+     $ sudo vim /etc/netplan/60-br0.yaml     # enp3s0 → порт br0, IP на br0
+     $ sudo netplan apply
 
-⚠️ IP переедет на `br0`, SSH через `enp3s0` оборвётся; ошибка в YAML — и доступа нет
+B2.  # хост: bond0 mode 802.3ad (eno1 + eno2)
+     # свитч: оба порта — обычные access в VLAN 10, без port-channel
+
+B3.  $ bridge vlan show
+     port      vlan-id
+     bond0     1 PVID Egress Untagged
+               10
+     vnet3     20 PVID Egress Untagged
+     # VM на vnet3 «не видит сеть»
+
+B4.  # VM подключена macvtap к enp3s0, из офиса по SSH заходится
+     $ ping 192.168.1.31      # с самого хоста
+     # 100% packet loss → «у VM сломана сеть»
+
+B5.  # гипервизор: bond0 mode balance-alb, поверх — бридж br0 с десятью VM
+
+B6.  # в госте: ip link set enp1s0 mtu 9000
+     # бридж на хосте и порты свитча — 1500
+     $ scp big.iso storage:/data/    # висит; ssh работает
+
+B7.  # ноутбук, интернет по Wi-Fi
+     $ sudo ip link set wlp2s0 master br0
+     Error: Device does not allow enslaving to a bridge.
+
+B8.  # хост Ubuntu 24.04 (libvirt 10.0), обычный Linux-бридж br0 без Open vSwitch
+     # в XML интерфейса VM добавили: <vlan><tag id='20'/></vlan>
+
+B9.  # бонд 802.3ad: eno1 → свитч A, eno2 → свитч B
+     # свитчи независимые: не стек и не MLAG
+
+B10. # сеть libvirt routed-lab (10.20.0.0/24), на роутере офиса ничего не меняли
+     # из VM: ping 1.1.1.1 — тишина
+
+B11. # netplan: br0 с dhcp4: true поверх enp3s0, без macaddress
+     # после перезагрузки у сервера другой IP, DHCP-резерв «не сработал»
+
+B12. # схема хоста: bond0 → bond0.20 → br-prod, и у хоста IP 10.0.20.5 на br-prod
+     # «чтобы было удобно ходить на хост из сети прода»
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ IP переедет на `br0`, SSH через `enp3s0` оборвётся; ошибка в YAML — и доступа нет
 совсем. Только с консолью/IPMI и через `netplan try` (автооткат через 120 с).
 
-</details>
-
-```text:no-line-numbers
-     $ sudo vim /etc/netplan/60-br0.yaml     # enp3s0 → порт br0, IP на br0
-```text
-```text:no-line-numbers
-     $ sudo netplan apply
-```text
-```text:no-line-numbers
-B2.  # хост: bond0 mode 802.3ad (eno1 + eno2)
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Хост шлёт LACPDU, свитч их не понимает — слейвы не агрегируются, трафик теряется
+**B2.** ⚠️ Хост шлёт LACPDU, свитч их не понимает — слейвы не агрегируются, трафик теряется
 или идёт по одному линку с петлями MAC. Сначала на свитче LACP port-channel с транком, потом хост.
 
-</details>
-
-```text:no-line-numbers
-     # свитч: оба порта — обычные access в VLAN 10, без port-channel
-```text
-```text:no-line-numbers
-B3.  $ bridge vlan show
-```text
-<details><summary>Ответ</summary>
-
-⚠️ На аплинке `bond0` нет VLAN 20 — кадры VM из VLAN 20 не выходят за пределы бриджа.
+**B3.** ⚠️ На аплинке `bond0` нет VLAN 20 — кадры VM из VLAN 20 не выходят за пределы бриджа.
 `bridge vlan add dev bond0 vid 20` (и VLAN 20 на транке свитча).
 
-</details>
-
-```text:no-line-numbers
-     port      vlan-id
-```text
-```text:no-line-numbers
-     bond0     1 PVID Egress Untagged
-```text
-```text:no-line-numbers
-               10
-```text
-```text:no-line-numbers
-     vnet3     20 PVID Egress Untagged
-```text
-```text:no-line-numbers
-     # VM на vnet3 «не видит сеть»
-```text
-```text:no-line-numbers
-B4.  # VM подключена macvtap к enp3s0, из офиса по SSH заходится
-```text
-<details><summary>Ответ</summary>
-
-✅ Сеть VM в порядке: это ограничение macvtap — хост не видит свою VM на том же NIC.
+**B4.** ✅ Сеть VM в порядке: это ограничение macvtap — хост не видит свою VM на том же NIC.
 Проверять с другого узла LAN.
 
-</details>
-
-```text:no-line-numbers
-     $ ping 192.168.1.31      # с самого хоста
-```text
-```text:no-line-numbers
-     # 100% packet loss → «у VM сломана сеть»
-```text
-```text:no-line-numbers
-B5.  # гипервизор: bond0 mode balance-alb, поверх — бридж br0 с десятью VM
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `balance-alb` подменяет MAC в ARP-ответах для балансировки входящего трафика и плохо
+**B5.** ⚠️ `balance-alb` подменяет MAC в ARP-ответах для балансировки входящего трафика и плохо
 работает с бриджами и VM — теряется связность. Для гипервизора — `active-backup` или LACP.
 
-</details>
-
-```text:no-line-numbers
-B6.  # в госте: ip link set enp1s0 mtu 9000
-```text
-<details><summary>Ответ</summary>
-
-⚠️ MTU 9000 только в госте: большие кадры отбрасываются на бридже/свитче, мелкие
+**B6.** ⚠️ MTU 9000 только в госте: большие кадры отбрасываются на бридже/свитче, мелкие
 (SSH, handshake) проходят. Выровнять MTU на всём пути или вернуть 1500 в госте.
 
-</details>
-
-```text:no-line-numbers
-     # бридж на хосте и порты свитча — 1500
-```text
-```text:no-line-numbers
-     $ scp big.iso storage:/data/    # висит; ssh работает
-```text
-```text:no-line-numbers
-B7.  # ноутбук, интернет по Wi-Fi
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Wi-Fi в режиме клиента нельзя добавить в бридж. Для VM на ноутбуке с Wi-Fi —
+**B7.** ⚠️ Wi-Fi в режиме клиента нельзя добавить в бридж. Для VM на ноутбуке с Wi-Fi —
 NAT или routed.
 
-</details>
-
-```text:no-line-numbers
-     $ sudo ip link set wlp2s0 master br0
-```text
-```text:no-line-numbers
-     Error: Device does not allow enslaving to a bridge.
-```text
-```text:no-line-numbers
-B8.  # хост Ubuntu 24.04 (libvirt 10.0), обычный Linux-бридж br0 без Open vSwitch
-```text
-<details><summary>Ответ</summary>
-
-⚠️ На libvirt 10.0 VLAN-тег на интерфейсе поддерживается только для Open vSwitch и
+**B8.** ⚠️ На libvirt 10.0 VLAN-тег на интерфейсе поддерживается только для Open vSwitch и
 SR-IOV — конфигурацию отклонят как неподдерживаемую. Нужен libvirt ≥ 11.0, способ A
 (бридж на VLAN) или OVS.
 
-</details>
-
-```text:no-line-numbers
-     # в XML интерфейса VM добавили: &lt;vlan&gt;&lt;tag id='20'/&gt;</vlan>
-```text
-```text:no-line-numbers
-B9.  # бонд 802.3ad: eno1 → свитч A, eno2 → свитч B
-```text
-<details><summary>Ответ</summary>
-
-⚠️ LACP между двумя независимыми свитчами не соберётся: у них разные system ID.
+**B9.** ⚠️ LACP между двумя независимыми свитчами не соберётся: у них разные system ID.
 Нужен стек/MLAG, либо active-backup (он с независимыми свитчами работает).
 
-</details>
-
-```text:no-line-numbers
-     # свитчи независимые: не стек и не MLAG
-```text
-```text:no-line-numbers
-B10.  # сеть libvirt routed-lab (10.20.0.0/24), на роутере офиса ничего не меняли
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Routed без NAT: пакеты уходят с адресом 10.20.0.x, а роутер не знает, куда
-возвращать ответы. Добавить на роутере маршрут `10.20.0.0/24 via &lt;IP хоста&gt;` (и NAT на
+**B10.** ⚠️ Routed без NAT: пакеты уходят с адресом 10.20.0.x, а роутер не знает, куда
+возвращать ответы. Добавить на роутере маршрут `10.20.0.0/24 via <IP хоста>` (и NAT на
 выходе в интернет на самом роутере) или использовать NAT-сеть.
 
-</details>
-
-```text:no-line-numbers
-     # из VM: ping 1.1.1.1 — тишина
-```text
-```text:no-line-numbers
-B11.  # netplan: br0 с dhcp4: true поверх enp3s0, без macaddress
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Бридж получил свой MAC, DHCP видит новое устройство. Указать `macaddress:` бриджа
+**B11.** ⚠️ Бридж получил свой MAC, DHCP видит новое устройство. Указать `macaddress:` бриджа
 равным MAC физического NIC или перенести резерв на новый MAC.
 
-</details>
-
-```text:no-line-numbers
-     # после перезагрузки у сервера другой IP, DHCP-резерв «не сработал»
-```text
-```text:no-line-numbers
-B12.  # схема хоста: bond0 → bond0.20 → br-prod, и у хоста IP 10.0.20.5 на br-prod
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Хост становится доступен из сети VM: скомпрометированная VM атакует гипервизор
+**B12.** ⚠️ Хост становится доступен из сети VM: скомпрометированная VM атакует гипервизор
 напрямую. У хоста не должно быть IP в VLAN с VM — только в управлении.
 
 </details>
 
-```text:no-line-numbers
-     # «чтобы было удобно ходить на хост из сети прода»
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Сети libvirt
-**1.** Создай `lab-trunk` (isolated, без `&lt;ip&gt;`) и `lab-iso` (isolated, с `&lt;ip&gt;` 10.30.0.1/24 и DHCP).
+#### C1. 🔑 Сети libvirt
+1. Создай `lab-trunk` (isolated, без `<ip>`) и `lab-iso` (isolated, с `<ip>` 10.30.0.1/24 и DHCP).
+2. Сравни `virsh net-dumpxml` и процессы dnsmasq: у какой сети он есть и почему?
+3. Зарезервируй `vm1` адрес `10.10.10.50` в `virt-lab`, перезапусти VM и проверь.
+4. Найди правила NAT сети `virt-lab` в iptables или nftables.
 
 <details><summary>Ответ</summary>
 
-У `lab-trunk` dnsmasq нет — нет `&lt;ip&gt;`, раздавать нечего и хост в сети без адреса;
-у `lab-iso` есть. Резерв: `virsh net-update virt-lab add ip-dhcp-host "&lt;host mac='...' name='vm1' ip='10.10.10.50'/&gt;" --live --config`,
+У `lab-trunk` dnsmasq нет — нет `<ip>`, раздавать нечего и хост в сети без адреса;
+у `lab-iso` есть. Резерв: `virsh net-update virt-lab add ip-dhcp-host "<host mac='...' name='vm1' ip='10.10.10.50'/>" --live --config`,
 затем VM перезапустить (или обновить аренду в госте). NAT: `sudo nft list ruleset | grep -A3 10.10.10`
 или `sudo iptables -t nat -S | grep 10.10.10` — правило MASQUERADE для 10.10.10.0/24.
 
 </details>
 
-**2.** Сравни `virsh net-dumpxml` и процессы dnsmasq: у какой сети он есть и почему?
-
-<details><summary>Ответ</summary>
-
-```bash
-sudo ip link add br0 type bridge && sudo ip link set trunk0 master br0
-sudo ip link set trunk0 up && sudo ip link set br0 up && sudo ip addr add 10.40.0.1/24 dev br0
-sudo ip netns add vmA
-sudo ip link add veth-a type veth peer name veth-a-br
-sudo ip link set veth-a netns vmA && sudo ip link set veth-a-br master br0 && sudo ip link set veth-a-br up
-sudo ip -n vmA addr add 10.40.0.11/24 dev veth-a && sudo ip -n vmA link set veth-a up
-```text
-В `bridge fdb` MAC `hv2` выучен за `trunk0`, MAC namespace — за `veth-a-br`: бридж ведёт
-себя как свитч.
-
-</details>
-
-**3.** Зарезервируй `vm1` адрес `10.10.10.50` в `virt-lab`, перезапусти VM и проверь.
-
-<details><summary>Ответ</summary>
-
-Обычно теряется 0–несколько пакетов при `ping -i 0.2`: `miimon 100` замечает падение
-за ~100 мс, бонд переключается и шлёт gratuitous ARP. В `/proc/net/bonding/bond0` меняется
-`Currently Active Slave`, у упавшего слейва `MII Status: down` и растёт `Link Failure Count`.
-Без `primary` бонд после возврата линка остаётся на текущем слейве; с `primary trunk0` и
-`primary_reselect always` (по умолчанию) — вернётся на primary.
-
-</details>
-
-**4.** Найди правила NAT сети `virt-lab` в iptables или nftables.
-
-<details><summary>Ответ</summary>
-
-```bash
-sudo ip link add link bond0 name bond0.10 type vlan id 10
-sudo ip link add br10 type bridge && sudo ip link set bond0.10 master br10
-sudo ip link set bond0.10 up && sudo ip link set br10 up && sudo ip addr add 10.0.10.1/24 dev br10
-# то же для 20
-```text
-Адрес из 10.0.10.0/24 на `br20` — пакеты уходят с тегом 20, а `hv2` слушает 10.0.10.2 только
-в VLAN 10: ARP не получает ответа — изоляция на L2. В tcpdump на хосте:
-`ethertype 802.1Q (0x8100), length ...: vlan 10, p 0, ethertype IPv4 ...`. Бридж `lab-trunk`
-на хосте теги не снимает — он не VLAN-aware и пропускает кадры как есть.
-
-</details>
-
-### C2. 🔑 Бридж внутри VM и «VM» из network namespace
+#### C2. 🔑 Бридж внутри VM и «VM» из network namespace
 Внутри `hv1` (сеть хоста не трогаем):
-**1.** Создай `br0` поверх `trunk0` с адресом `10.40.0.1/24`.
-
-<details><summary>Ответ</summary>
-
-У `lab-trunk` dnsmasq нет — нет `&lt;ip&gt;`, раздавать нечего и хост в сети без адреса;
-у `lab-iso` есть. Резерв: `virsh net-update virt-lab add ip-dhcp-host "&lt;host mac='...' name='vm1' ip='10.10.10.50'/&gt;" --live --config`,
-затем VM перезапустить (или обновить аренду в госте). NAT: `sudo nft list ruleset | grep -A3 10.10.10`
-или `sudo iptables -t nat -S | grep 10.10.10` — правило MASQUERADE для 10.10.10.0/24.
-
-</details>
-
-**2.** Сделай «виртуалку» из namespace: `ip netns add vmA`, veth-пара, один конец в `vmA`
+1. Создай `br0` поверх `trunk0` с адресом `10.40.0.1/24`.
+2. Сделай «виртуалку» из namespace: `ip netns add vmA`, veth-пара, один конец в `vmA`
    с адресом `10.40.0.11/24`, второй — в `br0`.
-
-<details><summary>Ответ</summary>
-
-```bash
-sudo ip link add br0 type bridge && sudo ip link set trunk0 master br0
-sudo ip link set trunk0 up && sudo ip link set br0 up && sudo ip addr add 10.40.0.1/24 dev br0
-sudo ip netns add vmA
-sudo ip link add veth-a type veth peer name veth-a-br
-sudo ip link set veth-a netns vmA && sudo ip link set veth-a-br master br0 && sudo ip link set veth-a-br up
-sudo ip -n vmA addr add 10.40.0.11/24 dev veth-a && sudo ip -n vmA link set veth-a up
-```text
-В `bridge fdb` MAC `hv2` выучен за `trunk0`, MAC namespace — за `veth-a-br`: бридж ведёт
-себя как свитч.
-
-</details>
-
-**3.** С `hv2` (адрес `10.40.0.2/24` на `trunk0`) пропингуй `10.40.0.11`. Посмотри `bridge fdb show br br0`
+3. С `hv2` (адрес `10.40.0.2/24` на `trunk0`) пропингуй `10.40.0.11`. Посмотри `bridge fdb show br br0`
    в `hv1` — за какими портами выучены MAC?
 
 <details><summary>Ответ</summary>
 
-Обычно теряется 0–несколько пакетов при `ping -i 0.2`: `miimon 100` замечает падение
-за ~100 мс, бонд переключается и шлёт gratuitous ARP. В `/proc/net/bonding/bond0` меняется
-`Currently Active Slave`, у упавшего слейва `MII Status: down` и растёт `Link Failure Count`.
-Без `primary` бонд после возврата линка остаётся на текущем слейве; с `primary trunk0` и
-`primary_reselect always` (по умолчанию) — вернётся на primary.
-
-</details>
-
-### C3. 🔑 active-backup и failover
-**1.** В `hv1` и `hv2` собери `bond0` (active-backup, `miimon 100`) из `trunk0` + `trunk1`, адреса
-   `10.50.0.1/24` и `10.50.0.2/24`.
-
-<details><summary>Ответ</summary>
-
-У `lab-trunk` dnsmasq нет — нет `&lt;ip&gt;`, раздавать нечего и хост в сети без адреса;
-у `lab-iso` есть. Резерв: `virsh net-update virt-lab add ip-dhcp-host "&lt;host mac='...' name='vm1' ip='10.10.10.50'/&gt;" --live --config`,
-затем VM перезапустить (или обновить аренду в госте). NAT: `sudo nft list ruleset | grep -A3 10.10.10`
-или `sudo iptables -t nat -S | grep 10.10.10` — правило MASQUERADE для 10.10.10.0/24.
-
-</details>
-
-**2.** Запусти `ping -i 0.2 10.50.0.2` и на хосте выдерни «кабель» активного слейва:
-   `virsh domif-setlink hv1 &lt;vnet активного&gt; down`.
-
-<details><summary>Ответ</summary>
-
 ```bash
 sudo ip link add br0 type bridge && sudo ip link set trunk0 master br0
 sudo ip link set trunk0 up && sudo ip link set br0 up && sudo ip addr add 10.40.0.1/24 dev br0
@@ -972,13 +803,19 @@ sudo ip netns add vmA
 sudo ip link add veth-a type veth peer name veth-a-br
 sudo ip link set veth-a netns vmA && sudo ip link set veth-a-br master br0 && sudo ip link set veth-a-br up
 sudo ip -n vmA addr add 10.40.0.11/24 dev veth-a && sudo ip -n vmA link set veth-a up
-```text
+```
 В `bridge fdb` MAC `hv2` выучен за `trunk0`, MAC namespace — за `veth-a-br`: бридж ведёт
 себя как свитч.
 
 </details>
 
-**3.** Сколько пакетов потерялось? Что показывает `/proc/net/bonding/bond0`?
+#### C3. 🔑 active-backup и failover
+1. В `hv1` и `hv2` собери `bond0` (active-backup, `miimon 100`) из `trunk0` + `trunk1`, адреса
+   `10.50.0.1/24` и `10.50.0.2/24`.
+2. Запусти `ping -i 0.2 10.50.0.2` и на хосте выдерни «кабель» активного слейва:
+   `virsh domif-setlink hv1 <vnet активного> down`.
+3. Сколько пакетов потерялось? Что показывает `/proc/net/bonding/bond0`?
+4. Верни линк. Переключился ли бонд обратно? От чего это зависит?
 
 <details><summary>Ответ</summary>
 
@@ -990,7 +827,12 @@ sudo ip -n vmA addr add 10.40.0.11/24 dev veth-a && sudo ip -n vmA link set veth
 
 </details>
 
-**4.** Верни линк. Переключился ли бонд обратно? От чего это зависит?
+#### C4. 🔑 VLAN поверх бонда: изоляция
+1. Поверх `bond0` в обеих VM: `bond0.10` → `br10` (`10.0.10.1` / `.2`) и `bond0.20` → `br20`
+   (`10.0.20.1` / `.2`).
+2. Докажи: `10.0.10.1 → 10.0.10.2` работает, из VLAN 20 в VLAN 10 — нет (добавь в `hv1`
+   на `br20` адрес `10.0.10.99/24` и попробуй пропинговать `10.0.10.2`).
+3. На хосте: `sudo tcpdump -eni <vnet trunk hv1> vlan` — найди теги `vlan 10` и `vlan 20`.
 
 <details><summary>Ответ</summary>
 
@@ -999,7 +841,7 @@ sudo ip link add link bond0 name bond0.10 type vlan id 10
 sudo ip link add br10 type bridge && sudo ip link set bond0.10 master br10
 sudo ip link set bond0.10 up && sudo ip link set br10 up && sudo ip addr add 10.0.10.1/24 dev br10
 # то же для 20
-```text
+```
 Адрес из 10.0.10.0/24 на `br20` — пакеты уходят с тегом 20, а `hv2` слушает 10.0.10.2 только
 в VLAN 10: ARP не получает ответа — изоляция на L2. В tcpdump на хосте:
 `ethertype 802.1Q (0x8100), length ...: vlan 10, p 0, ethertype IPv4 ...`. Бридж `lab-trunk`
@@ -1007,108 +849,76 @@ sudo ip link set bond0.10 up && sudo ip link set br10 up && sudo ip addr add 10.
 
 </details>
 
-### C4. 🔑 VLAN поверх бонда: изоляция
-**1.** Поверх `bond0` в обеих VM: `bond0.10` → `br10` (`10.0.10.1` / `.2`) и `bond0.20` → `br20`
-   (`10.0.20.1` / `.2`).
-
-<details><summary>Ответ</summary>
-
-У `lab-trunk` dnsmasq нет — нет `&lt;ip&gt;`, раздавать нечего и хост в сети без адреса;
-у `lab-iso` есть. Резерв: `virsh net-update virt-lab add ip-dhcp-host "&lt;host mac='...' name='vm1' ip='10.10.10.50'/&gt;" --live --config`,
-затем VM перезапустить (или обновить аренду в госте). NAT: `sudo nft list ruleset | grep -A3 10.10.10`
-или `sudo iptables -t nat -S | grep 10.10.10` — правило MASQUERADE для 10.10.10.0/24.
-
-</details>
-
-**2.** Докажи: `10.0.10.1 → 10.0.10.2` работает, из VLAN 20 в VLAN 10 — нет (добавь в `hv1`
-   на `br20` адрес `10.0.10.99/24` и попробуй пропинговать `10.0.10.2`).
-
-<details><summary>Ответ</summary>
-
-```bash
-sudo ip link add br0 type bridge && sudo ip link set trunk0 master br0
-sudo ip link set trunk0 up && sudo ip link set br0 up && sudo ip addr add 10.40.0.1/24 dev br0
-sudo ip netns add vmA
-sudo ip link add veth-a type veth peer name veth-a-br
-sudo ip link set veth-a netns vmA && sudo ip link set veth-a-br master br0 && sudo ip link set veth-a-br up
-sudo ip -n vmA addr add 10.40.0.11/24 dev veth-a && sudo ip -n vmA link set veth-a up
-```text
-В `bridge fdb` MAC `hv2` выучен за `trunk0`, MAC namespace — за `veth-a-br`: бридж ведёт
-себя как свитч.
-
-</details>
-
-**3.** На хосте: `sudo tcpdump -eni &lt;vnet trunk hv1&gt; vlan` — найди теги `vlan 10` и `vlan 20`.
-
-<details><summary>Ответ</summary>
-
-Обычно теряется 0–несколько пакетов при `ping -i 0.2`: `miimon 100` замечает падение
-за ~100 мс, бонд переключается и шлёт gratuitous ARP. В `/proc/net/bonding/bond0` меняется
-`Currently Active Slave`, у упавшего слейва `MII Status: down` и растёт `Link Failure Count`.
-Без `primary` бонд после возврата линка остаётся на текущем слейве; с `primary trunk0` и
-`primary_reselect always` (по умолчанию) — вернётся на primary.
-
-</details>
-
-### C5. VLAN-aware bridge
+#### C5. VLAN-aware bridge
 В `hv1` вместо `br10/br20` собери один `br0 vlan_filtering 1` поверх `bond0`: два namespace-«VM»
 в VLAN 10 и 20 через `bridge vlan ... pvid untagged`, аплинк `bond0` — с тегами 10 и 20.
 Проверь связность с `hv2` и вывод `bridge vlan show`.
 
-### C6. Постоянная конфигурация
+<details><summary>Ответ</summary>
+
+`ip link add br0 type bridge vlan_filtering 1`, `ip link set bond0 master br0`,
+`bridge vlan add dev bond0 vid 10`, `... vid 20`, veth «VM» — `bridge vlan add dev veth-a-br vid 10 pvid untagged`
+и `bridge vlan del dev veth-a-br vid 1`. `bridge vlan show` показывает 10 и 20 на `bond0`
+и по одному PVID на портах «VM».
+
+</details>
+
+#### C6. Постоянная конфигурация
 Перенеси схему из C3–C4 в netplan в `hv1` (файл в `/etc/netplan/`), примени через `netplan try`,
 перезагрузи VM и проверь, что всё поднялось само.
 
-### C7. Jumbo frames
-**1.** Выключи обе VM, добавь в сеть `lab-trunk` `&lt;mtu size='9000'/&gt;` (`virsh net-edit`,
+<details><summary>Ответ</summary>
+
+Файл вида:
+```yaml
+network:
+  version: 2
+  ethernets:
+    trunk0: {}
+    trunk1: {}
+  bonds:
+    bond0:
+      interfaces: [trunk0, trunk1]
+      parameters: { mode: active-backup, mii-monitor-interval: 100 }
+  vlans:
+    bond0.10: { id: 10, link: bond0 }
+    bond0.20: { id: 20, link: bond0 }
+  bridges:
+    br10: { interfaces: [bond0.10], addresses: [10.0.10.1/24] }
+    br20: { interfaces: [bond0.20], addresses: [10.0.20.1/24] }
+```
+Сохраняй сетевые настройки от cloud-init (`mgmt0`) в его файле — не удаляй его, иначе
+потеряешь SSH к VM.
+
+</details>
+
+#### C7. Jumbo frames
+1. Выключи обе VM, добавь в сеть `lab-trunk` `<mtu size='9000'/>` (`virsh net-edit`,
    затем `net-destroy`/`net-start`).
+2. Подними MTU 9000 на `trunk0/trunk1/bond0/bond0.10/br10` в обеих VM.
+3. `ping -M do -s 8972 10.0.10.2` — проходит? Верни 1500 на одном звене и повтори.
 
 <details><summary>Ответ</summary>
 
-У `lab-trunk` dnsmasq нет — нет `&lt;ip&gt;`, раздавать нечего и хост в сети без адреса;
-у `lab-iso` есть. Резерв: `virsh net-update virt-lab add ip-dhcp-host "&lt;host mac='...' name='vm1' ip='10.10.10.50'/&gt;" --live --config`,
-затем VM перезапустить (или обновить аренду в госте). NAT: `sudo nft list ruleset | grep -A3 10.10.10`
-или `sudo iptables -t nat -S | grep 10.10.10` — правило MASQUERADE для 10.10.10.0/24.
+С MTU 9000 на всех звеньях `ping -M do -s 8972` проходит. Если одно звено 1500:
+на исходящем интерфейсе — локальная ошибка `message too long`; в середине пути (бридж/бонд)
+— тишина, кадры отбрасываются молча. Отсюда правило «на всём пути».
 
 </details>
 
-**2.** Подними MTU 9000 на `trunk0/trunk1/bond0/bond0.10/br10` в обеих VM.
-
-<details><summary>Ответ</summary>
-
-```bash
-sudo ip link add br0 type bridge && sudo ip link set trunk0 master br0
-sudo ip link set trunk0 up && sudo ip link set br0 up && sudo ip addr add 10.40.0.1/24 dev br0
-sudo ip netns add vmA
-sudo ip link add veth-a type veth peer name veth-a-br
-sudo ip link set veth-a netns vmA && sudo ip link set veth-a-br master br0 && sudo ip link set veth-a-br up
-sudo ip -n vmA addr add 10.40.0.11/24 dev veth-a && sudo ip -n vmA link set veth-a up
-```text
-В `bridge fdb` MAC `hv2` выучен за `trunk0`, MAC namespace — за `veth-a-br`: бридж ведёт
-себя как свитч.
-
-</details>
-
-**3.** `ping -M do -s 8972 10.0.10.2` — проходит? Верни 1500 на одном звене и повтори.
-
-<details><summary>Ответ</summary>
-
-Обычно теряется 0–несколько пакетов при `ping -i 0.2`: `miimon 100` замечает падение
-за ~100 мс, бонд переключается и шлёт gratuitous ARP. В `/proc/net/bonding/bond0` меняется
-`Currently Active Slave`, у упавшего слейва `MII Status: down` и растёт `Link Failure Count`.
-Без `primary` бонд после возврата линка остаётся на текущем слейве; с `primary trunk0` и
-`primary_reselect always` (по умолчанию) — вернётся на primary.
-
-</details>
-
-### C8. macvtap (только если у хоста есть проводной Ethernet)
-Подними VM с `--network type=direct,source=&lt;проводной NIC&gt;,source.mode=bridge`. Проверь
+#### C8. macvtap (только если у хоста есть проводной Ethernet)
+Подними VM с `--network type=direct,source=<проводной NIC>,source.mode=bridge`. Проверь
 доступ к ней с другого устройства в LAN и с самого хоста. Объясни результат.
+
+<details><summary>Ответ</summary>
+
+Из LAN VM доступна, с хоста — нет: трафик macvtap идёт прямо в NIC мимо стека хоста.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Сетевики добавили VLAN 30, на хосте сделали `bond0.30` → `br30`. VM в `br30` не видят шлюз.
 `tcpdump -eni bond0 vlan 30` показывает исходящие ARP-запросы с тегом 30, ответов нет. Где проблема?
@@ -1162,6 +972,8 @@ LACP выключен или порт-группа в режиме `on` (ста�
 <details><summary>Ответ</summary>
 
 MTU 9000 не на всём пути: где-то (свитч, бонд, VLAN, бридж, NFS-сервер) осталось
+1500. Мелкие пакеты проходят, большие NFS-ответы теряются. `ping -M do -s 8972` по очереди до
+каждого узла, выровнять MTU.
 
 </details>
 
@@ -1192,13 +1004,12 @@ LACP с port-channel на свитче или active-backup; проверить 
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Какие режимы сети есть у KVM/libvirt?
 
 <details><summary>Ответ</summary>
 
 NAT (по умолчанию, `virbr0` + dnsmasq), routed, isolated, bridge к бриджу хоста, macvtap
-   (direct); плюс OVS и SR-IOV для особых случаев.
+(direct); плюс OVS и SR-IOV для особых случаев.
 
 </details>
 
@@ -1207,8 +1018,8 @@ NAT (по умолчанию, `virbr0` + dnsmasq), routed, isolated, bridge к �
 <details><summary>Ответ</summary>
 
 Бридж на хосте: физический NIC — порт бриджа, IP хоста — на бридже, VM подключены к
-   бриджу (`--network bridge=br0`). Быстрый вариант без правки хоста — macvtap, но хост не
-   увидит VM.
+бриджу (`--network bridge=br0`). Быстрый вариант без правки хоста — macvtap, но хост не
+увидит VM.
 
 </details>
 
@@ -1217,8 +1028,8 @@ NAT (по умолчанию, `virbr0` + dnsmasq), routed, isolated, bridge к �
 <details><summary>Ответ</summary>
 
 Bridge — программный L2-свитч в ядре: учит MAC, пересылает кадры между портами. Tap —
-   виртуальный NIC, у которого с одной стороны процесс (QEMU), с другой — стек хоста; это «кабель»
-   VM в бридж.
+виртуальный NIC, у которого с одной стороны процесс (QEMU), с другой — стек хоста; это «кабель»
+VM в бридж.
 
 </details>
 
@@ -1227,8 +1038,8 @@ Bridge — программный L2-свитч в ядре: учит MAC, пе�
 <details><summary>Ответ</summary>
 
 VLAN — логическое разделение L2 по тегу 802.1Q. Access — один VLAN без тега, trunk — много
-   VLAN с тегами. Хост подключают транком, дальше — `bond0.20` → `br20` для VM или VLAN-aware
-   бридж, где порту VM назначают VLAN (в Proxmox — `tag=20`).
+VLAN с тегами. Хост подключают транком, дальше — `bond0.20` → `br20` для VM или VLAN-aware
+бридж, где порту VM назначают VLAN (в Proxmox — `tag=20`).
 
 </details>
 
@@ -1237,8 +1048,8 @@ VLAN — логическое разделение L2 по тегу 802.1Q. Acce
 <details><summary>Ответ</summary>
 
 active-backup, balance-rr, balance-xor, broadcast, 802.3ad, balance-tlb, balance-alb.
-   LACP (802.3ad) — протокол динамической агрегации: стороны договариваются, неисправный
-   порт выкидывается, трафик делится по хэшу потоков; на свитче нужна port-channel группа.
+LACP (802.3ad) — протокол динамической агрегации: стороны договариваются, неисправный
+порт выкидывается, трафик делится по хэшу потоков; на свитче нужна port-channel группа.
 
 </details>
 
@@ -1247,7 +1058,7 @@ active-backup, balance-rr, balance-xor, broadcast, 802.3ad, balance-tlb, balance
 <details><summary>Ответ</summary>
 
 macvtap — NIC VM напрямую на физическом интерфейсе, без бриджа и правки хоста, но хост
-   и VM не видят друг друга; bridge гибче (VLAN, несколько NIC, видимость хоста).
+и VM не видят друг друга; bridge гибче (VLAN, несколько NIC, видимость хоста).
 
 </details>
 
@@ -1256,7 +1067,7 @@ macvtap — NIC VM напрямую на физическом интерфейс
 <details><summary>Ответ</summary>
 
 Два NIC в бонде (LACP на стек свитчей) → VLAN: управление, VM, хранилище/миграция (MTU 9000)
-   → бриджи для VM; IP хоста — только в управлении и хранилище.
+→ бриджи для VM; IP хоста — только в управлении и хранилище.
 
 </details>
 
@@ -1265,7 +1076,7 @@ macvtap — NIC VM напрямую на физическом интерфейс
 <details><summary>Ответ</summary>
 
 Кадры до 9000 байт вместо 1500 — меньше пакетов и нагрузки на CPU при больших потоках:
-   хранилище, миграция, бэкап. MTU должен совпадать на всём L2-пути.
+хранилище, миграция, бэкап. MTU должен совпадать на всём L2-пути.
 
 </details>
 
@@ -1274,8 +1085,8 @@ macvtap — NIC VM напрямую на физическом интерфейс
 <details><summary>Ответ</summary>
 
 По слоям: линк и ошибки NIC → бонд → VLAN-тег и транк → бридж и fdb → порт VM
-   (`domif-getlink`) → `tcpdump -e` на vnet и аплинке → фильтры (br_netfilter, Docker) → IP и
-   маршруты в госте.
+(`domif-getlink`) → `tcpdump -e` на vnet и аплинке → фильтры (br_netfilter, Docker) → IP и
+маршруты в госте.
 
 </details>
 
@@ -1284,9 +1095,7 @@ macvtap — NIC VM напрямую на физическом интерфейс
 <details><summary>Ответ</summary>
 
 Второй канал (IPMI/консоль), `netplan try` с автооткатом, бэкап конфигов, отложенный
-    откат через `at`, проверка на стенде, изменения по одному в согласованное окно.
-
----
+откат через `at`, проверка на стенде, изменения по одному в согласованное окно.
 
 </details>
 

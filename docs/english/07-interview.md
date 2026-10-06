@@ -1,20 +1,20 @@
 ---
 title: "07. Собеседование на английском для DevOps-позиции"
-description: "Блок → Английский для IT → собеседование."
+description: "«Tell me about yourself», STAR по-английски, URL / Kubernetes / контейнер vs ВМ, думать вслух, ~35 вопросов с ответами, вопросы работодателю"
 ---
 
 # 07. Собеседование на английском для DevOps-позиции
 
 > Блок → Английский для IT → собеседование.
 > Англоязычное интервью — это то же интервью, что в
-> [../../DevOps/SoftSkills/09_interview.md](/softskills/09-interview)
+> [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview)
 > (STAR, банк историй, мотивация — там по существу), только по-английски. Здесь —
 > английские формулировки, готовые каркасы ответов, фразы, чтобы думать вслух,
 > и ~35 коротких вопросов с примерами ответов.
 >
 > Технические темы подробно — в интервью блоков (например,
-> [../../DevOps/Network/14_url_journey.md](/network/14-url-journey) для
-> вопроса про URL). Речь и переспрос — в [05_speaking.md](/english/05-speaking).
+> [Сети: 14. Путь запроса в браузере](/network/14-url-journey) для
+> вопроса про URL). Речь и переспрос — в [05. Речь: стендап, созвоны, переспрос, демо](/english/05-speaking).
 
 ---
 
@@ -35,7 +35,7 @@ description: "Блок → Английский для IT → собеседов
 
 ## 🙋 «Tell me about yourself»
 
-Структура — та же, что в [../../DevOps/SoftSkills/09_interview.md](/softskills/09-interview):
+Структура — та же, что в [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview):
 **настоящее → прошлое → доказательство → будущее**, 60–90 секунд.
 
 | Часть | 🇬🇧 Фразы | Время |
@@ -47,8 +47,8 @@ description: "Блок → Английский для IT → собеседов
 
 🇬🇧 Пример для перехода из бэкенда (подставь своё — чужая история рассыпается на
 уточняющих вопросах):
-```text
-I'm a backend developer at &lt;type of company&gt;, working mostly with &lt;stack&gt;.
+```
+I'm a backend developer at <type of company>, working mostly with <stack>.
 Over the last few months, I've taken on more and more of the delivery side in my team:
 I wrote the Dockerfile and the CI pipeline for our service, set up alerts, and joined
 incident reviews. I realized that I enjoy how a service runs in production more than
@@ -57,11 +57,11 @@ The best proof is my pet project, linkd-platform. It's a small URL shortener wit
 platform around it: GitLab CI, Argo CD, Kubernetes, SLO-based monitoring, and backups
 with restore tests. Everything is in a public repo with a README and ADRs.
 Now I'm looking for a junior DevOps role where I can work on real infrastructure and
-grow into on-call. That's why this position caught my attention: &lt;something specific
-from the job description&gt;.
-```text
+grow into on-call. That's why this position caught my attention: <something specific
+from the job description>.
+```
 Заметь *I realized that I enjoy* — здесь *realize* в правильном значении «осознал»
-([03_vocabulary.md](/english/03-vocabulary)).
+([03. Лексика: глоссарий DevOps, фразовые глаголы, ложные друзья, произношение](/english/03-vocabulary)).
 
 Правила: учить **каркас**, а не текст наизусть — заученный текст звучит монотонно
 и ломается на первом уточнении; один сильный факт; без биографии; не начинать
@@ -89,7 +89,7 @@ from the job description&gt;.
 | Вывод | *What I learned is…*, *Next time, I'd…* | Present Simple, *would* |
 
 🇬🇧 История «сложная задача» (та же, что в SoftSkills/09, по-английски):
-```text
+```
 At my current job, the CI build for our notifications service was taking about
 20 minutes, and developers were waiting for reviews for half an hour. My team lead
 asked me to look into it. First, I measured each stage and found that 12 minutes
@@ -98,16 +98,18 @@ branch name, so every new branch started with an empty cache. I changed the key
 to a hash of the lock file and split the tests into two parallel jobs. As a result,
 the build went down to about 7 minutes. What I learned is to measure first and fix
 second: I was sure the tests were the problem, but it was the dependencies.
-```text
+```
+
 🇬🇧 История «ошибка»:
-```text
+```
 I deployed a migration that added an index to a large table without CONCURRENTLY,
 and it blocked writes for a few minutes, so some requests timed out. I noticed it
 from an alert almost immediately, told the team in our channel that it was my
 migration, and rolled back the release together with my team lead. Afterwards,
 I added a checklist item about blocking migrations to our MR template. The lesson
 for me: report it right away, and fix the process, not just your own mistake.
-```text
+```
+
 ---
 
 ## 🧠 Как объяснять технические вещи по-английски
@@ -117,9 +119,9 @@ for me: report it right away, and fix the process, not just your own mistake.
 
 ### «What happens when you type a URL into a browser?»
 
-Полная версия по шагам — [../../DevOps/Network/14_url_journey.md](/network/14-url-journey).
+Полная версия по шагам — [Сети: 14. Путь запроса в браузере](/network/14-url-journey).
 🇬🇧 Ответ за ~60 секунд:
-```text
+```
 First, the browser parses the URL and checks its caches. Then it resolves the domain
 name: it checks the hosts file and its own cache, and if needed, asks a recursive
 resolver, which walks from the root servers down to the domain's authoritative server
@@ -134,11 +136,12 @@ On the server side, it goes through a firewall and a load balancer to a healthy
 backend. The app may call a database or a cache, and returns a response.
 Finally, the browser renders the HTML and loads the other resources, usually over
 the same connection.
-```text
+```
+
 ### «Explain Kubernetes to a non-technical person»
 
 🇬🇧
-```text
+```
 Imagine a big restaurant kitchen with a very good manager. You don't tell the manager
 which cook should do what. You just say: "I always want three cooks making pizza."
 If one cook gets sick, the manager finds a replacement. If there are suddenly a lot
@@ -147,11 +150,12 @@ Kubernetes is that manager for applications. We describe what we want —
 "run three copies of this app" — and Kubernetes keeps it that way on a group of servers:
 it restarts what crashes, spreads the load, and adds copies when traffic grows.
 By the way, the name comes from the Greek word for "helmsman".
-```text
+```
+
 ### «What's the difference between a container and a virtual machine?»
 
 🇬🇧
-```text
+```
 A virtual machine virtualizes hardware: a hypervisor runs several VMs, and each one has
 its own full operating system and kernel. A container virtualizes at the OS level:
 all containers on a host share the host's kernel and are isolated with namespaces
@@ -163,7 +167,8 @@ An analogy: VMs are separate houses, each with its own foundation and plumbing.
 Containers are apartments in one building: they share the infrastructure but have
 their own locked doors.
 In practice, we often use both: containers run inside VMs in the cloud.
-```text
+```
+
 ---
 
 ## 💭 Думать вслух
@@ -182,7 +187,7 @@ In practice, we often use both: containers run inside VMs in the cloud.
 | Подвести итог | *So, to summarize my approach: …* |
 
 🇬🇧 Пример: *The website is slow. What do you do?*
-```text
+```
 First, I'd clarify the scope: is it slow for everyone or for some users, and since when?
 Then I'd check what changed recently: deploys, config changes, traffic spikes.
 Next, I'd look at the dashboards: latency, traffic, errors, and saturation for the
@@ -190,7 +195,8 @@ frontend, the backend, and the database. If the backend latency is high, I'd ope
 a slow trace to see which span takes the time — often it's a database query or an
 external call. Meanwhile, if it started right after a deploy, I'd suggest rolling back
 first and investigating after that.
-```text
+```
+
 **Если не понял вопрос** — не угадывай:
 🇬🇧 *Sorry, could you repeat the question?* · *Do you mean X or Y?* ·
 *Just to make sure I got it right: you're asking about…?*
@@ -258,7 +264,7 @@ first and investigating after that.
     interchangeable. A StatefulSet gives each pod a stable name and its own persistent
     volume, and starts pods in order — for databases and similar workloads.*
 20. **How do you roll back a bad release in Kubernetes?** — *`kubectl rollout undo
-    deployment/&lt;name&gt;` goes back to the previous revision. With GitOps, I revert the
+    deployment/<name>` goes back to the previous revision. With GitOps, I revert the
     commit, and Argo CD syncs the cluster.*
 21. **Liveness vs readiness probes?** — *If a liveness probe fails, the kubelet restarts
     the container. If a readiness probe fails, the pod is removed from the Service
@@ -300,10 +306,10 @@ first and investigating after that.
 ### Завершение
 
 33. **What are your salary expectations?** — *Based on the market for this role, I'm
-    looking at &lt;range&gt; per month, &lt;net / gross&gt;. I'm also interested in the whole
+    looking at &lt;range> per month, &lt;net / gross>. I'm also interested in the whole
     package: on-call compensation and learning budget.*
-34. **When can you start?** — *My notice period is &lt;two weeks / one month&gt;, so I could
-    start on &lt;date&gt;.*
+34. **When can you start?** — *My notice period is &lt;two weeks / one month>, so I could
+    start on &lt;date>.*
 35. **Do you have any questions for us?** — Всегда да — см. ниже.
 
 ---
@@ -335,7 +341,7 @@ first and investigating after that.
 | Взять время | *Thank you! Could I have a couple of days to think it over?* |
 | Письменно | *Could you send me the offer in writing?* |
 
-Подход к цифрам и переговорам — [../../DevOps/SoftSkills/09_interview.md](/softskills/09-interview),
+Подход к цифрам и переговорам — [Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview),
 раздел про зарплатные переговоры.
 
 ---
@@ -364,7 +370,7 @@ first and investigating after that.
 5. **Переспросить — нормально.** Это показывает внимательность, а не слабый английский.
 6. **Думать вслух** на технических вопросах: гипотеза → проверка → следующий шаг.
 7. **Проговорить вслух заранее** — минимум два тренировочных интервью
-   ([06_practice_labs.md](/english/06-practice-labs), лаба 5).
+   ([06. Практика: 30 дней английского для IT](/english/06-practice-labs), лаба 5).
 8. **Честно про опыт:** *I haven't used it in production, but…* звучит сильнее выдумки.
 
 ---
@@ -380,6 +386,6 @@ first and investigating after that.
 - [ ] Есть 3–4 своих вопроса работодателю на английском
 - [ ] Провёл два тренировочных интервью, второе — с живым человеком
 
-➡️ Назад к карте блока: [00_INDEX.md](/english/) · Behavioral на русском:
-[../../DevOps/SoftSkills/09_interview.md](/softskills/09-interview) ·
-Практика: [06_practice_labs.md](/english/06-practice-labs)
+➡️ Назад к карте блока: [English](/english/) · Behavioral на русском:
+[Soft Skills: 09. Behavioral-собеседование: STAR, истории, мотивация](/softskills/09-interview) ·
+Практика: [06. Практика: 30 дней английского для IT](/english/06-practice-labs)

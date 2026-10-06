@@ -1,6 +1,6 @@
 ---
 title: "02. Контейнеризация: образ и локальный стенд"
-description: "Цель этапа: перенести образ из 04-shipyard в портфолио, довести его до linkd 2.0"
+description: "образ, compose-стенд с PostgreSQL"
 ---
 
 # 02. Контейнеризация: образ и локальный стенд
@@ -46,7 +46,7 @@ description: "Цель этапа: перенести образ из 04-shipyar
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
  linkd-platform/
  ├── docker/Dockerfile         ← из 04-shipyard + метки OCI и /healthz
  ├── .dockerignore             ← в корне: контекст сборки — корень репо
@@ -60,7 +60,8 @@ description: "Цель этапа: перенести образ из 04-shipyar
    curl ──► nginx ──► linkd-1 ─┐
                  └──► linkd-2 ─┴──► postgres ── volume pgdata
    порядок старта: postgres healthy ─► (схема) ─► linkd healthy ─► nginx
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -69,7 +70,8 @@ description: "Цель этапа: перенести образ из 04-shipyar
 
 ```bash
 cd ~/Projects/devops/04-shipyard && ./check.sh
-```text
+```
+
 ### 2. Перенос в раскладку портфолио
 
 Файлы — в каталоги из схемы выше. Пути внутри (`COPY`, `context`, `dockerfile`)
@@ -145,7 +147,8 @@ cd ~/Projects/devops/04-shipyard && ./check.sh
 ```bash
 git add docker compose .dockerignore Makefile README.md docs/adr
 git commit -m "build: container image and local compose stand for linkd 2.0"
-```text
+```
+
 ---
 
 ## ✅ Критерии приёмки
@@ -201,16 +204,16 @@ git commit -m "build: container image and local compose stand for linkd 2.0"
 
 ## 📚 Теория в волте
 
-- Dockerfile и директивы: [../Docker/03_dockerfile.md](/docker/03-dockerfile)
-- Кэш и multi-stage: [../Docker/04_build_cache_multistage.md](/docker/04-build-cache-multistage)
-- Registry, теги, метки: [../Docker/05_registry_tags.md](/docker/05-registry-tags)
-- Жизненный цикл, сигналы, PID 1: [../Docker/06_containers_lifecycle.md](/docker/06-containers-lifecycle)
-- Тома: [../Docker/07_volumes_storage.md](/docker/07-volumes-storage)
-- Compose: [../Docker/09_compose.md](/docker/09-compose)
-- Безопасность образов: [../Docker/10_security_best_practices.md](/docker/10-security-best-practices)
-- Когда что-то не стартует: [../Docker/11_troubleshooting.md](/docker/11-troubleshooting)
-- Docker и файрвол: [../Network/11_firewall_iptables.md](/network/11-firewall-iptables)
-- nginx как reverse proxy и балансировка: [../Network/12_nginx.md](/network/12-nginx),
-  [../Network/13_haproxy_balancing.md](/network/13-haproxy-balancing)
+- Dockerfile и директивы: [Docker: 03. Dockerfile: директивы и контекст сборки](/docker/03-dockerfile)
+- Кэш и multi-stage: [Docker: 04. Кэш сборки, multi-stage и best practices](/docker/04-build-cache-multistage)
+- Registry, теги, метки: [Docker: 05. Registry и тегирование](/docker/05-registry-tags)
+- Жизненный цикл, сигналы, PID 1: [Docker: 06. Жизненный цикл контейнера](/docker/06-containers-lifecycle)
+- Тома: [Docker: 07. Данные: volumes, bind mounts, tmpfs](/docker/07-volumes-storage)
+- Compose: [Docker: 09. Docker Compose](/docker/09-compose)
+- Безопасность образов: [Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices)
+- Когда что-то не стартует: [Docker: 11. Troubleshooting и обслуживание](/docker/11-troubleshooting)
+- Docker и файрвол: [Сети: 11. Файрвол: iptables/nftables](/network/11-firewall-iptables)
+- nginx как reverse proxy и балансировка: [Сети: 12. Nginx](/network/12-nginx),
+  [Сети: 13. HAProxy и балансировка](/network/13-haproxy-balancing)
 
-➡️ Следующий этап: [03_ci.md](/project/03-ci)
+➡️ Следующий этап: [03. CI: от коммита до образа в registry и коммита в gitops](/project/03-ci)

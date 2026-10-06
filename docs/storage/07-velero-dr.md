@@ -1,16 +1,16 @@
 ---
 title: "07. Velero и disaster recovery"
-description: "Блок → Хранилища и stateful → тема 07. Опирается на"
+description: "3-2-1-1-0, Velero + MinIO, тома через Kopia/CSI, DR-план, учения"
 ---
 
 # 07. Velero и disaster recovery
 
 > Блок → Хранилища и stateful → тема 07. Опирается на
-> [../Kubernetes/21_advanced_paths.md](/kubernetes/21-advanced-paths) (раздел «Бэкап etcd и DR»:
-> снапшот etcd, таблица «etcd vs Velero»), [../Project/09_backup_dr.md](/project/09-backup-dr)
-> (бэкап linkd в MinIO, учения, RPO/RTO) и [../SRE/05_postmortems.md](/sre/05-postmortems).
-> Бэкапы БД — в [06_db_backup_replication.md](/storage/06-db-backup-replication), тома и снапшоты CSI —
-> в [05_k8s_stateful.md](/storage/05-k8s-stateful), MinIO — в [03_nfs_minio.md](/storage/03-nfs-minio).
+> [Kubernetes: 21. Развилка: куда дальше](/kubernetes/21-advanced-paths) (раздел «Бэкап etcd и DR»:
+> снапшот etcd, таблица «etcd vs Velero»), [Пет-проект: 09. Бэкапы и восстановление (DR)](/project/09-backup-dr)
+> (бэкап linkd в MinIO, учения, RPO/RTO) и [SRE: 05. Постмортемы](/sre/05-postmortems).
+> Бэкапы БД — в [06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication), тома и снапшоты CSI —
+> в [05. Stateful в Kubernetes: CSI, StatefulSet, Rook-Ceph, снапшоты](/storage/05-k8s-stateful), MinIO — в [03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio).
 >
 > **После темы ты умеешь:** построить стратегию бэкапов (3-2-1-1-0, RPO/RTO по слоям), поставить
 > Velero с MinIO, бэкапить namespace вместе с томами (CSI-снапшоты, data mover, Kopia),
@@ -21,7 +21,7 @@ description: "Блок → Хранилища и stateful → тема 07. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
         что теряем?                       чем закрываем                   куда кладём
  ─────────────────────────       ──────────────────────────────      ──────────────────────
  объекты k8s (манифесты)   ──►   git (GitOps) + Velero          ──┐
@@ -35,21 +35,23 @@ description: "Блок → Хранилища и stateful → тема 07. Оп�
                                         │
                                         ▼
                   учения: восстановили и ЗАМЕРИЛИ фактические RPO/RTO
-```text
+```
+
 ---
 
 ## 1. Стратегия: от 3-2-1 к 3-2-1-1-0
 
-Правило 3-2-1 уже есть в [../Left/01_Databases/05_backup_restore.md](/databases/05-backup-restore).
+Правило 3-2-1 уже есть в [Базы данных: 05. Бэкап и восстановление](/databases/05-backup-restore).
 Против шифровальщиков и собственных ошибок его расширяют:
 
-```text
+```
 3  копии данных (прод + 2 бэкапа)
 2  разных носителя/системы (Ceph в кластере + MinIO на другом железе)
 1  копия вне площадки (другой ЦОД / облачный бакет)
 1  копия неизменяемая или офлайн (object lock COMPLIANCE, лента, отключённый диск)
 0  ошибок при проверке восстановления (restore-test прошёл, а не «бэкап-джоба зелёная»)
-```text
+```
+
 | Угроза | Что спасает | Что НЕ спасает |
 |--------|-------------|----------------|
 | Умер диск/нода | Репликация (Ceph size 3, реплика БД) | — |
@@ -82,7 +84,7 @@ Velero data mover, `rbd export`). Об этом раздел 7.
 
 ## 3. RPO/RTO по слоям
 
-Термины RPO/RTO — в [../Left/01_Databases/05_backup_restore.md](/databases/05-backup-restore).
+Термины RPO/RTO — в [Базы данных: 05. Бэкап и восстановление](/databases/05-backup-restore).
 Для платформы их задают **по слоям**, потому что восстанавливаются слои по-разному:
 
 | Слой | Механизм | Типичный RPO | Типичный RTO | От чего зависит RTO |
@@ -102,7 +104,7 @@ Velero data mover, `rbd export`). Об этом раздел 7.
 
 ## 4. Velero: как устроен
 
-```text
+```text:no-line-numbers
  velero CLI ──► создаёт CR в namespace velero
                    Backup · Restore · Schedule · BackupStorageLocation (BSL)
                    VolumeSnapshotLocation (VSL) · BackupRepository · DataUpload/PodVolumeBackup
@@ -110,12 +112,13 @@ Velero data mover, `rbd export`). Об этом раздел 7.
                       ▼
  Deployment velero (сервер) ── плагины (velero-plugin-for-aws — любой S3, включая MinIO)
    │  1. читает объекты через API server (фильтры: ns, labels, resources)
-   │  2. складывает их JSON в tar.gz → BSL (бакет velero/backups/&lt;имя&gt;/)
+   │  2. складывает их JSON в tar.gz → BSL (бакет velero/backups/<имя>/)
    │  3. тома: CSI VolumeSnapshot  или  задание для node-agent
    ▼
  DaemonSet node-agent (Kopia) ── читает данные томов с ноды (/var/lib/kubelet/pods)
                                  → дедуплицированный, зашифрованный репозиторий в том же бакете
-```text
+```
+
 | Объект | Зачем |
 |--------|-------|
 | `BackupStorageLocation` | Куда класть: бакет, префикс, endpoint, `accessMode: ReadWrite/ReadOnly` |
@@ -133,7 +136,7 @@ Restic как uploader устарел: в 1.17–1.18 новые бэкапы ч
 
 ## 5. Установка с MinIO
 
-Пользователь и политика в MinIO (клиент `mc` — из [03_nfs_minio.md](/storage/03-nfs-minio)):
+Пользователь и политика в MinIO (клиент `mc` — из [03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio)):
 
 ```json
 // files/velero-policy.json
@@ -149,18 +152,19 @@ Restic как uploader устарел: в 1.17–1.18 новые бэкапы ч
       "Resource": ["arn:aws:s3:::velero/*"] }
   ]
 }
-```text
+```
 ```bash
 mc mb --with-versioning local/velero          # версии: удаление Velero'ом ≠ потеря навсегда
 mc admin user add local velero 'velero-secret-123'
 mc admin policy create local velero-rw /files/velero-policy.json
 mc admin policy attach local velero-rw --user velero
-```text
+```
+
 > Velero **нужно** право `DeleteObject`: он сам удаляет бэкапы по TTL. Защиту от «удалил
 > взломщик» даёт версионирование + lifecycle на старые версии, а для off-site копии —
 > отдельный бакет с object lock, куда Velero не пишет напрямую (репликация бакета).
 
-CLI и установка в кластер (kind `devops`, MinIO подключён к сети kind — см. [00_INDEX.md](/storage/)):
+CLI и установка в кластер (kind `devops`, MinIO подключён к сети kind — см. [Хранилища](/storage/)):
 
 ```bash
 curl -fsSL -o /tmp/velero.tgz \
@@ -169,7 +173,7 @@ tar -xzf /tmp/velero.tgz -C /tmp && sudo install /tmp/velero-v1.18.3-linux-amd64
 velero version --client-only
 
 docker network connect kind minio 2>/dev/null || true
-MINIO_IP=$(docker inspect -f '&#123;&#123;(index .NetworkSettings.Networks "kind").IPAddress&#125;&#125;' minio)
+MINIO_IP=$(docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}' minio)
 
 cat > credentials-velero <<'EOF'
 [default]
@@ -189,7 +193,8 @@ velero install \
 
 velero backup-location get          # PHASE должна быть Available
 kubectl -n velero get pods          # velero-… и node-agent-… на каждой ноде
-```text
+```
+
 | Флаг | Зачем |
 |------|-------|
 | `s3ForcePathStyle="true"` | MinIO работает с path-style URL; без этого загрузка проходит, а скачивание падает |
@@ -228,9 +233,10 @@ velero backup create --from-schedule shop-nightly   # внеплановый з�
 
 # восстановление
 velero restore create --from-backup shop-20260927 --wait
-velero restore describe &lt;restore-name&gt; --details
-velero restore logs &lt;restore-name&gt;
-```text
+velero restore describe <restore-name> --details
+velero restore logs <restore-name>
+```
+
 Что важно знать о restore:
 - Velero **не перезаписывает** существующие объекты: пропускает их с предупреждением.
   Обновить — `--existing-resource-policy=update` (не для всех типов; PVC с данными не «откатит»).
@@ -249,7 +255,7 @@ metadata:
     pre.hook.backup.velero.io/command: '["/sbin/fsfreeze", "--freeze", "/data"]'
     post.hook.backup.velero.io/container: app
     post.hook.backup.velero.io/command: '["/sbin/fsfreeze", "--unfreeze", "/data"]'
-```text
+```
 Для БД правильнее не замораживать ФС, а бэкапить базу её инструментами (тема 06) или
 хуком делать дамп на том перед бэкапом. `fsfreeze` требует привилегий в контейнере.
 
@@ -274,11 +280,12 @@ kubectl -n shop annotate pod/postgres-0 backup.velero.io/backup-volumes=data
 # … или все тома бэкапа
 velero backup create shop-fs --include-namespaces shop --default-volumes-to-fs-backup --wait
 kubectl -n velero get podvolumebackups
-```text
+```
+
 > ⚠️ **local-path (kind/k3s) и FSB.** local-path-provisioner по умолчанию создаёт PV типа
 > `hostPath`, а FSB hostPath-тома **не поддерживает** — том молча пропускается с
 > предупреждением в логах бэкапа. Решение для стенда: PVC с аннотацией `volumeType: local`
-> (PV типа `local` — поддерживается), см. [05_k8s_stateful.md](/storage/05-k8s-stateful). В проде —
+> (PV типа `local` — поддерживается), см. [05. Stateful в Kubernetes: CSI, StatefulSet, Rook-Ceph, снапшоты](/storage/05-k8s-stateful). В проде —
 > CSI-хранилище со снапшотами.
 
 Консистентность: CSI-снапшот — crash-consistent (как выдернуть питание), FSB копирует
@@ -293,22 +300,24 @@ kubectl -n velero get podvolumebackups
 # в тот же кластер, но в новый namespace — проверка бэкапа без риска для прода
 velero restore create shop-check --from-backup shop-20260927 \
   --namespace-mappings shop:shop-restore-check --wait
-```text
+```
+
 Другой кластер (DR или миграция):
 
-```text
+```text:no-line-numbers
 кластер A (прод) ──► бакет velero в MinIO/S3 ◄── кластер B (DR)
                                                   velero install с тем же bucket/prefix
                                                   BSL accessMode: ReadOnly  ← чтобы B ничего не удалил
                                                   тот же velero-repo-credentials!
-```text
+```
 ```bash
 # в кластере B после velero install (с тем же бакетом)
 kubectl -n velero patch backupstoragelocation default --type merge \
-  -p '{"spec":{"accessMode":"ReadOnly"&#125;&#125;'
+  -p '{"spec":{"accessMode":"ReadOnly"}}'
 velero backup get                                   # бэкапы A видны через синхронизацию BSL
 velero restore create --from-backup shop-20260927 --wait
-```text
+```
+
 Что ломается при переезде и как чинить:
 
 | Проблема | Решение |
@@ -324,7 +333,7 @@ velero restore create --from-backup shop-20260927 --wait
 
 ## 9. etcd-снапшот как дополнение
 
-Снапшот etcd и сравнение с Velero — в [../Kubernetes/21_advanced_paths.md](/kubernetes/21-advanced-paths).
+Снапшот etcd и сравнение с Velero — в [Kubernetes: 21. Развилка: куда дальше](/kubernetes/21-advanced-paths).
 Здесь — как они сочетаются:
 
 | Ситуация | Чем восстанавливаться |
@@ -338,7 +347,7 @@ velero restore create --from-backup shop-20260927 --wait
 # k3s со встроенным etcd (server --cluster-init): снапшоты по расписанию есть по умолчанию
 sudo k3s etcd-snapshot save --name pre-upgrade
 sudo k3s etcd-snapshot ls
-```text
+```
 > Снапшот etcd содержит **секреты кластера** в открытом виде (если не включено шифрование
 > at rest). Храни его как секрет, а не как лог.
 
@@ -350,7 +359,7 @@ DR-план — короткий документ, по которому **не�
 сервис ночью. Пишется заранее, лежит **вне** защищаемой системы (не только в wiki внутри
 того же кластера).
 
-```text
+```text:no-line-numbers
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ DR-ПЛАН: shop (prod)                               владелец: platform team  │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -370,13 +379,14 @@ DR-план — короткий документ, по которому **не�
 │ 7. Коммуникация: шаблон статус-апдейта, кому сообщать                       │
 │ 8. История учений: дата, сценарий, фактические RPO/RTO, что поправили       │
 └─────────────────────────────────────────────────────────────────────────────┘
-```text
+```
+
 ---
 
 ## 11. DR-учения (game day)
 
-Формат game day и роли — в [../SRE/07_practice_labs.md](/mlops/07-practice-labs) (лаба 4),
-разбор — по [../SRE/05_postmortems.md](/sre/05-postmortems). Специфика DR:
+Формат game day и роли — в [SRE: 07. Практика: 4 лабы по SRE и observability](/sre/07-practice-labs) (лаба 4),
+разбор — по [SRE: 05. Постмортемы](/sre/05-postmortems). Специфика DR:
 
 | Уровень | Сценарий | Что проверяем | Как часто |
 |---------|----------|---------------|-----------|
@@ -435,7 +445,7 @@ DR-план — короткий документ, по которому **не�
 - Метрики Velero снимает Prometheus (`/metrics` сервера): алерт «последний успешный бэкап
   старше 25 часов» и «бэкап PartiallyFailed/Failed» — обязательный минимум.
 - Restore-test автоматизируют: CronJob/пайплайн раз в сутки восстанавливает последний
-  бэкап в `restore-check-&lt;дата&gt;`, проверяет данные и удаляет namespace.
+  бэкап в `restore-check-<дата>`, проверяет данные и удаляет namespace.
 - В on-prem (частый случай в Казахстане) off-site — это второй ЦОД или хотя бы MinIO/NAS
   в другом здании; облачный бакет как off-site возможен не всегда из-за требований к данным —
   это решают с безопасниками заранее.
@@ -458,7 +468,7 @@ DR-план — короткий документ, по которому **не�
 | Восстановить | `velero restore create --from-backup NAME --wait` |
 | В другой namespace | `--namespace-mappings old:new` |
 | Обновить существующее | `--existing-resource-policy=update` |
-| DR-кластер только читает | patch BSL `{"spec":{"accessMode":"ReadOnly"&#125;&#125;` |
+| DR-кластер только читает | patch BSL <code v-pre>{"spec":{"accessMode":"ReadOnly"}}</code> |
 | Сменить StorageClass при restore | ConfigMap с лейблом `velero.io/change-storage-class: RestoreItemAction` |
 | Снапшот etcd (k3s) | `sudo k3s etcd-snapshot save --name pre-upgrade` |
 
@@ -477,13 +487,18 @@ DR-план — короткий документ, по которому **не�
 9. etcd-снапшот — для отката control plane того же кластера; для потери кластера — GitOps + Velero + бэкапы БД.
 10. DR-план лежит вне защищаемой системы и проверяется учениями с замером каждого шага.
 
-➡️ Дальше: [08_practice_labs.md](/softskills/08-practice-labs) · задачи: 07_velero_dr_tasks.md
+---
 
+## Задачи
+
+> Стенд: kind-кластер `devops` из блока Kubernetes, MinIO из [Хранилища](/storage/)
+> (контейнер `minio`, клиент `mc`, подключён к сети kind), Velero v1.18.3 + velero-plugin-for-aws v1.14.3.
+> Перед практикой: `docker network connect kind minio` и
+> <code v-pre>MINIO\_IP=$(docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}' minio)</code>.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем бэкап отличается от репликации и от снапшота? От каких угроз защищает каждый?
 
@@ -501,6 +516,8 @@ DR-план — короткий документ, по которому **не�
 <details><summary>Ответ</summary>
 
 3 копии, 2 разных носителя/системы, 1 вне площадки, 1 неизменяемая или офлайн,
+0 ошибок при проверке восстановления. «1» — против шифровальщиков и злоумышленника
+с правами прода; «0» — потому что непроверенный бэкап не считается бэкапом.
 
 </details>
 
@@ -539,7 +556,7 @@ CSI-снапшот (данные остаются в системе хранен
 <details><summary>Ответ</summary>
 
 Local-path по умолчанию создаёт PV типа `hostPath`; kubelet не монтирует его в
-`/var/lib/kubelet/pods/&lt;uid&gt;/volumes`, а FSB читает именно оттуда и hostPath не поддерживает.
+`/var/lib/kubelet/pods/<uid>/volumes`, а FSB читает именно оттуда и hostPath не поддерживает.
 На стенде — PVC с аннотацией `volumeType: local` (или `defaultVolumeType: local` на классе):
 PV типа `local` FSB поддерживает.
 
@@ -640,239 +657,112 @@ etcd — когда сломан control plane того же самосборн�
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```bash
 B1.  velero install --provider aws --plugins velero/velero-plugin-for-aws:v1.14.3 \
-```text
-<details><summary>Ответ</summary>
+       --bucket velero --secret-file ./credentials-velero \
+       --backup-location-config region=minio,s3Url=http://172.18.0.5:9000
+     # бэкапы создаются, а velero backup get в другом кластере их «не видит» / скачивание падает
 
-⚠️ Нет `s3ForcePathStyle="true"`: SDK строит virtual-host URL (`velero.172.18.0.5`),
+B2.  velero install ... --plugins velero/velero-plugin-for-aws:v1.9.0   # Velero v1.18.3
+
+B3.  velero backup create shop --include-namespaces shop
+     # PVC shop/data от local-path, node-agent установлен, аннотаций нет
+
+B4.  velero backup create shop --include-namespaces shop --default-volumes-to-fs-backup
+     # статус PartiallyFailed; на следующий день — «ну почти же получилось»
+
+B5.  # DR-кластер
+     velero install ... --bucket velero ...     # тот же бакет, что у прода, BSL по умолчанию
+
+B6.  velero restore create --from-backup shop-20260927
+     # namespace shop существует и работает, Deployment с тем же именем уже есть
+
+B7.  # Rook-Ceph, EnableCSI включён
+     velero backup create shop-csi --include-namespaces shop
+     # через неделю кластер вместе с Ceph умер; в новом кластере restore «успешен», тома пустые
+
+B8.  # MinIO для бэкапов запущен в том же кластере, в namespace minio, на томах Ceph
+
+B9.  velero schedule create shop-nightly --schedule="0 2 * * *" --include-namespaces shop
+     # алертов на бэкапы нет; «Schedule же есть»
+
+B10. # хук бэкапа для PostgreSQL
+     pre.hook.backup.velero.io/command: '["/sbin/fsfreeze", "--freeze", "/var/lib/postgresql/data"]'
+     # post-хука нет
+
+B11. # DR-план лежит в Confluence, развёрнутом в том же кластере, что и прод
+
+B12. # retention бэкапов БД — 7 дней; порчу данных заметили через 3 недели
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Нет `s3ForcePathStyle="true"`: SDK строит virtual-host URL (`velero.172.18.0.5`),
 с MinIO загрузка может пройти, а скачивание/листинг — нет. Добавить параметр в BSL.
 
-</details>
-
-```text:no-line-numbers
-       --bucket velero --secret-file ./credentials-velero \
-```text
-```text:no-line-numbers
-       --backup-location-config region=minio,s3Url=http://172.18.0.5:9000
-```text
-```text:no-line-numbers
-     # бэкапы создаются, а velero backup get в другом кластере их «не видит» / скачивание падает
-```text
-```text:no-line-numbers
-B2.  velero install ... --plugins velero/velero-plugin-for-aws:v1.9.0   # Velero v1.18.3
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Плагин 1.9 — для Velero 1.13. Для 1.18.x нужен velero-plugin-for-aws 1.14.x;
+**B2.** ⚠️ Плагин 1.9 — для Velero 1.13. Для 1.18.x нужен velero-plugin-for-aws 1.14.x;
 несовместимая пара даёт ошибки плагина или странное поведение.
 
-</details>
-
-```text:no-line-numbers
-B3.  velero backup create shop --include-namespaces shop
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Режим opt-in: без аннотации `backup.velero.io/backup-volumes` и без
+**B3.** ⚠️ Режим opt-in: без аннотации `backup.velero.io/backup-volumes` и без
 `--default-volumes-to-fs-backup` том не бэкапится — в бэкапе только манифест PVC.
 Плюс local-path hostPath FSB не поддерживает вовсе.
 
-</details>
-
-```text:no-line-numbers
-     # PVC shop/data от local-path, node-agent установлен, аннотаций нет
-```text
-```text:no-line-numbers
-B4.  velero backup create shop --include-namespaces shop --default-volumes-to-fs-backup
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `PartiallyFailed` — часть томов/объектов не сохранена. Читать `backup logs` и
+**B4.** ⚠️ `PartiallyFailed` — часть томов/объектов не сохранена. Читать `backup logs` и
 `describe --details` (частая причина — hostPath-том или под не Running), чинить сразу,
 алертить на любой статус, кроме `Completed`.
 
-</details>
-
-```text:no-line-numbers
-     # статус PartiallyFailed; на следующий день — «ну почти же получилось»
-```text
-```text:no-line-numbers
-B5.  # DR-кластер
-```text
-<details><summary>Ответ</summary>
-
-⚠️ BSL в DR-кластере в режиме ReadWrite: GC удалит бэкапы прода по TTL, а бэкапы
+**B5.** ⚠️ BSL в DR-кластере в режиме ReadWrite: GC удалит бэкапы прода по TTL, а бэкапы
 DR-кластера смешаются с продовыми. Нужен `accessMode: ReadOnly` (или отдельный префикс для
 своих бэкапов) и тот же пароль репозитория.
 
-</details>
-
-```text:no-line-numbers
-     velero install ... --bucket velero ...     # тот же бакет, что у прода, BSL по умолчанию
-```text
-```text:no-line-numbers
-B6.  velero restore create --from-backup shop-20260927
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Существующие объекты будут пропущены — «восстановления» не произойдёт, получится
+**B6.** ⚠️ Существующие объекты будут пропущены — «восстановления» не произойдёт, получится
 смесь. Восстанавливать в новый namespace (`--namespace-mappings`) или после удаления.
 
-</details>
-
-```text:no-line-numbers
-     # namespace shop существует и работает, Deployment с тем же именем уже есть
-```text
-```text:no-line-numbers
-B7.  # Rook-Ceph, EnableCSI включён
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без `--snapshot-move-data` данные томов остались CSI-снапшотами в умершем Ceph.
+**B7.** ⚠️ Без `--snapshot-move-data` данные томов остались CSI-снапшотами в умершем Ceph.
 В бэкапе только ссылки на снапшоты. Для off-site — data mover или FSB.
 
-</details>
-
-```text:no-line-numbers
-     velero backup create shop-csi --include-namespaces shop
-```text
-```text:no-line-numbers
-     # через неделю кластер вместе с Ceph умер; в новом кластере restore «успешен», тома пустые
-```text
-```text:no-line-numbers
-B8.  # MinIO для бэкапов запущен в том же кластере, в namespace minio, на томах Ceph
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Бэкапы живут в той же системе, от потери которой должны защищать: умер кластер
+**B8.** ⚠️ Бэкапы живут в той же системе, от потери которой должны защищать: умер кластер
 или Ceph — умерли и бэкапы. MinIO/S3 — вне кластера и на другом железе.
 
-</details>
-
-```text:no-line-numbers
-B9.  velero schedule create shop-nightly --schedule="0 2 * * *" --include-namespaces shop
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Schedule может молча перестать работать (BSL Unavailable, ошибки, PartiallyFailed).
+**B9.** ⚠️ Schedule может молча перестать работать (BSL Unavailable, ошибки, PartiallyFailed).
 Нужны алерты на возраст последнего успешного бэкапа и на неуспешные статусы, плюс restore-test.
 
-</details>
-
-```text:no-line-numbers
-     # алертов на бэкапы нет; «Schedule же есть»
-```text
-```text:no-line-numbers
-B10.  # хук бэкапа для PostgreSQL
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Без post-хука ФС останется замороженной — база встанет на записи. К тому же
+**B10.** ⚠️ Без post-хука ФС останется замороженной — база встанет на записи. К тому же
 fsfreeze требует привилегий, а для PostgreSQL правильный путь — WAL-G/pgBackRest/CNPG.
 
-</details>
+**B11.** ⚠️ Во время аварии кластера план недоступен. Копия вне площадки + офлайн/печатная.
 
-```text:no-line-numbers
-     pre.hook.backup.velero.io/command: '["/sbin/fsfreeze", "--freeze", "/var/lib/postgresql/data"]'
-```text
-```text:no-line-numbers
-     # post-хука нет
-```text
-```text:no-line-numbers
-B11.  # DR-план лежит в Confluence, развёрнутом в том же кластере, что и прод
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Во время аварии кластера план недоступен. Копия вне площадки + офлайн/печатная.
-
-</details>
-
-```text:no-line-numbers
-B12.  # retention бэкапов БД — 7 дней; порчу данных заметили через 3 недели
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Retention должен покрывать время обнаружения проблем: нужной точки уже нет.
+**B12.** ⚠️ Retention должен покрывать время обнаружения проблем: нужной точки уже нет.
 Добавить недельные/месячные копии (GFS-схема) и мониторинг целостности данных.
 
 </details>
-
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Velero с MinIO
-**1.** Создай в MinIO бакет `velero` с версионированием, пользователя `velero` и политику из конспекта.
+#### C1. 🔑 Velero с MinIO
+1. Создай в MinIO бакет `velero` с версионированием, пользователя `velero` и политику из конспекта.
+2. Поставь Velero v1.18.3 с плагином v1.14.3, `--use-node-agent`.
+3. Перед первым бэкапом поменяй пароль Kopia-репозитория и сохрани его вне кластера.
+4. Добейся `Available` у BSL. Где в бакете появятся бэкапы?
 
 <details><summary>Ответ</summary>
 
 Команды — в разделе 5 конспекта. Пароль меняют до первого бэкапа:
-`kubectl -n velero patch secret velero-repo-credentials -p '{"stringData":{"repository-password":"&lt;свой&gt;"&#125;&#125;'`
+<code v-pre>kubectl -n velero patch secret velero-repo-credentials -p '{"stringData":{"repository-password":"&lt;свой&gt;"}}'</code>
 (или создать секрет до установки), копию — в менеджер паролей. Бэкапы появятся в
-`velero/backups/&lt;имя&gt;/`, данные Kopia — в `velero/kopia/&lt;namespace&gt;/`.
+`velero/backups/<имя>/`, данные Kopia — в `velero/kopia/<namespace>/`.
 
 </details>
 
-**2.** Поставь Velero v1.18.3 с плагином v1.14.3, `--use-node-agent`.
-
-<details><summary>Ответ</summary>
-
-Манифест PVC-шаблона с `metadata.annotations: {volumeType: local}`; данные —
-`kubectl exec web-0 -- sh -c 'date > /data/stamp; head -c 50M /dev/urandom > /data/blob; sha256sum /data/blob'`.
-После restore: `kubectl -n shop exec web-0 -- sha256sum /data/blob` совпадает. Без аннотации
-`volumeType: local` blob не восстановится (hostPath-том пропущен — видно в логах бэкапа).
-
-</details>
-
-**3.** Перед первым бэкапом поменяй пароль Kopia-репозитория и сохрани его вне кластера.
-
-<details><summary>Ответ</summary>
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-BACKUP=${1:?backup name}; NS=shop-check-$(date +%s)
-velero restore create "$NS" --from-backup "$BACKUP" --namespace-mappings shop:"$NS" --wait
-kubectl -n "$NS" wait --for=condition=Ready pod/web-0 --timeout=300s
-GOT=$(kubectl -n "$NS" exec web-0 -- sha256sum /data/blob | awk '{print $1}')
-WANT=$(cat expected.sha256)
-kubectl delete ns "$NS" --wait=false
-[ "$GOT" = "$WANT" ] || { echo "restore-check FAILED"; exit 1; }
-echo "restore-check OK"
-```text
-</details>
-
-**4.** Добейся `Available` у BSL. Где в бакете появятся бэкапы?
-
-<details><summary>Ответ</summary>
-
-`velero schedule create shop-hourly --schedule="0 * * * *" --include-namespaces shop --ttl 24h0m0s`.
-Алерты:
-```promql
-time() - velero_backup_last_successful_timestamp{schedule="shop-hourly"} > 2 * 3600
-increase(velero_backup_failure_total[1h]) > 0 or increase(velero_backup_partial_failure_total[1h]) > 0
-```text
-</details>
-
-### C2. 🔑 Namespace с томом: бэкап → удаление → восстановление
-**1.** Создай namespace `shop`: StatefulSet `web` (1 реплика, busybox/nginx) с `volumeClaimTemplates`,
+#### C2. 🔑 Namespace с томом: бэкап → удаление → восстановление
+1. Создай namespace `shop`: StatefulSet `web` (1 реплика, busybox/nginx) с `volumeClaimTemplates`,
    PVC с аннотацией `volumeType: local`; запиши в том файл с датой и 50 МБ случайных данных,
    посчитай `sha256sum`.
-
-<details><summary>Ответ</summary>
-
-Команды — в разделе 5 конспекта. Пароль меняют до первого бэкапа:
-`kubectl -n velero patch secret velero-repo-credentials -p '{"stringData":{"repository-password":"&lt;свой&gt;"&#125;&#125;'`
-(или создать секрет до установки), копию — в менеджер паролей. Бэкапы появятся в
-`velero/backups/&lt;имя&gt;/`, данные Kopia — в `velero/kopia/&lt;namespace&gt;/`.
-
-</details>
-
-**2.** `velero backup create shop-1 --include-namespaces shop --default-volumes-to-fs-backup --wait`.
+2. `velero backup create shop-1 --include-namespaces shop --default-volumes-to-fs-backup --wait`.
+3. `kubectl delete ns shop`, восстанови, сверь контрольную сумму.
+4. Засеки время restore — это твой RTO для этого namespace.
 
 <details><summary>Ответ</summary>
 
@@ -883,66 +773,11 @@ increase(velero_backup_failure_total[1h]) > 0 or increase(velero_backup_partial_
 
 </details>
 
-**3.** `kubectl delete ns shop`, восстанови, сверь контрольную сумму.
-
-<details><summary>Ответ</summary>
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-BACKUP=${1:?backup name}; NS=shop-check-$(date +%s)
-velero restore create "$NS" --from-backup "$BACKUP" --namespace-mappings shop:"$NS" --wait
-kubectl -n "$NS" wait --for=condition=Ready pod/web-0 --timeout=300s
-GOT=$(kubectl -n "$NS" exec web-0 -- sha256sum /data/blob | awk '{print $1}')
-WANT=$(cat expected.sha256)
-kubectl delete ns "$NS" --wait=false
-[ "$GOT" = "$WANT" ] || { echo "restore-check FAILED"; exit 1; }
-echo "restore-check OK"
-```text
-</details>
-
-**4.** Засеки время restore — это твой RTO для этого namespace.
-
-<details><summary>Ответ</summary>
-
-`velero schedule create shop-hourly --schedule="0 * * * *" --include-namespaces shop --ttl 24h0m0s`.
-Алерты:
-```promql
-time() - velero_backup_last_successful_timestamp{schedule="shop-hourly"} > 2 * 3600
-increase(velero_backup_failure_total[1h]) > 0 or increase(velero_backup_partial_failure_total[1h]) > 0
-```text
-</details>
-
-### C3. Восстановление рядом с продом
+#### C3. Восстановление рядом с продом
 Восстанови `shop-1` в namespace `shop-check`, не трогая `shop`. Проверь данные и удали
 `shop-check`. Оформи это как скрипт `restore-check.sh`, который завершается ненулевым кодом,
 если контрольная сумма не совпала.
 
-### C4. 🔑 Расписание и алерт
-**1.** Создай Schedule раз в час с TTL 24 часа.
-
-<details><summary>Ответ</summary>
-
-Команды — в разделе 5 конспекта. Пароль меняют до первого бэкапа:
-`kubectl -n velero patch secret velero-repo-credentials -p '{"stringData":{"repository-password":"&lt;свой&gt;"&#125;&#125;'`
-(или создать секрет до установки), копию — в менеджер паролей. Бэкапы появятся в
-`velero/backups/&lt;имя&gt;/`, данные Kopia — в `velero/kopia/&lt;namespace&gt;/`.
-
-</details>
-
-**2.** Найди метрики Velero (`kubectl -n velero port-forward deploy/velero 8085:8085`, `/metrics`).
-
-<details><summary>Ответ</summary>
-
-Манифест PVC-шаблона с `metadata.annotations: {volumeType: local}`; данные —
-`kubectl exec web-0 -- sh -c 'date > /data/stamp; head -c 50M /dev/urandom > /data/blob; sha256sum /data/blob'`.
-После restore: `kubectl -n shop exec web-0 -- sha256sum /data/blob` совпадает. Без аннотации
-`volumeType: local` blob не восстановится (hostPath-том пропущен — видно в логах бэкапа).
-
-</details>
-
-**3.** Напиши PromQL-алерт «последний успешный бэкап старше 2 часов» и алерт на неуспешные бэкапы.
-
 <details><summary>Ответ</summary>
 
 ```bash
@@ -956,32 +791,82 @@ WANT=$(cat expected.sha256)
 kubectl delete ns "$NS" --wait=false
 [ "$GOT" = "$WANT" ] || { echo "restore-check FAILED"; exit 1; }
 echo "restore-check OK"
-```text
+```
+
 </details>
 
-### C5. Хуки консистентности
+#### C4. 🔑 Расписание и алерт
+1. Создай Schedule раз в час с TTL 24 часа.
+2. Найди метрики Velero (`kubectl -n velero port-forward deploy/velero 8085:8085`, `/metrics`).
+3. Напиши PromQL-алерт «последний успешный бэкап старше 2 часов» и алерт на неуспешные бэкапы.
+
+<details><summary>Ответ</summary>
+
+`velero schedule create shop-hourly --schedule="0 * * * *" --include-namespaces shop --ttl 24h0m0s`.
+Алерты:
+```promql
+time() - velero_backup_last_successful_timestamp{schedule="shop-hourly"} > 2 * 3600
+increase(velero_backup_failure_total[1h]) > 0 or increase(velero_backup_partial_failure_total[1h]) > 0
+```
+
+</details>
+
+#### C5. Хуки консистентности
 Добавь к поду `web` pre/post-хуки, которые делают `sync` и пишут в том файл-маркер
 `backup-started` / удаляют его. Убедись по `velero backup describe --details`, что хуки
 выполнились. Почему для настоящей БД такой хук не заменяет инструменты БД?
 
-### C6. «Другой кластер»
+<details><summary>Ответ</summary>
+
+Аннотации `pre.hook.backup.velero.io/command: '["/bin/sh","-c","sync; touch /data/backup-started"]'`
+и `post.hook.backup.velero.io/command: '["/bin/sh","-c","rm -f /data/backup-started"]'`
+(+ `…/container: web`). В `describe --details` видны хуки и их статус; в восстановленном
+томе будет маркер `backup-started` — доказательство, что хук отработал до копирования.
+Для БД `sync` не делает файлы консистентными: нужны checkpoint/WAL (инструменты БД).
+
+</details>
+
+#### C6. «Другой кластер»
 Подними второй kind-кластер `dr`, поставь в него Velero с тем же бакетом и тем же паролем
 репозитория, переведи BSL в `ReadOnly` и восстанови `shop-1`. Что было бы, если бы пароль
 репозитория в `dr` оставили по умолчанию?
 
-### C7. 🔑 DR-план на одну страницу
+<details><summary>Ответ</summary>
+
+`kind create cluster --name dr`, в нём тот же `velero install`, но перед первым
+действием — секрет `velero-repo-credentials` с паролем прода, затем patch BSL в `ReadOnly`.
+С паролем по умолчанию Kopia не откроет репозиторий прода — объекты восстановятся, данные томов нет.
+
+</details>
+
+#### C7. 🔑 DR-план на одну страницу
 Напиши `docs/dr.md` для стенда: сценарии (потеря namespace, порча БД, потеря кластера),
 RPO/RTO целевые и замеренные в C2/C6, где лежат ключи и пароли, порядок восстановления
 с зависимостями, проверка результата.
 
-### C8. Учения «потеряли кластер»
+<details><summary>Ответ</summary>
+
+Шаблон — раздел 10 конспекта; обязательно: реальные цифры из C2/C6, где лежат пароль
+репозитория и ключи MinIO, порядок «кластер → MinIO-доступ → Velero с паролем → restore →
+проверка sha256».
+
+</details>
+
+#### C8. Учения «потеряли кластер»
 `kind delete cluster --name devops` → подними кластер заново → Velero → restore → проверка.
 Засеки время каждого шага, найди самый долгий и предложи, как его сократить.
+
+<details><summary>Ответ</summary>
+
+Самые долгие шаги обычно: создание кластера и скачивание образов, установка Velero
+и ожидание node-agent, выгрузка данных. Сокращают: скрипт bootstrap, заранее скачанные образы
+(локальный registry), меньший объём данных в томах, параллельное восстановление namespace.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Бэкапы Velero месяц подряд в статусе `Completed`, но при restore том пустой.
 
@@ -1076,14 +961,13 @@ etcd хранит только объекты k8s, а не данные томо
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как ты бэкапишь Kubernetes-кластер?
 
 <details><summary>Ответ</summary>
 
 Слоями: манифесты — в git (GitOps), объекты вне git и тома — Velero в S3 вне кластера
-   (Kopia или CSI + data mover), БД — своими инструментами с PITR, etcd-снапшот для
-   самосборного кластера, секреты и ключи — отдельно. Плюс алерты и restore-test.
+(Kopia или CSI + data mover), БД — своими инструментами с PITR, etcd-снапшот для
+самосборного кластера, секреты и ключи — отдельно. Плюс алерты и restore-test.
 
 </details>
 
@@ -1092,8 +976,8 @@ etcd хранит только объекты k8s, а не данные томо
 <details><summary>Ответ</summary>
 
 Снапшот etcd — всё состояние кластера целиком на момент времени, только для того же
-   кластера, без данных томов. Velero — выборочно (namespace, labels), с томами, в другой
-   кластер, работает и в managed.
+кластера, без данных томов. Velero — выборочно (namespace, labels), с томами, в другой
+кластер, работает и в managed.
 
 </details>
 
@@ -1102,7 +986,7 @@ etcd хранит только объекты k8s, а не данные томо
 <details><summary>Ответ</summary>
 
 CSI-снапшоты, CSI + data mover, Kopia FSB. On-prem с Ceph: CSI-снапшоты RBD как быстрый
-   локальный откат + `--snapshot-move-data` в MinIO на другом железе как настоящий бэкап.
+локальный откат + `--snapshot-move-data` в MinIO на другом железе как настоящий бэкап.
 
 </details>
 
@@ -1111,7 +995,7 @@ CSI-снапшоты, CSI + data mover, Kopia FSB. On-prem с Ceph: CSI-снап
 <details><summary>Ответ</summary>
 
 Как «ещё одну копию» — можно, но основной бэкап БД — WAL-G/pgBackRest/CNPG: FSB копирует
-   файлы на лету, CSI-снапшот — crash-consistent без PITR.
+файлы на лету, CSI-снапшот — crash-consistent без PITR.
 
 </details>
 
@@ -1120,7 +1004,7 @@ CSI-снапшоты, CSI + data mover, Kopia FSB. On-prem с Ceph: CSI-снап
 <details><summary>Ответ</summary>
 
 RPO — сколько данных теряем, RTO — сколько лежим. Измеряют на учениях: время каждого шага
-   восстановления и возраст последней точки восстановления.
+восстановления и возраст последней точки восстановления.
 
 </details>
 
@@ -1129,7 +1013,7 @@ RPO — сколько данных теряем, RTO — сколько леж�
 <details><summary>Ответ</summary>
 
 3 копии, 2 носителя, 1 off-site (+1 immutable, 0 ошибок). От шифровальщика: object lock,
-   прод без права удалять бэкапы, off-site под другими учётками, ключи вне кластера.
+прод без права удалять бэкапы, off-site под другими учётками, ключи вне кластера.
 
 </details>
 
@@ -1138,7 +1022,7 @@ RPO — сколько данных теряем, RTO — сколько леж�
 <details><summary>Ответ</summary>
 
 Регулярно восстанавливать — автоматически в изолированный namespace/VM с проверкой
-   данных, и вручную на учениях; алертить на возраст и статус бэкапов.
+данных, и вручную на учениях; алертить на возраст и статус бэкапов.
 
 </details>
 
@@ -1147,7 +1031,7 @@ RPO — сколько данных теряем, RTO — сколько леж�
 <details><summary>Ответ</summary>
 
 Velero: бэкап в общий бакет, в целевом кластере Velero с тем же бакетом и паролем
-   репозитория, BSL ReadOnly, restore с `--namespace-mappings` и маппингом StorageClass.
+репозитория, BSL ReadOnly, restore с `--namespace-mappings` и маппингом StorageClass.
 
 </details>
 
@@ -1156,8 +1040,8 @@ Velero: бэкап в общий бакет, в целевом кластере 
 <details><summary>Ответ</summary>
 
 DR-план — документ с целями, ролями, порядком и командами восстановления, лежащий вне
-   системы. DR-учения — регулярная проверка этого плана на практике с замером RTO/RPO и
-   постмортемом.
+системы. DR-учения — регулярная проверка этого плана на практике с замером RTO/RPO и
+постмортемом.
 
 </details>
 
@@ -1166,10 +1050,8 @@ DR-план — документ с целями, ролями, порядком
 <details><summary>Ответ</summary>
 
 Пример ответа: «Бэкап Velero месяц был Completed, но том был hostPath и пропускался;
-    нашли на restore-test, перевели на `local`-тома/CSI, добавили проверку данных и алерт
-    на PartiallyFailed». Структура: что случилось, почему не заметили, что изменили.
-
----
+нашли на restore-test, перевели на `local`-тома/CSI, добавили проверку данных и алерт
+на PartiallyFailed». Структура: что случилось, почему не заметили, что изменили.
 
 </details>
 

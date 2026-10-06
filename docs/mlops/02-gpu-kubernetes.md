@@ -1,6 +1,6 @@
 ---
 title: "02. GPU в Kubernetes: драйвер, device plugin, GPU Operator, разделение, DRA, метрики, деньги"
-description: "Блок → AI/MLOps-инфраструктура → тема 02. GPU — самый дорогой ресурс кластера,"
+description: "Драйверы и container toolkit, device plugin, GPU Operator, nvidia.com/gpu, taints, time-slicing, MIG, DRA, DCGM-метрики, стоимость"
 ---
 
 # 02. GPU в Kubernetes: драйвер, device plugin, GPU Operator, разделение, DRA, метрики, деньги
@@ -20,7 +20,7 @@ description: "Блок → AI/MLOps-инфраструктура → тема 02
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
   ┌─────────────────────────────── GPU-нода ────────────────────────────────┐
   │  GPU (VRAM 16–141 ГБ)                                                   │
   │    ▲ kernel-модуль nvidia  ◄── драйвер (на хосте или DaemonSet)         │
@@ -37,7 +37,8 @@ description: "Блок → AI/MLOps-инфраструктура → тема 02
   GPU Operator ставит и обновляет всё, что в рамке, одним Helm-чартом
   DRA (resource.k8s.io/v1): ResourceClaim «дай GPU ≥ 40 ГБ» — следующее поколение API
   Деньги: цена часа × часы простоя → пул с нулём нод (CA/Karpenter) + scale-to-zero сервинга
-```text
+```
+
 ---
 
 ## 1. GPU глазами эксплуатационщика
@@ -61,10 +62,11 @@ description: "Блок → AI/MLOps-инфраструктура → тема 02
 
 ## 2. Драйвер, CUDA и container toolkit
 
-```text
+```text:no-line-numbers
   образ:  PyTorch / vLLM + CUDA runtime 12.x/13.x  ──►  libcuda.so, /dev/nvidia* (пробрасывает toolkit)
                                                    ──►  kernel-модуль nvidia на хосте (драйвер R580…R615)
-```text
+```
+
 ⭐ **Правило:** CUDA runtime живёт в образе, драйвер — на хосте, и **драйвер должен быть не старше
 того, что требует CUDA образа**. Новый драйвер запускает приложения со старой CUDA; наоборот — нет
 (кроме пакета forward compatibility для датацентровых GPU).
@@ -78,7 +80,8 @@ description: "Блок → AI/MLOps-инфраструктура → тема 02
 ```bash
 nvidia-ctk runtime configure --runtime=containerd && systemctl restart containerd   # голая нода с драйвером
 docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi           # проверка (тег проверь)
-```text
+```
+
 > ⚠️ Классика в логах: `CUDA driver version is insufficient for CUDA runtime version` — образ собран
 > под CUDA новее, чем умеет драйвер ноды. Лечится драйвером или образом под старую CUDA, а не
 > перезапуском пода. Версию CUDA образа записывают в паспорт модели.
@@ -105,18 +108,20 @@ spec:
         limits: { nvidia.com/gpu: 1 }    # ⭐ только limits; requests = limits автоматически
   tolerations: [{ key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }]
   nodeSelector: { nvidia.com/gpu.product: NVIDIA-L4 }   # метка GFD (§5); точное значение — на ноде
-```text
+```
+
 | Правило extended-ресурсов | Следствие |
 |---------------------------|-----------|
 | Только целые числа | `nvidia.com/gpu: 0.5` — ошибка валидации; дробить — только через §6 |
 | **Нет overcommit** | Если указаны и requests, и limits — они обязаны быть равны |
 | Устройство отдаётся контейнеру целиком | Под занял GPU и простаивает — GPU простаивает тоже |
-| Считается в ResourceQuota | `requests.nvidia.com/gpu: "4"` на namespace ([../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources) §7) |
+| Считается в ResourceQuota | `requests.nvidia.com/gpu: "4"` на namespace ([Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources) §7) |
 
 ```bash
 kubectl describe node gpu-1 | grep -A8 -E "^Capacity|^Allocated"   # nvidia.com/gpu: 4 / занято 3
 kubectl get nodes -o custom-columns='NODE:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu'
-```text
+```
+
 > ⚠️ **Грабля безопасности** из README device plugin: под без запроса GPU из образа NVIDIA
 > (`NVIDIA_VISIBLE_DEVICES=all`) на ноде с дефолтным runtime `nvidia` может увидеть **все GPU ноды**.
 > Защита: taint, запрет выбора GPU через переменную (проверь `accept-nvidia-visible-devices-envvar-when-unprivileged`, `deviceListStrategy`), CDI.
@@ -151,7 +156,8 @@ helm install gpu-operator nvidia/gpu-operator --version v26.7.1 -n gpu-operator 
 kubectl -n gpu-operator get pods                 # driver → toolkit → device-plugin → gfd → dcgm-exporter → validator
 kubectl get clusterpolicy -o jsonpath='{.items[0].status.state}'   # ready
 kubectl label node cpu-1 nvidia.com/gpu.deploy.operands=false       # не ставить операнды на эту ноду
-```text
+```
+
 **Порядок старта новой ноды** (это часть холодного старта): NFD находит GPU → driver DaemonSet грузит
 модуль (минуты, если драйвер ставится контейнером) → toolkit → device plugin публикует `nvidia.com/gpu`.
 Поэтому в облаке берут образ ноды **с драйвером** и выключают `driver.enabled`.
@@ -165,12 +171,13 @@ GPU Operator); on-prem/kubeadm — GPU Operator целиком.
 
 ## 5. Планирование: taints, метки GFD, affinity, квоты
 
-Рецепт тот же, что для любых выделенных нод ([../Kubernetes/19_scheduling.md](/kubernetes/19-scheduling)
+Рецепт тот же, что для любых выделенных нод ([Kubernetes: 19. Планирование подов](/kubernetes/19-scheduling)
 §2, §5): **taint не пускает чужих, affinity притягивает своих.**
 
 ```bash
 kubectl taint nodes gpu-1 nvidia.com/gpu=true:NoSchedule   # соглашение: ключ = имя ресурса
-```text
+```
+
 ⭐ Ключ `nvidia.com/gpu` выбран не случайно: admission-плагин **ExtendedResourceToleration** сам добавляет
 toleration `nvidia.com/gpu:Exists:NoSchedule` каждому поду, который **запрашивает** `nvidia.com/gpu`.
 В GKE он включён; в своём кластере — `--enable-admission-plugins=…,ExtendedResourceToleration` у kube-apiserver.
@@ -195,7 +202,8 @@ apiVersion: v1
 kind: ResourceQuota                     # команда: не больше 4 GPU на namespace
 metadata: { name: gpu-quota, namespace: team-ml }
 spec: { hard: { requests.nvidia.com/gpu: "4" } }
-```text
+```
+
 Ещё: **PriorityClass** — прод-сервинг вытесняет эксперименты, а не наоборот; **очередь заданий**
 обучения (например, Kueue) — Job ждёт свободной квоты, а не висит в `Pending`, будя автоскейлер.
 
@@ -233,14 +241,16 @@ data:
         resources:
           - name: nvidia.com/gpu
             replicas: 4                    # 1 физическая GPU → 4 nvidia.com/gpu
-```text
+```
+
 ```bash
 kubectl patch clusterpolicies.nvidia.com/cluster-policy --type merge \
-  -p '{"spec":{"devicePlugin":{"config":{"name":"time-slicing-config","default":"any"&#125;&#125;&#125;&#125;'
+  -p '{"spec":{"devicePlugin":{"config":{"name":"time-slicing-config","default":"any"}}}}'
 # без "default" конфиг выбирается меткой ноды nvidia.com/device-plugin.config=any
 kubectl get node gpu-1 --show-labels | tr ',' '\n' | grep -E "gpu.replicas|gpu.product"
 # nvidia.com/gpu.replicas=4, nvidia.com/gpu.product=NVIDIA-L4-SHARED; allocatable nvidia.com/gpu: 4
-```text
+```
+
 MPS включается аналогично, секцией `sharing.mps` (`resources: [{name: nvidia.com/gpu, replicas: 10}]`).
 
 ### MIG — профили (проверь по документации NVIDIA для своей модели)
@@ -259,7 +269,8 @@ MPS включается аналогично, секцией `sharing.mps` (`re
 # MIG Manager переразмечает GPU по метке ноды (нагрузку с GPU предварительно убирает)
 kubectl label node gpu-1 nvidia.com/mig.config=all-1g.10gb --overwrite
 kubectl get node gpu-1 -o jsonpath='{.metadata.labels.nvidia\.com/mig\.config\.state}'   # success
-```text
+```
+
 ---
 
 ## 7. DRA — Dynamic Resource Allocation
@@ -293,7 +304,8 @@ spec:
       command: ["sleep", "infinity"]
       resources: { claims: [{ name: gpu }] }            # вместо limits nvidia.com/gpu
   tolerations: [{ key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }]
-```text
+```
+
 | Версия Kubernetes | Статус DRA (проверь, сентябрь 2026) |
 |-------------------|--------------------------------------|
 | 1.34 (08.2025) | ⭐ Ядро — **GA**: `resource.k8s.io/v1` (DeviceClass, ResourceClaim, ResourceClaimTemplate, ResourceSlice), включено по умолчанию |
@@ -332,11 +344,12 @@ groups:
       - alert: GPUIdleExpensive
         expr: avg_over_time(DCGM_FI_DEV_GPU_UTIL[2h]) < 5
         for: 1h
-        annotations: { summary: "GPU &#123;&#123; $labels.gpu &#125;&#125; на &#123;&#123; $labels.Hostname &#125;&#125; простаивает — деньги горят" }
+        annotations: { summary: "GPU {{ $labels.gpu }} на {{ $labels.Hostname }} простаивает — деньги горят" }
       - alert: GPUXidError
         expr: changes(DCGM_FI_DEV_XID_ERRORS[10m]) > 0
-        annotations: { summary: "XID на &#123;&#123; $labels.Hostname &#125;&#125; — смотри таблицу XID" }
-```text
+        annotations: { summary: "XID на {{ $labels.Hostname }} — смотри таблицу XID" }
+```
+
 | XID | Что значит (каталог NVIDIA) | Действие |
 |-----|-----------------------------|----------|
 | 13, 31 | Ошибка приложения / недопустимый доступ к памяти GPU | Перезапустить приложение; обычно баг кода или библиотек |
@@ -347,28 +360,29 @@ groups:
 
 Дашборд Grafana — **12239** (NVIDIA DCGM Exporter). ServiceMonitor для exporter включается в values
 GPU Operator (проверь ключ `dcgmExporter.serviceMonitor`) — с меткой `release`, которую ждёт Prometheus
-([../Left/02_Monitoring/11_long_term_and_operator.md](/monitoring/11-long-term-and-operator) §9).
-Деньги по GPU на команду — OpenCost ([../FinOps/04_kubecost_opencost.md](/finops/04-kubecost-opencost) §2).
+([Мониторинг: 11. Долгое хранение и Operator](/monitoring/11-long-term-and-operator) §9).
+Деньги по GPU на команду — OpenCost ([FinOps: 04. OpenCost и Kubecost: сколько стоит каждый namespace](/finops/04-kubecost-opencost) §2).
 
 ---
 
 ## 9. ⭐ Деньги: стоимость простоя GPU
 
-```text
+```text:no-line-numbers
  потери = цена GPU-ноды в час × часы простоя × число нод        (цены — порядок величины, us-east-1, проверь в калькуляторе)
 
  g6.xlarge (1 × L4)     ≈ $0,8/ч on-demand. Dev-нода 24/7, нужна 40 ч в неделю →
                           128 ч простоя × $0,8 ≈ $100 в неделю ≈ $440 в месяц — за одну ноду
  p5.48xlarge (8 × H100) ≈ $55/ч on-demand (spot заметно дешевле, но прерывается) →
                           24/7 ≈ $40 000 в месяц; одна забытая ночь (12 ч) ≈ $660
-```text
+```
+
 | Рычаг | Как | Где подробнее |
 |-------|-----|---------------|
-| Пул GPU-нод с минимумом **0** | CA: min 0 у GPU-группы; Karpenter: отдельный NodePool с taint | [../FinOps/03_autoscaling_cost.md](/finops/03-autoscaling-cost) §4 |
-| Scale-to-zero сервинга | KEDA по очереди → нода пустеет → автоскейлер её удаляет | [03](/mlops/03-model-serving), [../Kubernetes/25_ecosystem.md](/kubernetes/25-ecosystem) §6 |
+| Пул GPU-нод с минимумом **0** | CA: min 0 у GPU-группы; Karpenter: отдельный NodePool с taint | [FinOps: 03. Автоскейлинг как инструмент экономии: HPA, KEDA, ноды, spot, расписания](/finops/03-autoscaling-cost) §4 |
+| Scale-to-zero сервинга | KEDA по очереди → нода пустеет → автоскейлер её удаляет | [03](/mlops/03-model-serving), [Kubernetes: 25. Экосистема вокруг кластера](/kubernetes/25-ecosystem) §6 |
 | Разделение GPU для dev/CI | Time-slicing или MIG вместо GPU на каждого | §6 |
-| Spot для обучения, расписание non-prod | Чекпоинты + retry Job; выключать ночью | [../FinOps/03_autoscaling_cost.md](/finops/03-autoscaling-cost) §5–6 |
-| Правильный размер, квоты, showback | L4/L40S вместо H100 для малых моделей; ResourceQuota; отчёт по командам | §1, §5, [../FinOps/04_kubecost_opencost.md](/finops/04-kubecost-opencost) |
+| Spot для обучения, расписание non-prod | Чекпоинты + retry Job; выключать ночью | [FinOps: 03. Автоскейлинг как инструмент экономии: HPA, KEDA, ноды, spot, расписания](/finops/03-autoscaling-cost) §5–6 |
+| Правильный размер, квоты, showback | L4/L40S вместо H100 для малых моделей; ResourceQuota; отчёт по командам | §1, §5, [FinOps: 04. OpenCost и Kubecost: сколько стоит каждый namespace](/finops/04-kubecost-opencost) |
 
 ```yaml
 # Karpenter: отдельный пул GPU-нод, который сам уходит в ноль
@@ -383,7 +397,8 @@ spec:
       taints: [{ key: nvidia.com/gpu, value: "true", effect: NoSchedule }]
   limits: { nvidia.com/gpu: "8" }             # потолок пула в GPU (проверь для своей версии)
   disruption: { consolidationPolicy: WhenEmpty, consolidateAfter: 10m }   # пустую GPU-ноду — удалить
-```text
+```
+
 > ⚠️ Karpenter не считает ноду готовой, пока на ней не заработал **device plugin** (или GPU Operator):
 > без него ноды создаются, а поды остаются `Pending`. Холодный старт новой GPU-ноды — ВМ + драйвер +
 > образ на 10 ГБ + модель — это минуты ([03](/mlops/03-model-serving)).
@@ -398,17 +413,17 @@ spec:
 **Inf2 / Trn2** — собственные чипы AWS (Inferentia2 / Trainium2) со своим SDK Neuron, не CUDA.
 
 > ⚠️ У новых аккаунтов квоты на GPU-инстансы (Service Quotas для семейств G и P) обычно минимальные —
-> запрашивай увеличение заранее. Региона AWS в Казахстане нет — [../Left/04_Cloud/08_aws_deep.md](/cloud/08-aws-deep) §10.
+> запрашивай увеличение заранее. Региона AWS в Казахстане нет — [Облака: 08. AWS глубже](/cloud/08-aws-deep) §10.
 
 **Yandex Cloud** (документация Compute, проверь): `gpu-standard-v1`/`v2` — V100 32 ГБ; `gpu-standard-v3`/`v3i`
 — A100 80 ГБ; `standard-v3-t4` / `standard-v3-t4i` — T4 16 ГБ / T4i 24 ГБ; `gpu-standard-v4` — платформа
 со 141 ГБ на GPU. В Managed Kubernetes — группы узлов с GPU с драйверами или без (под GPU Operator);
 есть пример time-slicing `yandex-cloud-examples/yc-mk8s-gpu-time-slicing`.
 
-⚠️ Стартовый грант в РК GPU **не покрывает** ([../Left/04_Cloud/09_yandex_cloud.md](/cloud/09-yandex-cloud) §10),
+⚠️ Стартовый грант в РК GPU **не покрывает** ([Облака: 09. Yandex Cloud глубже](/cloud/09-yandex-cloud) §10),
 а доступность GPU-платформ в `kz1` проверяй в консоли: в документации ru-kz перечислены зоны `kz1-a`
 и `kz1-b`, хотя в регионе одна зона — похоже на шаблон. Из казахстанских провайдеров GPU Cloud заявляет
-Kazteleport — [../Left/04_Cloud/10_kz_clouds.md](/cloud/10-kz-clouds) §3.
+Kazteleport — [Облака: 10. Казахстанские облака](/cloud/10-kz-clouds) §3.
 
 ---
 
@@ -426,7 +441,8 @@ nodes:
   - role: worker                       # обычная нода
   - role: worker                       # «GPU-нода»
     labels: { nvidia.com/gpu.product: NVIDIA-L4, nvidia.com/gpu.memory: "23034" }
-```text
+```
+
 ```bash
 mkdir -p ~/labs/mlops/02 && cd ~/labs/mlops/02
 kind create cluster --name gpu --image kindest/node:v1.36.4 --config kind-gpu.yaml
@@ -437,7 +453,8 @@ curl -s -H "Content-Type: application/json-patch+json" -X PATCH \
   --data '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"4"}]' \
   http://localhost:8001/api/v1/nodes/gpu-worker2/status >/dev/null
 kubectl get nodes -o custom-columns='NODE:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu'
-```text
+```
+
 ```yaml
 # gpu-pod.yaml
 apiVersion: v1
@@ -447,7 +464,8 @@ spec:
   containers: [{ name: c, image: busybox:1.36, command: ["sleep", "3600"], resources: { limits: { nvidia.com/gpu: 1 } } }]
   tolerations: [{ key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }]
   nodeSelector: { nvidia.com/gpu.product: NVIDIA-L4 }
-```text
+```
+
 ```bash
 kubectl apply -f gpu-pod.yaml
 sed -e 's/gpu-ok/gpu-too-many/' -e 's/gpu: 1/gpu: 5/' gpu-pod.yaml | kubectl apply -f -
@@ -457,7 +475,8 @@ kubectl get pods -o wide                                 # gpu-ok → gpu-worker
 kubectl describe pod gpu-no-tol | tail -3                # untolerated taint {nvidia.com/gpu: true}
 kubectl describe pod gpu-too-many | tail -3              # Insufficient nvidia.com/gpu
 kubectl describe node gpu-worker2 | grep -A6 "Allocated resources"   # nvidia.com/gpu 1 1
-```text
+```
+
 **Шаг 2 — квота.** Namespace `team-ml` с ResourceQuota `requests.nvidia.com/gpu: "2"` (§5): создай
 там три пода по 1 GPU. Какой не создастся и что ответит API?
 
@@ -500,7 +519,7 @@ Prometheus-метрики и даже DRA. Сними ручной ресурс 
 | Хочу | Как |
 |------|-----|
 | Дать поду GPU | `resources.limits: { nvidia.com/gpu: 1 }` + toleration + nodeSelector/affinity |
-| Не пустить обычные поды | `kubectl taint nodes &lt;n&gt; nvidia.com/gpu=true:NoSchedule` |
+| Не пустить обычные поды | `kubectl taint nodes <n> nvidia.com/gpu=true:NoSchedule` |
 | Выбрать GPU по памяти / ограничить команду | Affinity `nvidia.com/gpu.memory Gt 40000` / ResourceQuota `requests.nvidia.com/gpu` |
 | Поставить весь стек | `helm install gpu-operator nvidia/gpu-operator --version v26.7.1 -n gpu-operator` |
 | 4 пода на одну GPU | Time-slicing ConfigMap `replicas: 4` → ClusterPolicy `devicePlugin.config` |
@@ -533,13 +552,16 @@ Prometheus-метрики и даже DRA. Сними ручной ресурс 
 11. AWS: G4dn (T4), G5 (A10G), G6 (L4), G6e (L40S), P4d (A100), P5 (H100), P5e/P5en (H200), P6 (Blackwell);
     Yandex: V100, A100, T4, 141 ГБ; грант РК без GPU. Без GPU учатся на планировании (PATCH / fake-gpu-operator).
 
-➡️ Дальше: [03_model_serving.md](/mlops/03-model-serving) · Задачи: 02_gpu_kubernetes_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«Как под получает GPU?»*, *«Time-slicing или MIG?»*, *«Что такое DRA?»*,
+> *«Как не платить за простой GPU?»* — важно назвать компонент цепочки **и** его ограничение.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Опиши цепочку от GPU на ноде до процесса в контейнере: какие компоненты участвуют и что делает каждый?
 
@@ -702,7 +724,7 @@ dev, CI, редкие запросы. MPS: Volta+, одновременная р
 <details><summary>Ответ</summary>
 
 `single`: все MIG-экземпляры ноды одного профиля и выдаются как обычный `nvidia.com/gpu`.
-`mixed`: разные профили на одной ноде, каждый — отдельный ресурс `nvidia.com/mig-&lt;профиль&gt;`.
+`mixed`: разные профили на одной ноде, каждый — отдельный ресурс `nvidia.com/mig-<профиль>`.
 
 </details>
 
@@ -722,6 +744,9 @@ API для устройств по модели «заявка → подбор�
 
 1.34 — ядро `resource.k8s.io/v1` GA и включено по умолчанию. 1.36 — prioritized list GA; beta:
 extended resource support, partitionable devices, device taints, binding conditions, health status.
+1.37 — extended resource support GA, device taints GA; partitionable devices остаются beta. Extended
+resource support позволяет DRA-драйверу обслуживать поды с классическим `nvidia.com/gpu: 1` без device
+plugin и без изменения манифестов.
 
 </details>
 
@@ -752,6 +777,7 @@ extended resource support, partitionable devices, device taints, binding conditi
 
 Коды ошибок драйвера NVIDIA в журнале ядра. 79 — GPU недоступна по PCIe: cordon + drain,
 перезагрузка машины, тикет провайдеру. 48 — некорректируемая ECC: сброс GPU или перезагрузка, cordon.
+94 — ошибка памяти затронула одно приложение: перезапустить его. 95 — затронуто несколько: сброс GPU.
 
 </details>
 
@@ -790,162 +816,237 @@ P5 — H100, P5e/P5en — H200, P6/P6e — Blackwell/GB200; Inf2/Trn2 — сво
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```yaml
 # B1
-```text
-```text:no-line-numbers
 resources:
-```text
-```text:no-line-numbers
   requests: { nvidia.com/gpu: 1 }
-```text
-```text:no-line-numbers
   limits:   { nvidia.com/gpu: 2 }
-```text
+```
 Вопрос: что ответит API?
 
-```text:no-line-numbers
+```yaml
 # B2
-```text
-```text:no-line-numbers
 resources:
-```text
-```text:no-line-numbers
   limits: { nvidia.com/gpu: 0.5 }
-```text
+```
 Вопрос: что будет?
 
-```text:no-line-numbers
-# B3 — образ vllm/vllm-openai с CUDA 13.x, на ноде драйвер 550 (nvidia-smi: CUDA Version 12.4)
 ```text
+# B3 — образ vllm/vllm-openai с CUDA 13.x, на ноде драйвер 550 (nvidia-smi: CUDA Version 12.4)
+```
 Вопрос: что случится при старте?
 
-```text:no-line-numbers
+```yaml
 # B4 — GPU-нода с taint nvidia.com/gpu=true:NoSchedule
-```text
-```text:no-line-numbers
 # под с toleration на этот taint, но без nodeSelector/affinity и без запроса nvidia.com/gpu
-```text
+```
 Вопрос: куда попадёт под? А если запросить `nvidia.com/gpu: 1`?
 
-```text:no-line-numbers
+```text
 # B5 — 3 GPU-ноды по 1 GPU, taint'ов нет, CA с expander random, в кластере есть CPU-группа
-```text
-```text:no-line-numbers
 Выкатили 20 реплик обычного веб-сервиса, CPU-нод не хватило.
-```text
+```
 Вопрос: что может сделать автоскейлер и сколько это стоит?
 
-```text:no-line-numbers
+```yaml
 # B6 — time-slicing replicas: 4 на ноде с одной L4 (24 ГБ)
-```text
-```text:no-line-numbers
 # четыре пода сервинга, каждый грузит модель на 8 ГБ
-```text
+```
 Вопрос: что будет?
 
-```text:no-line-numbers
+```yaml
 # B7 — time-slicing, failRequestsGreaterThanOne: true
-```text
-```text:no-line-numbers
 resources: { limits: { nvidia.com/gpu: 2 } }
-```text
+```
 Вопрос: что ответит device plugin и почему это разумно?
 
-```text:no-line-numbers
+```bash
 # B8 — на ноде с A100 80GB идут поды сервинга
-```text
-```text:no-line-numbers
 kubectl label node gpu-1 nvidia.com/mig.config=all-1g.10gb --overwrite
-```text
+```
 Вопрос: что произойдёт с работающими подами и что появится в allocatable?
 
-```text:no-line-numbers
+```yaml
 # B9 — MIG mixed, на ноде 7 экземпляров 1g.10gb
-```text
-```text:no-line-numbers
 resources: { limits: { nvidia.com/gpu: 1 } }
-```text
+```
 Вопрос: запланируется ли под?
 
-```text:no-line-numbers
+```yaml
 # B10 — кластер 1.37, DRA-драйвер NVIDIA с extended resource mapping на DeviceClass, device plugin удалён
-```text
-```text:no-line-numbers
 resources: { limits: { nvidia.com/gpu: 1 } }
-```text
+```
 Вопрос: будет ли работать старый манифест?
 
-```text:no-line-numbers
+```promql
 # B11 — алерт
-```text
-```text:no-line-numbers
 DCGM_FI_DEV_XID_ERRORS > 0
-```text
+```
 Вопрос: чем плох такой алерт?
 
-```text:no-line-numbers
-# B12 — Karpenter NodePool для g6, device plugin не установлен
 ```text
+# B12 — Karpenter NodePool для g6, device plugin не установлен
+```
 Вопрос: что будет с GPU-подами и счётом?
+
+<details><summary>Ответы</summary>
+
+**B1.** Ошибка валидации: для extended-ресурсов requests должны быть равны limits (overcommit запрещён).
+
+**B2.** Ошибка валидации: extended-ресурсы — только целые. Нужна time-slicing/MPS/MIG-конфигурация.
+
+**B3.** Контейнер упадёт с `CUDA driver version is insufficient for CUDA runtime version` (или похожей
+ошибкой инициализации CUDA): драйверу 550 не хватает для CUDA 13.x (нужно ≥ 580). Обновить драйвер ноды
+или взять образ под CUDA 12.x.
+
+**B4.** Toleration только разрешает: под может попасть и на GPU-ноду, и на обычную — куда решит планировщик.
+С запросом `nvidia.com/gpu: 1` — только на GPU-ноду, потому что ресурс есть только там.
+
+**B5.** Без taint'ов обычные поды поедут на GPU-ноды, а при нехватке места CA с `random` может увеличить
+именно GPU-группу — веб-сервис на нодах по $1–55 в час. Нужен taint на GPU-нодах и expander `priority`/`least-waste`.
+
+**B6.** Четыре пода по 8 ГБ = 32 ГБ при 24 ГБ памяти: изоляции памяти нет, третий или четвёртый под
+получит CUDA OOM при загрузке (или упадёт позже под нагрузкой). Time-slicing делит время, а не память.
+
+**B7.** Отклонит выделение: при `failRequestsGreaterThanOne: true` запрос больше одной доли запрещён.
+Разумно, потому что две доли time-slicing не дают двойной мощности и вводят в заблуждение.
+
+**B8.** MIG Manager остановит нагрузку на GPU (поды будут вытеснены/перезапущены), переразметит GPU на
+7 экземпляров `1g.10gb`; в allocatable появится `nvidia.com/mig-1g.10gb: 7` (при `mixed`) или
+`nvidia.com/gpu: 7` (при `single`). Делать в окно работ со сливом ноды.
+
+**B9.** Нет: при `mixed` ресурс называется `nvidia.com/mig-1g.10gb`, а `nvidia.com/gpu` на ноде нет
+(или он 0). Нужно запрашивать профиль явно или перейти на `single`.
+
+**B10.** Да, если на DeviceClass задано отображение extended resource: в 1.37 эта функция GA, и DRA-драйвер
+обслуживает `nvidia.com/gpu: 1` без device plugin и без ResourceClaim в манифесте. Но помни, что выдача
+GPU драйвером NVIDIA пока не поддерживается официально.
+
+**B11.** `XID_ERRORS` — код последней ошибки (gauge): после одного сбоя метрика может держать ненулевое
+значение и алерт будет висеть вечно, а новую ошибку с тем же кодом не заметишь. Лучше
+`changes(DCGM_FI_DEV_XID_ERRORS[10m]) > 0` или счётчик `DCGM_EXP_XID_ERRORS_TOTAL`, если включён.
+
+**B12.** Karpenter создаст ноды g6, но без device plugin ресурс `nvidia.com/gpu` не появится, ноды не
+станут «инициализированными», поды останутся `Pending`, а Karpenter может создавать ещё ноды — счёт
+растёт за пустые GPU. Device plugin или GPU Operator — обязательная часть bootstrap.
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 GPU-планирование в kind
+#### C1. 🔑 GPU-планирование в kind
 Пройди мини-лабу: kind на `kindest/node:v1.36.4`, «GPU-нода» с taint и 4 `nvidia.com/gpu` через PATCH статуса.
 Запиши для каждого из четырёх подов, где он оказался и какое событие видно в `describe`.
 
-### C2. 🔑 Квоты и приоритеты
+<details><summary>Ответ</summary>
+
+`gpu-ok` → `gpu-worker2` (Running), `web` → `gpu-worker`, `gpu-no-tol` → Pending
+(untolerated taint), `gpu-too-many` → Pending (Insufficient nvidia.com/gpu). Контейнеры запускаются,
+потому что GPU им реально не нужна — планировщик проверяет только число в allocatable.
+
+</details>
+
+#### C2. 🔑 Квоты и приоритеты
 В `team-ml` поставь ResourceQuota `requests.nvidia.com/gpu: "2"`. Создай три пода по 1 GPU и запиши ошибку.
 Затем создай PriorityClass `prod-serving` (value 100000) и `experiments` (1000): займи все 4 GPU
 подами `experiments` и запусти под `prod-serving` на 1 GPU. Что произошло с экспериментами?
 
-### C3. ExtendedResourceToleration
+<details><summary>Ответ</summary>
+
+Третий под отклонит API: `exceeded quota: gpu-quota, requested: requests.nvidia.com/gpu=1,
+used: …=2, limited: …=2`. Под с PriorityClass `prod-serving` вытеснит один под `experiments` (preemption),
+тот станет Pending.
+
+</details>
+
+#### C3. ExtendedResourceToleration
 Выясни, включён ли плагин в kind (`kubectl -n kube-system get pod kube-apiserver-gpu-control-plane -o yaml | grep admission`).
 Включи его через `kubeadmConfigPatches` в конфиге kind, пересоздай кластер и проверь: под с запросом
 `nvidia.com/gpu` без toleration теперь получает toleration автоматически?
 
-### C4. 🔑 Time-slicing на бумаге
+<details><summary>Ответ</summary>
+
+В kind плагин по умолчанию не включён. После включения под с запросом `nvidia.com/gpu` получает
+toleration `nvidia.com/gpu:Exists:NoSchedule` в своей спецификации (видно в `kubectl get pod -o yaml`).
+
+</details>
+
+#### C4. 🔑 Time-slicing на бумаге
 Напиши ConfigMap time-slicing для двух типов нод: `l4-dev` — 8 реплик с `renameByDefault: true`,
 `a100-prod` — без разделения. Как выбрать конфиг для конкретной ноды? Какой ресурс будут запрашивать поды
 на `l4-dev`? Сколько `nvidia.com/gpu.shared` покажет нода с 2 × L4?
 
-### C5. MIG-план
+<details><summary>Ответ</summary>
+
+В ConfigMap два ключа (`l4-dev`, `a100-prod`); конфиг ноды выбирается меткой
+`nvidia.com/device-plugin.config=<ключ>`. Поды на `l4-dev` запрашивают `nvidia.com/gpu.shared: 1`.
+Нода с 2 × L4 покажет 16 `nvidia.com/gpu.shared`.
+
+</details>
+
+#### C5. MIG-план
 Команде нужно на одной H100 80GB: 2 сервиса по ~15 ГБ памяти модели и 3 эксперимента по ~8 ГБ.
 Подбери профили MIG (из таблицы конспекта), проверь, что суммарно их можно разместить (не больше 7 долей
 вычислителей), и напиши `limits` для каждого пода при стратегии `mixed`.
 
-### C6. 🔑 DRA-манифесты
+<details><summary>Ответ</summary>
+
+Например: 2 × `2g.20gb` (сервисы, по 20 ГБ) + 3 × `1g.10gb` (эксперименты) = 2×2 + 3×1 = 7 долей,
+память 40 + 30 = 70 ГБ из 80. Limits: `nvidia.com/mig-2g.20gb: 1` и `nvidia.com/mig-1g.10gb: 1`.
+Реальную допустимость комбинации проверь по таблице размещения профилей NVIDIA.
+
+</details>
+
+#### C6. 🔑 DRA-манифесты
 Напиши ResourceClaimTemplate и Pod по образцу конспекта; затем ResourceClaim (не шаблон), общий для двух
 подов. В чём разница поведения? Попробуй применить в kind 1.36 — какие объекты создадутся без DRA-драйвера
 и в каком состоянии будет под?
 
-### C7. 🔑 Алерты на GPU
+<details><summary>Ответ</summary>
+
+Шаблон создаёт отдельный claim на каждый под; общий ResourceClaim — одно устройство на все поды,
+которые на него ссылаются. Без DRA-драйвера объекты создадутся, но ResourceSlice нет — claim не будет
+выделен, под останется Pending с событием о невозможности выделить устройство.
+
+</details>
+
+#### C7. 🔑 Алерты на GPU
 Напиши PrometheusRule: простой GPU (< 5% за 2 часа), XID-ошибка, память > 95% (с исключением для подов
 vLLM по метке `container`), температура выше порога из спецификации. Для каждого — severity и что делает дежурный.
 
-### C8. Калькулятор простоя
+#### C8. Калькулятор простоя
 Возьми цены on-demand для g6.xlarge и p5.48xlarge из калькулятора AWS (регион, который ты бы выбрал для РК).
 Посчитай месячные потери, если: (а) dev-нода g6 работает 24/7, а нужна 9:00–19:00 по будням; (б) одна p5
 простаивает каждую ночь по 10 часов. Сколько сэкономит расписание или scale-to-zero?
 
-### C9. Karpenter для GPU (на бумаге)
+<details><summary>Ответ</summary>
+
+(а) Нужна 50 ч из 168 в неделю → простой ~118 ч × цена; (б) 10 ч × 30 ночей × цена p5.
+Экономия — вся стоимость простоя за вычетом времени на старт нод.
+
+</details>
+
+#### C9. Karpenter для GPU (на бумаге)
 Напиши NodePool для обучения: spot, семейства `g6e` и `p4d`, taint `nvidia.com/gpu`, лимит 16 GPU,
 consolidation только пустых нод. Объясни, что должно быть в EC2NodeClass и что — на ноде до того,
 как Karpenter признает её готовой.
 
-### C10. fake-gpu-operator (со звёздочкой)
+<details><summary>Ответ</summary>
+
+В EC2NodeClass — AMI с драйвером (accelerated), подсети, SG, роль; на ноде до готовности —
+работающий device plugin (или GPU Operator), чтобы появился `nvidia.com/gpu`.
+
+</details>
+
+#### C10. fake-gpu-operator (со звёздочкой)
 Поставь fake-gpu-operator 0.2.0 в kind, посмотри, какие метки появились на ноде, какие метрики отдаёт
 status-exporter и совпадают ли их имена с DCGM. Опиши, чему он учит, а чему — нет.
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Под сервинга в `Pending`: `0/5 nodes are available: 2 Insufficient nvidia.com/gpu, 3 node(s) had untolerated taint`.
 Разбери сообщение и составь план.
@@ -1036,7 +1137,7 @@ pull образа сервинга (~10 ГБ) + загрузка модели. �
 
 <details><summary>Ответ</summary>
 
-После MIG ресурсы стали называться `nvidia.com/mig-&lt;профиль&gt;` (при `mixed`), а поды просят
+После MIG ресурсы стали называться `nvidia.com/mig-<профиль>` (при `mixed`), а поды просят
 `nvidia.com/gpu`; или профили слишком малы для их моделей по памяти. Обновить манифесты или стратегию.
 
 </details>
@@ -1057,13 +1158,12 @@ pull образа сервинга (~10 ГБ) + загрузка модели. �
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Как под в Kubernetes получает GPU? Что такое device plugin?
 
 <details><summary>Ответ</summary>
 
 Драйвер → toolkit → device plugin объявляет `nvidia.com/gpu` → kubelet → планировщик → под с limits;
-   device plugin — DaemonSet с gRPC API к kubelet, объявляет и выделяет устройства.
+device plugin — DaemonSet с gRPC API к kubelet, объявляет и выделяет устройства.
 
 </details>
 
@@ -1072,7 +1172,7 @@ pull образа сервинга (~10 ГБ) + загрузка модели. �
 <details><summary>Ответ</summary>
 
 Оператор ставит и обновляет весь стек (драйвер, toolkit, plugin, GFD, DCGM, MIG manager, validator)
-   на всех GPU-нодах одним чартом и CRD; device plugin — только одна часть.
+на всех GPU-нодах одним чартом и CRD; device plugin — только одна часть.
 
 </details>
 
@@ -1081,7 +1181,7 @@ pull образа сервинга (~10 ГБ) + загрузка модели. �
 <details><summary>Ответ</summary>
 
 Taint `nvidia.com/gpu` + toleration (ExtendedResourceToleration), affinity по меткам GFD, квоты,
-   PriorityClass, отдельные пулы для обучения и сервинга.
+PriorityClass, отдельные пулы для обучения и сервинга.
 
 </details>
 
@@ -1090,7 +1190,7 @@ Taint `nvidia.com/gpu` + toleration (ExtendedResourceToleration), affinity по 
 <details><summary>Ответ</summary>
 
 Time-slicing — dev/CI без изоляции; MPS — много мелких процессов одной команды; MIG — прод с аппаратной
-   изоляцией на A100/H100/H200.
+изоляцией на A100/H100/H200.
 
 </details>
 
@@ -1099,7 +1199,7 @@ Time-slicing — dev/CI без изоляции; MPS — много мелких
 <details><summary>Ответ</summary>
 
 «PVC для устройств»: DeviceClass, ResourceSlice, ResourceClaim; ядро GA с 1.34, extended resources
-   и device taints GA с 1.37; драйвер NVIDIA для выдачи GPU — ещё не официальный.
+и device taints GA с 1.37; драйвер NVIDIA для выдачи GPU — ещё не официальный.
 
 </details>
 
@@ -1108,7 +1208,7 @@ Time-slicing — dev/CI без изоляции; MPS — много мелких
 <details><summary>Ответ</summary>
 
 Утилизация и занятость, память, температура и мощность, XID, remapped rows; алерты — простой,
-   XID, деградация памяти; нагрузку сервинга — по очереди и TTFT (тема 03).
+XID, деградация памяти; нагрузку сервинга — по очереди и TTFT (тема 03).
 
 </details>
 
@@ -1117,7 +1217,7 @@ Time-slicing — dev/CI без изоляции; MPS — много мелких
 <details><summary>Ответ</summary>
 
 Драйвер на хосте должен быть не старше, чем требует CUDA образа; обновлять драйвер раньше образов,
-   пинить CUDA в образе, проверять совместимость по меткам GFD и на staging-пуле.
+пинить CUDA в образе, проверять совместимость по меткам GFD и на staging-пуле.
 
 </details>
 
@@ -1126,7 +1226,7 @@ Time-slicing — dev/CI без изоляции; MPS — много мелких
 <details><summary>Ответ</summary>
 
 Пулы с нулём нод, scale-to-zero, разделение GPU, spot для обучения, расписание, правильный размер,
-   квоты и showback, алерт на простой.
+квоты и showback, алерт на простой.
 
 </details>
 
@@ -1135,7 +1235,7 @@ Time-slicing — dev/CI без изоляции; MPS — много мелких
 <details><summary>Ответ</summary>
 
 L4 (G6) или A10G (G5) для 8B в INT8/INT4; L40S (G6e) для FP16 с запасом под KV-кэш и конкуренцию;
-   H100 — только если нужна большая пропускная способность или модель крупнее.
+H100 — только если нужна большая пропускная способность или модель крупнее.
 
 </details>
 
@@ -1144,9 +1244,7 @@ L4 (G6) или A10G (G5) для 8B в INT8/INT4; L40S (G6e) для FP16 с за�
 <details><summary>Ответ</summary>
 
 kind с объявленным через PATCH `nvidia.com/gpu` или fake-gpu-operator: taint'ы, affinity, квоты,
-    приоритеты, DRA-объекты; политики — через `kubectl apply --dry-run=server` и тесты политик.
-
----
+приоритеты, DRA-объекты; политики — через `kubectl apply --dry-run=server` и тесты политик.
 
 </details>
 

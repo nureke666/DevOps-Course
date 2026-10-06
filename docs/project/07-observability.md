@@ -1,6 +1,6 @@
 ---
 title: "07. Наблюдаемость: метрики, логи, трейсы и алерты по SLO"
-description: "Цель этапа: собрать в портфолио результаты 08-observatory и 14-pulse так, чтобы"
+description: "SLO, алерты с тестами, логи, трейсы"
 ---
 
 # 07. Наблюдаемость: метрики, логи, трейсы и алерты по SLO
@@ -52,7 +52,7 @@ description: "Цель этапа: собрать в портфолио резу
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
  linkd-platform/observability/
  ├── rules/          recording + alerting (08 + 14) — единственный источник правил
  ├── tests/          promtool test rules (14-pulse) — гоняет CI
@@ -68,7 +68,8 @@ description: "Цель этапа: собрать в портфолио резу
      stdout (JSON) ──► Alloy ──► Loki ──┐
      OTel ──────────────────► Tempo ────┼──► Grafana (дашборды из observability/)
      Alertmanager ──► Telegram          │
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -78,7 +79,8 @@ description: "Цель этапа: собрать в портфолио резу
 ```bash
 cd ~/Projects/devops/08-observatory && ./check.sh
 cd ~/Projects/devops/14-pulse && ./check.sh
-```text
+```
+
 ### 2. Перенос
 
 Правила, тесты, дашборды, конфиг Alertmanager и сценарии k6 → `observability/`.
@@ -121,7 +123,8 @@ Runbook'и из 08-observatory → `runbooks/` в корне (на них ссы
 | Бюджет ошибок | …% запросов ≈ … минут полного простоя |
 | Алерты | быстрое и медленное сгорание: окна, пороги, severity |
 | Что не входит | служебные эндпоинты, 4xx по вине клиента, … |
-```text
+```
+
 ### 6. Алерты и доставка
 
 Состав — на уровне смысла, выражения уже есть в проектах:
@@ -178,7 +181,8 @@ Job из этапа 03: `promtool check rules` и `promtool test rules` по `ob
 ```bash
 git add observability runbooks docs README.md .gitlab-ci.yml
 git commit -m "observability: SLO, tested burn-rate alerts, dashboards, tracing"
-```text
+```
+
 ---
 
 ## ✅ Критерии приёмки
@@ -197,7 +201,7 @@ git commit -m "observability: SLO, tested burn-rate alerts, dashboards, tracing"
 
 ## 🪤 Грабли
 
-- **`&#123;&#123; $value &#125;&#125;` в правилах внутри Helm-шаблона** — Helm пытается отрендерить это сам
+- **<code v-pre>{{ $value }}</code> в правилах внутри Helm-шаблона** — Helm пытается отрендерить это сам
   и падает. Такие строки экранируются.
 - **ServiceMonitor есть, цели нет.** Частые причины: селектор не совпадает с лейблами
   Service; порт указан номером, а не именем; Prometheus выбирает ServiceMonitor'ы только
@@ -237,19 +241,19 @@ git commit -m "observability: SLO, tested burn-rate alerts, dashboards, tracing"
 
 ## 📚 Теория в волте
 
-- Основы, SLI/SLO: [../Left/02_Monitoring/01_monitoring_concepts.md](/monitoring/01-monitoring-concepts),
-  [../SRE/02_sli_slo_error_budget.md](/sre/02-sli-slo-error-budget)
-- Prometheus и service discovery: [../Left/02_Monitoring/02_prometheus_basics.md](/monitoring/02-prometheus-basics)
-- PromQL, histogram_quantile: [../Left/02_Monitoring/03_promql.md](/monitoring/03-promql)
-- Alertmanager, маршрутизация, inhibit: [../Left/02_Monitoring/05_alertmanager.md](/monitoring/05-alertmanager)
-- Grafana, provisioning: [../Left/02_Monitoring/06_grafana.md](/monitoring/06-grafana)
-- RED, USE, золотые сигналы: [../Left/02_Monitoring/07_what_to_monitor.md](/monitoring/07-what-to-monitor)
-- Loki и сборщики: [../Left/03_Logging/03_loki_grafana.md](/logging/03-loki-grafana),
-  [../Left/03_Logging/04_collectors.md](/logging/04-collectors),
-  [../Left/03_Logging/05_log_sources.md](/logging/05-log-sources)
-- Трейсинг: [../SRE/03_tracing_opentelemetry.md](/sre/03-tracing-opentelemetry)
-- Инциденты и постмортемы: [../SRE/04_incident_management.md](/sre/04-incident-management),
-  [../SRE/05_postmortems.md](/sre/05-postmortems)
-- Мониторинг PostgreSQL: [../Left/01_Databases/07_db_monitoring.md](/databases/07-db-monitoring)
+- Основы, SLI/SLO: [Мониторинг: 01. Основы мониторинга](/monitoring/01-monitoring-concepts),
+  [SRE: 02. SLI, SLO и error budget](/sre/02-sli-slo-error-budget)
+- Prometheus и service discovery: [Мониторинг: 02. Prometheus: архитектура и сбор](/monitoring/02-prometheus-basics)
+- PromQL, histogram_quantile: [Мониторинг: 03. Типы метрик и PromQL](/monitoring/03-promql)
+- Alertmanager, маршрутизация, inhibit: [Мониторинг: 05. Алерты и Alertmanager](/monitoring/05-alertmanager)
+- Grafana, provisioning: [Мониторинг: 06. Grafana](/monitoring/06-grafana)
+- RED, USE, золотые сигналы: [Мониторинг: 07. Что мониторить: 4 сигнала, USE, RED, SLO](/monitoring/07-what-to-monitor)
+- Loki и сборщики: [Логирование: 03. Loki + Grafana](/logging/03-loki-grafana),
+  [Логирование: 04. Сборщики логов](/logging/04-collectors),
+  [Логирование: 05. Источники логов](/logging/05-log-sources)
+- Трейсинг: [SRE: 03. Трейсинг и OpenTelemetry](/sre/03-tracing-opentelemetry)
+- Инциденты и постмортемы: [SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management),
+  [SRE: 05. Постмортемы](/sre/05-postmortems)
+- Мониторинг PostgreSQL: [Базы данных: 07. Мониторинг баз данных](/databases/07-db-monitoring)
 
-➡️ Следующий этап: [08_secrets_security.md](/project/08-secrets-security)
+➡️ Следующий этап: [08. Секреты и безопасность](/project/08-secrets-security)

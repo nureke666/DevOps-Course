@@ -1,14 +1,14 @@
 ---
 title: "01. Security mindset: как думать о безопасности"
-description: "Блок → Безопасность → тема 01. Опирается на"
+description: "CIA, least privilege, defense in depth, zero trust, STRIDE-lite, карта безопасности в волте"
 ---
 
 # 01. Security mindset: как думать о безопасности
 
 > Блок → Безопасность → тема 01. Опирается на
-> [../Left/04_Cloud/01_cloud_models.md](/cloud/01-cloud-models) (shared responsibility) ·
-> [../Docker/10_security_best_practices.md](/docker/10-security-best-practices) (слои защиты контейнера) ·
-> [../CICD/13_quality_security.md](/cicd/13-quality-security) (сканы и секреты в пайплайне).
+> [Облака: 01. Модели облаков: IaaS, PaaS, SaaS](/cloud/01-cloud-models) (shared responsibility) ·
+> [Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices) (слои защиты контейнера) ·
+> [CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security) (сканы и секреты в пайплайне).
 >
 > **После темы ты умеешь:** объяснить CIA, least privilege, defense in depth, attack surface
 > и zero trust на примерах из своей инфраструктуры; за 30–60 минут провести STRIDE-lite
@@ -20,7 +20,7 @@ description: "Блок → Безопасность → тема 01. Опира�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                  ЧТО ЗАЩИЩАЕМ?                      ОТ ЧЕГО?
           CIA: конфиденциальность,          threat model (STRIDE-lite):
           целостность, доступность          кто, куда, как может ударить
@@ -36,7 +36,8 @@ description: "Блок → Безопасность → тема 01. Опира�
                                     │
                                     ▼
             ОБНАРУЖЕНИЕ И РЕАКЦИЯ (тема 07): логи, аудит, инциденты, compliance
-```text
+```
+
 ---
 
 ## 1. Зачем девопсу security mindset
@@ -48,7 +49,7 @@ description: "Блок → Безопасность → тема 01. Опира�
 В волте уже много инструментов безопасности (Trivy, gitleaks, RBAC, NetworkPolicy,
 hardening SSH). Mindset — это то, что их связывает:
 
-```text
+```text:no-line-numbers
   БЕЗ МОДЕЛИ                                  С МОДЕЛЬЮ
  ─────────────────────────────────           ─────────────────────────────────────
  «поставили Trivy — мы в безопасности»        «от каких угроз защищает Trivy, а от каких нет?»
@@ -56,7 +57,8 @@ hardening SSH). Mindset — это то, что их связывает:
  «у нас приватная сеть, значит, безопасно»    «что будет, если один под уже взломан?»
  права «чтобы точно работало»                 «что потеряем, если этот ключ утечёт?»
  безопасность — отдельная команда в конце     угрозы обсуждаем на дизайне, проверки — в пайплайне
-```text
+```
+
 Три идеи, на которых держится всё остальное:
 1. **Безопасность — это управление риском, а не ноль риска.** Риск ≈ вероятность × ущерб.
    Цель — сделать атаку дороже выгоды, ограничить ущерб и быстро заметить.
@@ -84,7 +86,7 @@ hardening SSH). Mindset — это то, что их связывает:
 > но на break-glass-доступе может ударить по availability. Хорошее решение называет,
 > чем пожертвовали и почему.
 
-Доступность — общая территория с SRE ([../SRE/00_INDEX.md](/sre/)): ransomware
+Доступность — общая территория с SRE ([SRE](/sre/)): ransomware
 и DDoS — это одновременно security- и reliability-инцидент.
 
 ---
@@ -96,14 +98,14 @@ hardening SSH). Mindset — это то, что их связывает:
 
 | Где | Слишком широко | Least privilege | Подробно |
 |-----|----------------|-----------------|----------|
-| Linux, sudo | `deploy ALL=(ALL) NOPASSWD: ALL` | Конкретные команды в `/etc/sudoers.d/` | [../Linux/05_user_management.md](/linux/05-user-management) |
-| Файлы | `chmod 777`, SUID «чтобы работало» | Владелец + `640`, capabilities вместо SUID | [../Linux/06_permissions.md](/linux/06-permissions) |
-| Контейнер | root, `--privileged` | non-root, `--cap-drop=ALL`, read-only FS | [../Docker/10_security_best_practices.md](/docker/10-security-best-practices) |
-| Kubernetes | `cluster-admin` пайплайну | Role в своём namespace | [../Kubernetes/17_rbac.md](/kubernetes/17-rbac) |
-| Облако | `"Action": "*"` на `"Resource": "*"` | Конкретные действия на конкретные ресурсы | [05_iam_access.md](/security/05-iam-access) |
-| Сеть | Security group `0.0.0.0/0` на всё | «От группы к группе», default deny | [../Left/04_Cloud/03_network_vpc.md](/cloud/03-network-vpc) · [../Kubernetes/13_networkpolicy.md](/kubernetes/13-networkpolicy) |
-| Секреты | Один токен на все сервисы, бессрочный | Свой секрет на сервис, TTL, аудит | [../Left/08_Vault/00_INDEX.md](/vault/) |
-| CI/CD | Прод-переменные видны в MR из форка | Protected variables и environments | [../CICD/13_quality_security.md](/cicd/13-quality-security) |
+| Linux, sudo | `deploy ALL=(ALL) NOPASSWD: ALL` | Конкретные команды в `/etc/sudoers.d/` | [Linux: 05. User Management](/linux/05-user-management) |
+| Файлы | `chmod 777`, SUID «чтобы работало» | Владелец + `640`, capabilities вместо SUID | [Linux: 06. Permissions](/linux/06-permissions) |
+| Контейнер | root, `--privileged` | non-root, `--cap-drop=ALL`, read-only FS | [Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices) |
+| Kubernetes | `cluster-admin` пайплайну | Role в своём namespace | [Kubernetes: 17. RBAC](/kubernetes/17-rbac) |
+| Облако | `"Action": "*"` на `"Resource": "*"` | Конкретные действия на конкретные ресурсы | [05. IAM и доступ](/security/05-iam-access) |
+| Сеть | Security group `0.0.0.0/0` на всё | «От группы к группе», default deny | [Облака: 03. Сеть в облаке: VPC](/cloud/03-network-vpc) · [Kubernetes: 13. NetworkPolicy](/kubernetes/13-networkpolicy) |
+| Секреты | Один токен на все сервисы, бессрочный | Свой секрет на сервис, TTL, аудит | [Vault](/vault/) |
+| CI/CD | Прод-переменные видны в MR из форка | Protected variables и environments | [CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security) |
 
 Как применять на практике:
 - **Deny by default** — сначала запрещено всё, разрешения добавляются явно.
@@ -121,9 +123,9 @@ hardening SSH). Mindset — это то, что их связывает:
 
 Ни один контроль не идеален. Слоёв должно быть несколько, чтобы отказ одного **останавливал
 или хотя бы обнаруживался** следующим. Это та же модель «швейцарского сыра», что и в
-постмортемах ([../SRE/05_postmortems.md](/sre/05-postmortems)), только дыры проделывает атакующий.
+постмортемах ([SRE: 05. Постмортемы](/sre/05-postmortems)), только дыры проделывает атакующий.
 
-```text
+```text:no-line-numbers
  запрос из интернета
    │
    ▼  EDGE        TLS, WAF, rate limit, DDoS-защита провайдера        → тема 03
@@ -134,7 +136,8 @@ hardening SSH). Mindset — это то, что их связывает:
    ▼  ДАННЫЕ      шифрование at rest/in transit, бэкапы, минимум PII  → тема 07
  ───────────────────────────────────────────────────────────────────────────────
   поперёк всех слоёв: IDENTITY (кто ты, тема 05) и DETECTION (логи, аудит, Falco, тема 06–07)
-```text
+```
+
 Типы контролей — полезно различать, чтобы не строить защиту из одних «замков»:
 
 | Тип | Задача | Примеры |
@@ -157,21 +160,22 @@ API, зависимости, раннеры CI, люди с доступом, к
 
 | Поверхность | Как увидеть | Как уменьшить |
 |-------------|------------|---------------|
-| Открытые порты хоста | `sudo ss -tulpn`; снаружи `nmap -sV &lt;свой_хост&gt;` | Удалить/закрыть сервис, слушать `127.0.0.1`, firewall |
+| Открытые порты хоста | `sudo ss -tulpn`; снаружи `nmap -sV <свой_хост>` | Удалить/закрыть сервис, слушать `127.0.0.1`, firewall |
 | Публичные эндпоинты k8s | `kubectl get svc -A \| grep -E 'LoadBalancer\|NodePort'`, `kubectl get ingress -A` | Внутренние сервисы — `ClusterIP`, админки за VPN/IAP |
 | Облако | Инвентарь публичных IP, бакетов, security groups с `0.0.0.0/0` | Приватные подсети, block public access, bastion/VPN |
-| Пакеты в образе | `trivy image …`, SBOM ([04_vuln_management.md](/security/04-vuln-management)) | slim/distroless, multi-stage |
+| Пакеты в образе | `trivy image …`, SBOM ([04. Управление уязвимостями](/security/04-vuln-management)) | slim/distroless, multi-stage |
 | Зависимости приложения | lock-файлы, SBOM | Убрать неиспользуемое, обновлять (Renovate) |
-| Люди и доступы | Кто в группах `admins`, `docker`, `cluster-admin` | Access review, SSO, offboarding ([05_iam_access.md](/security/05-iam-access)) |
-| Секреты | Инвентаризация (как в [../Project/08_secrets_security.md](/project/08-secrets-security)) | Короткоживущие креды вместо вечных ключей |
-| CI/CD | Кто может менять `.gitlab-ci.yml`, какие раннеры `privileged` | Protected branches, отдельные раннеры ([../CICD/09_gitlab_runner.md](/cicd/09-gitlab-runner)) |
+| Люди и доступы | Кто в группах `admins`, `docker`, `cluster-admin` | Access review, SSO, offboarding ([05. IAM и доступ](/security/05-iam-access)) |
+| Секреты | Инвентаризация (как в [Пет-проект: 08. Секреты и безопасность](/project/08-secrets-security)) | Короткоживущие креды вместо вечных ключей |
+| CI/CD | Кто может менять `.gitlab-ci.yml`, какие раннеры `privileged` | Protected branches, отдельные раннеры ([CI/CD: 09. GitLab Runner](/cicd/09-gitlab-runner)) |
 
 ```bash
 # быстрый «аудит поверхности» своего сервера (⚠️ nmap — только по своим хостам)
 sudo ss -tulpn | awk 'NR>1 {print $1, $5, $7}'       # что слушает и на каких адресах
 systemctl list-units --type=service --state=running  # что вообще запущено
 nmap -sV -p- 192.168.56.30                           # как это видно снаружи (sec01 из стенда)
-```text
+```
+
 > Принцип: **то, чего нет, не надо патчить, мониторить и защищать.** Удалить сервис лучше,
 > чем закрыть его файрволом; закрыть файрволом лучше, чем оставить «с паролем».
 
@@ -187,7 +191,7 @@ nmap -sV -p- 192.168.56.30                           # как это видно 
 Каждый запрос аутентифицируется, авторизуется и шифруется, решение принимается по identity
 и контексту, доступ — минимальный и проверяется постоянно.
 
-```text
+```text:no-line-numbers
   «ЗАМОК СО РВОМ»                               ZERO TRUST
  ───────────────────────────────              ─────────────────────────────────────────
  VPN = доступ ко всей внутренней сети          доступ к конкретному приложению по identity
@@ -195,13 +199,14 @@ nmap -sV -p- 192.168.56.30                           # как это видно 
  «пришёл из 10.0.0.0/8 — значит, свой»         IP — не доказательство личности
  вечный SSH-ключ на всех серверах              короткий сертификат/сессия через IAP/SSM
  плоская сеть k8s                              NetworkPolicy default deny
-```text
+```
+
 Что это значит для девопса на практике (без покупки «zero trust продукта»):
 1. SSO + MFA везде, где есть вход человека.
 2. Доступ к серверам и админкам через identity-aware прокси (SSM, IAP, OS Login) или хотя бы
-   VPN с сегментацией, а не «VPN во всю сеть» ([05_iam_access.md](/security/05-iam-access)).
-3. Сервисы аутентифицируют друг друга: mTLS ([../Network/07_tls.md](/network/07-tls)) или токены.
-4. Сеть сегментирована: default deny ([../Kubernetes/13_networkpolicy.md](/kubernetes/13-networkpolicy)).
+   VPN с сегментацией, а не «VPN во всю сеть» ([05. IAM и доступ](/security/05-iam-access)).
+3. Сервисы аутентифицируют друг друга: mTLS ([Сети: 07. TLS/SSL](/network/07-tls)) или токены.
+4. Сеть сегментирована: default deny ([Kubernetes: 13. NetworkPolicy](/kubernetes/13-networkpolicy)).
 5. Короткоживущие креды и постоянная проверка: токен на час, а не ключ на годы.
 
 > ⚠️ Zero trust — архитектурный принцип, а не галочка. «Купили продукт с zero trust в
@@ -223,7 +228,7 @@ Threat modeling отвечает на **четыре вопроса** (Адам 
 
 ### Шаг 1. Схема с границами доверия (DFD)
 
-```text
+```text:no-line-numbers
                      Интернет — недоверенная зона
                            │ HTTPS :443
  ══════════════════════════╪═══════════ граница доверия ① периметр ══════════════════
@@ -241,7 +246,8 @@ Threat modeling отвечает на **четыре вопроса** (Адам 
  ═══ граница ③ управление ════════════════════════════════════════════════════════════
    [GitLab CI] ── deploy (kubectl/ssh, креды облака) ──► инфраструктура
    [админ]     ── SSH / kubectl / консоль облака ──────► инфраструктура
-```text
+```
+
 > ⭐ Путь управления (CI, доступ админов) — такой же вход, как публичный :443. Его часто
 > забывают на схеме, а через него атакуют чаще всего: утёкший CI-токен = доступ к проду.
 
@@ -282,7 +288,8 @@ Threat modeling отвечает на **четыре вопроса** (Адам 
 | 6 | R: нет аудита действий админов в БД           | Med  | mitigate | pgaudit/логи в центральное хранилище       | dba      | todo   |
 | 7 | I: PII в логах приложения                     | Med  | mitigate | маскирование в логгере, ревью полей        | dev      | todo   |
 | 8 | D: DDoS L3/4                                  | Low  | transfer | защита провайдера/CDN                      | —        | accepted |
-```text
+```
+
 Угрозы превращаются в обычные задачи бэклога, а модель пересматривают при крупных изменениях.
 Инструменты: OWASP Threat Dragon, Microsoft Threat Modeling Tool, либо markdown + draw.io —
 инструмент вторичен. Для приватности есть отдельная методика LINDDUN.
@@ -294,7 +301,7 @@ Threat modeling отвечает на **четыре вопроса** (Адам 
 
 ## 8. Shared responsibility — кто за что отвечает
 
-База — в [../Left/04_Cloud/01_cloud_models.md](/cloud/01-cloud-models) (раздел 2).
+База — в [Облака: 01. Модели облаков: IaaS, PaaS, SaaS](/cloud/01-cloud-models) (раздел 2).
 Граница сдвигается в зависимости от модели сервиса:
 
 | Слой | Свои серверы | IaaS (ВМ) | Managed K8s | PaaS / managed БД | SaaS |
@@ -321,7 +328,7 @@ Threat modeling отвечает на **четыре вопроса** (Адам 
 | Кто одобряет исключения (`.trivyignore`, PolicyException)? | Владелец сервиса + безопасность |
 
 Отдельно — **цепочка поставки**: ты наследуешь риск зависимостей, SaaS и даже сканеров.
-Пример марта 2026 — компрометация Trivy и его GitHub Actions ([04_vuln_management.md](/security/04-vuln-management)).
+Пример марта 2026 — компрометация Trivy и его GitHub Actions ([04. Управление уязвимостями](/security/04-vuln-management)).
 
 ---
 
@@ -329,32 +336,33 @@ Threat modeling отвечает на **четыре вопроса** (Адам 
 
 | Слой / тема | Где в волте | Что там уже есть | Что добавляет этот блок |
 |-------------|-------------|------------------|-------------------------|
-| Пользователи, sudo | [../Linux/05_user_management.md](/linux/05-user-management) | Пользователи, группы, sudoers, сервисные аккаунты | Hardening sudo, блокировка лишнего → [02](/security/02-linux-hardening) |
-| Права, SUID, capabilities | [../Linux/06_permissions.md](/linux/06-permissions) | chmod/chown, SUID/SGID, capabilities | Аудит SUID в чек-листе → [02](/security/02-linux-hardening) |
-| Пакеты, автообновления | [../Linux/08_packages.md](/linux/08-packages) | apt, unattended-upgrades (кратко) | Политика патчей, reboot → [02](/security/02-linux-hardening), [04](/security/04-vuln-management) |
-| sysctl | [../Linux/12_kernel.md](/linux/12-kernel) | Механика sysctl, 3 security-параметра | Полный набор hardening-sysctl → [02](/security/02-linux-hardening) |
-| Системные логи | [../Linux/15_logging.md](/linux/15-logging) · [../Left/03_Logging/05_log_sources.md](/logging/05-log-sources) | journald, auth.log, auditd одной строкой | auditd в деталях → [02](/security/02-linux-hardening); аудит и tamper resistance → [07](/security/07-security-incidents-compliance) |
-| TLS | [../Network/07_tls.md](/network/07-tls) | Handshake, сертификаты, `openssl s_client`, mTLS | Проверка конфига testssl.sh → [03](/security/03-web-edge-security) |
-| SSH | [../Network/08_ssh.md](/network/08-ssh) | Ключи, sshd hardening, fail2ban | SSH-сертификаты, доступ без открытого 22 → [05](/security/05-iam-access) |
-| Файрвол | [../Network/11_firewall_iptables.md](/network/11-firewall-iptables) | iptables/nftables/ufw, Docker и iptables | Место файрвола в чек-листе хоста → [02](/security/02-linux-hardening) |
-| nginx | [../Network/12_nginx.md](/network/12-nginx) | Проксирование, базовые заголовки, limit_req | CSP/HSTS, rate limit правильно, WAF, DDoS → [03](/security/03-web-edge-security) |
-| Контейнеры | [../Docker/10_security_best_practices.md](/docker/10-security-best-practices) · [../Docker/05_registry_tags.md](/docker/05-registry-tags) | non-root, caps, seccomp, Trivy, SBOM, cosign, digest | Триаж отчётов, SLA патчей → [04](/security/04-vuln-management) |
-| CI/CD | [../CICD/13_quality_security.md](/cicd/13-quality-security) · [../CICD/09_gitlab_runner.md](/cicd/09-gitlab-runner) | Виды сканов, секреты, процедура утечки, supply chain, безопасность раннеров | CVSS/EPSS/KEV, `.trivyignore` со сроком → [04](/security/04-vuln-management); OIDC → [05](/security/05-iam-access) |
-| Ansible | [../Ansible/11_roles.md](/ansible/11-roles) · [../Ansible/12_vault.md](/ansible/12-vault) | Роли, ansible-vault | Роль hardening → [02](/security/02-linux-hardening) |
-| Kubernetes | [../Kubernetes/08_configmap_secret.md](/kubernetes/08-configmap-secret) · [../Kubernetes/13_networkpolicy.md](/kubernetes/13-networkpolicy) · [../Kubernetes/17_rbac.md](/kubernetes/17-rbac) · [../Kubernetes/21_advanced_paths.md](/kubernetes/21-advanced-paths) | Secret и его хранение, NetworkPolicy, RBAC, PSA одной строкой | PSS/PSA, securityContext, Kyverno, kube-bench, Falco → [06](/security/06-k8s-security) |
-| Облако | [../Left/04_Cloud/01_cloud_models.md](/cloud/01-cloud-models) · [../Left/04_Cloud/03_network_vpc.md](/cloud/03-network-vpc) · [../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage) | Shared responsibility, SG, bastion, доступ к S3 | IAM: политики, роли, OIDC, SSO → [05](/security/05-iam-access) |
-| Секреты | [../Left/08_Vault/00_INDEX.md](/vault/) | Vault: KV, auth methods, динамические секреты, аудит | Утечка секрета как инцидент → [07](/security/07-security-incidents-compliance) |
-| Инциденты | [../SRE/04_incident_management.md](/sre/04-incident-management) · [../SRE/05_postmortems.md](/sre/05-postmortems) | SEV, роли, жизненный цикл, постмортем | Специфика security-инцидентов, форензика → [07](/security/07-security-incidents-compliance) |
-| Портфолио | [../Project/08_secrets_security.md](/project/08-secrets-security) | Инвентаризация секретов, NetworkPolicy, PSA, CI-проверки | Threat model в README → этот раздел |
+| Пользователи, sudo | [Linux: 05. User Management](/linux/05-user-management) | Пользователи, группы, sudoers, сервисные аккаунты | Hardening sudo, блокировка лишнего → [02](/security/02-linux-hardening) |
+| Права, SUID, capabilities | [Linux: 06. Permissions](/linux/06-permissions) | chmod/chown, SUID/SGID, capabilities | Аудит SUID в чек-листе → [02](/security/02-linux-hardening) |
+| Пакеты, автообновления | [Linux: 08. Packages](/linux/08-packages) | apt, unattended-upgrades (кратко) | Политика патчей, reboot → [02](/security/02-linux-hardening), [04](/security/04-vuln-management) |
+| sysctl | [Linux: 12. Ядро Linux](/linux/12-kernel) | Механика sysctl, 3 security-параметра | Полный набор hardening-sysctl → [02](/security/02-linux-hardening) |
+| Системные логи | [Linux: 15. Логирование](/linux/15-logging) · [Логирование: 05. Источники логов](/logging/05-log-sources) | journald, auth.log, auditd одной строкой | auditd в деталях → [02](/security/02-linux-hardening); аудит и tamper resistance → [07](/security/07-security-incidents-compliance) |
+| TLS | [Сети: 07. TLS/SSL](/network/07-tls) | Handshake, сертификаты, `openssl s_client`, mTLS | Проверка конфига testssl.sh → [03](/security/03-web-edge-security) |
+| SSH | [Сети: 08. SSH](/network/08-ssh) | Ключи, sshd hardening, fail2ban | SSH-сертификаты, доступ без открытого 22 → [05](/security/05-iam-access) |
+| Файрвол | [Сети: 11. Файрвол: iptables/nftables](/network/11-firewall-iptables) | iptables/nftables/ufw, Docker и iptables | Место файрвола в чек-листе хоста → [02](/security/02-linux-hardening) |
+| nginx | [Сети: 12. Nginx](/network/12-nginx) | Проксирование, базовые заголовки, limit_req | CSP/HSTS, rate limit правильно, WAF, DDoS → [03](/security/03-web-edge-security) |
+| Контейнеры | [Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices) · [Docker: 05. Registry и тегирование](/docker/05-registry-tags) | non-root, caps, seccomp, Trivy, SBOM, cosign, digest | Триаж отчётов, SLA патчей → [04](/security/04-vuln-management) |
+| CI/CD | [CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security) · [CI/CD: 09. GitLab Runner](/cicd/09-gitlab-runner) | Виды сканов, секреты, процедура утечки, supply chain, безопасность раннеров | CVSS/EPSS/KEV, `.trivyignore` со сроком → [04](/security/04-vuln-management); OIDC → [05](/security/05-iam-access) |
+| Ansible | [Ansible: 11. Роли](/ansible/11-roles) · [Ansible: 12. Ansible Vault](/ansible/12-vault) | Роли, ansible-vault | Роль hardening → [02](/security/02-linux-hardening) |
+| Kubernetes | [Kubernetes: 08. ConfigMap и Secret](/kubernetes/08-configmap-secret) · [Kubernetes: 13. NetworkPolicy](/kubernetes/13-networkpolicy) · [Kubernetes: 17. RBAC](/kubernetes/17-rbac) · [Kubernetes: 21. Развилка: куда дальше](/kubernetes/21-advanced-paths) | Secret и его хранение, NetworkPolicy, RBAC, PSA одной строкой | PSS/PSA, securityContext, Kyverno, kube-bench, Falco → [06](/security/06-k8s-security) |
+| Облако | [Облака: 01. Модели облаков: IaaS, PaaS, SaaS](/cloud/01-cloud-models) · [Облака: 03. Сеть в облаке: VPC](/cloud/03-network-vpc) · [Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage) | Shared responsibility, SG, bastion, доступ к S3 | IAM: политики, роли, OIDC, SSO → [05](/security/05-iam-access) |
+| Секреты | [Vault](/vault/) | Vault: KV, auth methods, динамические секреты, аудит | Утечка секрета как инцидент → [07](/security/07-security-incidents-compliance) |
+| Инциденты | [SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management) · [SRE: 05. Постмортемы](/sre/05-postmortems) | SEV, роли, жизненный цикл, постмортем | Специфика security-инцидентов, форензика → [07](/security/07-security-incidents-compliance) |
+| Портфолио | [Пет-проект: 08. Секреты и безопасность](/project/08-secrets-security) | Инвентаризация секретов, NetworkPolicy, PSA, CI-проверки | Threat model в README → этот раздел |
 
 И та же картина по жизненному циклу — DevSecOps как «проверка на каждом шаге»:
 
-```text
+```text:no-line-numbers
  PLAN ──► CODE ──────► BUILD ─────► TEST ─────► RELEASE ──► DEPLOY ───────► OPERATE ──────► MONITOR/RESPOND
  threat   pre-commit   SCA, образ,  DAST        подпись     admission,      hardening,       Falco, аудит,
  model    gitleaks     SBOM, gate   (ZAP)       cosign      RBAC, OIDC      edge, патчи      инциденты
  (01)     (CICD/13)    (04)         (CICD/13)   (Docker/10) (05, 06)        (02, 03, 04)     (06, 07)
-```text
+```
+
 ---
 
 ## 10. Грабли
@@ -419,13 +427,17 @@ Threat modeling отвечает на **четыре вопроса** (Адам 
 9. В любой облачной модели IAM, конфигурация и данные — твоя ответственность.
 10. Инструменты в волте уже есть; этот блок связывает их в систему и закрывает пробелы.
 
-➡️ Дальше: [02_linux_hardening.md](/security/02-linux-hardening) · задачи: 01_security_mindset_tasks.md
+---
 
+## Задачи
+
+> Стенд: из [Безопасность](/security/) — VM `sec01` (192.168.56.30), edge-стенд в
+> `~/labs/security/edge`, кластер kind `sec`. Для заданий по threat modeling стенд не нужен —
+> нужен лист бумаги или `docs/threat-model.md`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Расшифруй CIA. Приведи для каждого свойства пример нарушения из DevOps-практики.
 
@@ -591,210 +603,223 @@ IAM и доступы, конфигурация сервисов (публичн
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
 ```text:no-line-numbers
 B1.  «У нас всё в приватной сети за VPN, поэтому между сервисами TLS и аутентификация не нужны.»
-```text
-<details><summary>Ответ</summary>
 
-⚠️ Модель «замок со рвом»: один взломанный узел или ноутбук с VPN — и доступ ко всем
+B2.  # sudoers на прод-сервере
+     deploy ALL=(ALL) NOPASSWD: ALL
+
+B3.  «Trivy в пайплайне зелёный — значит, сервис защищён.»
+
+B4.  # threat model сервиса
+     Схема: пользователь → nginx → app → PostgreSQL. Угрозы: SQL-инъекция, DDoS.
+     (CI/CD, админский доступ и бэкапы на схеме отсутствуют)
+
+B5.  # политика IAM для пайплайна деплоя
+     { "Effect": "Allow", "Action": "*", "Resource": "*" }
+
+B6.  # решение по угрозе
+     | I: бакет с бэкапами может стать публичным | Med | accept | — | — |
+
+B7.  # защита сервиса
+     WAF + firewall + PSA restricted + gate в CI. Логи — только локально на хостах, алертов нет.
+
+B8.  «Мы используем managed PostgreSQL, значит, безопасность базы — забота провайдера.»
+
+B9.  # "zero trust"
+     Купили VPN с MFA. После входа пользователь видит всю сеть 10.0.0.0/8, SSH-ключи вечные.
+
+B10. «Сменим SSH-порт на 2222 — и брутфорс больше не угроза.»
+
+B11. # поверхность атаки k8s
+     kubectl get svc -A → grafana (LoadBalancer), postgres (NodePort), app (ClusterIP)
+
+B12. # чек-лист безопасности
+     200 пунктов из статьи «Ultimate security checklist», выполняем по порядку сверху вниз.
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Модель «замок со рвом»: один взломанный узел или ноутбук с VPN — и доступ ко всем
 сервисам. Нужны аутентификация между сервисами (mTLS/токены) и сегментация (NetworkPolicy, SG).
 
-</details>
-
-```text:no-line-numbers
-B2.  # sudoers на прод-сервере
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Полный root без пароля: утёк ключ `deploy` — утёк сервер. Нужен список конкретных
+**B2.** ⚠️ Полный root без пароля: утёк ключ `deploy` — утёк сервер. Нужен список конкретных
 команд в `/etc/sudoers.d/deploy` (например, `systemctl restart app`), проверка `visudo -c`.
 
-</details>
-
-```text:no-line-numbers
-     deploy ALL=(ALL) NOPASSWD: ALL
-```text
-```text:no-line-numbers
-B3.  «Trivy в пайплайне зелёный — значит, сервис защищён.»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Сканер закрывает одну угрозу — известные CVE в пакетах. Он не видит мисконфигурации
+**B3.** ⚠️ Сканер закрывает одну угрозу — известные CVE в пакетах. Он не видит мисконфигурации
 в рантайме, лишние права, утёкшие ключи, логические уязвимости, слабый периметр.
 
-</details>
-
-```text:no-line-numbers
-B4.  # threat model сервиса
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Нет пути управления (CI/CD, админы), нет S3/бэкапов, нет границ доверия, угроз две
+**B4.** ⚠️ Нет пути управления (CI/CD, админы), нет S3/бэкапов, нет границ доверия, угроз две
 из очевидных. Самые вероятные атаки (утёкший CI-токен, публичный бакет с бэкапами) не рассмотрены.
 
-</details>
-
-```text:no-line-numbers
-     Схема: пользователь → nginx → app → PostgreSQL. Угрозы: SQL-инъекция, DDoS.
-```text
-```text:no-line-numbers
-     (CI/CD, админский доступ и бэкапы на схеме отсутствуют)
-```text
-```text:no-line-numbers
-B5.  # политика IAM для пайплайна деплоя
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Полные права на аккаунт: утечка креды пайплайна = компрометация всего облака, включая
+**B5.** ⚠️ Полные права на аккаунт: утечка креды пайплайна = компрометация всего облака, включая
 удаление бэкапов и создание новых ключей. Нужны конкретные действия на конкретные ресурсы и OIDC
 вместо статического ключа.
 
-</details>
-
-```text:no-line-numbers
-     { "Effect": "Allow", "Action": "*", "Resource": "*" }
-```text
-```text:no-line-numbers
-B6.  # решение по угрозе
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Accept без обоснования, владельца, даты и компенсирующих мер. Для публичного бэкапа
+**B6.** ⚠️ Accept без обоснования, владельца, даты и компенсирующих мер. Для публичного бэкапа
 БД риск скорее High, и его закрывают (block public access, алерт), а не принимают.
 
-</details>
-
-```text:no-line-numbers
-     | I: бакет с бэкапами может стать публичным | Med | accept | — | — |
-```text
-```text:no-line-numbers
-B7.  # защита сервиса
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Одни preventive-контроли: обход любого слоя незаметен, а логи на хостах атакующий
+**B7.** ⚠️ Одни preventive-контроли: обход любого слоя незаметен, а логи на хостах атакующий
 удалит. Нужны detective-контроли: вывоз логов, алерты, аудит.
 
-</details>
-
-```text:no-line-numbers
-     WAF + firewall + PSA restricted + gate в CI. Логи — только локально на хостах, алертов нет.
-```text
-```text:no-line-numbers
-B8.  «Мы используем managed PostgreSQL, значит, безопасность базы — забота провайдера.»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Провайдер отвечает за движок, ОС и железо, но не за публичный доступ, пароли,
+**B8.** ⚠️ Провайдер отвечает за движок, ОС и железо, но не за публичный доступ, пароли,
 пользователей БД и их права, шифрование бэкапов твоими ключами и данные.
 
-</details>
-
-```text:no-line-numbers
-B9.  # "zero trust"
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Это «замок со рвом» с MFA на воротах: после входа — плоская сеть и вечные ключи.
+**B9.** ⚠️ Это «замок со рвом» с MFA на воротах: после входа — плоская сеть и вечные ключи.
 Нужен доступ к конкретным приложениям по identity, сегментация, короткие сертификаты.
 
-</details>
-
-```text:no-line-numbers
-     Купили VPN с MFA. После входа пользователь видит всю сеть 10.0.0.0/8, SSH-ключи вечные.
-```text
-```text:no-line-numbers
-B10.  «Сменим SSH-порт на 2222 — и брутфорс больше не угроза.»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Смена порта убирает шум в логах, но не защищает: сканер найдёт порт за минуты.
+**B10.** ⚠️ Смена порта убирает шум в логах, но не защищает: сканер найдёт порт за минуты.
 Защита — только ключи, запрет root, fail2ban, ограничение по IP/доступ через bastion/VPN/IAP.
 
-</details>
-
-```text:no-line-numbers
-B11.  # поверхность атаки k8s
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Grafana как LoadBalancer — админка наружу; PostgreSQL как NodePort — база на каждом
+**B11.** ⚠️ Grafana как LoadBalancer — админка наружу; PostgreSQL как NodePort — база на каждом
 узле кластера. Оба должны быть ClusterIP, доступ — через VPN/IAP или port-forward.
 
-</details>
-
-```text:no-line-numbers
-     kubectl get svc -A → grafana (LoadBalancer), postgres (NodePort), app (ClusterIP)
-```text
-```text:no-line-numbers
-B12.  # чек-лист безопасности
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Нет приоритизации по риску: время уйдёт на малозначимые пункты, а главные угрозы
+**B12.** ⚠️ Нет приоритизации по риску: время уйдёт на малозначимые пункты, а главные угрозы
 сервиса останутся. Начинать с модели угроз и топа рисков.
 
 </details>
 
-```text:no-line-numbers
-     200 пунктов из статьи «Ultimate security checklist», выполняем по порядку сверху вниз.
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 STRIDE-lite для типового сервиса
+#### C1. 🔑 STRIDE-lite для типового сервиса
 Нарисуй DFD для «nginx → app → PostgreSQL → S3» с CI/CD и админским доступом. Отметь минимум
 три границы доверия. Пройди STRIDE-per-element и составь таблицу из 10+ угроз: угроза, буква,
 риск (H/M/L), решение (mitigate/accept/transfer/avoid), контроль, владелец. Сохрани как
 `docs/threat-model.md`.
 
-### C2. 🔑 Аудит поверхности атаки своего стенда
+<details><summary>Ответ</summary>
+
+Минимум границ: интернет → nginx; app → облачный S3; управление (CI и админы) →
+инфраструктура. Обязательные угрозы: S — утёкший CI-токен/SSH-ключ админа; T — подмена образа,
+SQL-инъекция; R — нет централизованного аудита действий админов; I — публичный бакет с бэкапами,
+stack traces, секреты в логах; D — флуд на тяжёлые эндпоинты, исчерпание пула БД;
+E — SSRF → metadata облака, privileged-контейнер → хост. Проверка качества: у каждой угрозы
+есть решение и владелец, у каждого accept — дата.
+
+</details>
+
+#### C2. 🔑 Аудит поверхности атаки своего стенда
 На `sec01` и на хосте с edge-стендом: что слушает (`ss -tulpn`), что запущено
 (`systemctl list-units --type=service --state=running`), как это видно снаружи (`nmap -sV -p-`
 с хоста по 192.168.56.30). В kind: какие сервисы доступны снаружи кластера. Составь таблицу
 «поверхность → нужно ли → как уменьшить» и убери минимум две лишние вещи.
 
-### C3. 🔑 Least privilege ревью
+<details><summary>Ответ</summary>
+
+Типичные находки на `sec01`: `rpcbind`/`avahi`/лишние демоны, SSH на всех интерфейсах,
+порты Docker-контейнеров на `0.0.0.0`. Уменьшение: `systemctl disable --now` + `mask`, удаление
+пакетов, `127.0.0.1:` в `ports:` compose, закрытие файрволом ([Сети: 11. Файрвол: iptables/nftables](/network/11-firewall-iptables)).
+В kind снаружи доступны только проброшенные порты кластера; проверка — `kubectl get svc -A`
+и `docker ps` (порты контейнеров-нод).
+
+</details>
+
+#### C3. 🔑 Least privilege ревью
 Проверь на своём стенде и в своих проектах: кто в группах `sudo` и `docker` на `sec01`;
 есть ли `NOPASSWD: ALL`; какие права у ServiceAccount'ов в kind (`kubectl auth can-i --list
 --as=system:serviceaccount:default:default`); какие CI-переменные доступны незащищённым веткам.
 Для каждой находки — «что потеряем, если утечёт» и исправление.
 
-### C4. Defense in depth для одного сервиса
-Для сервиса из [../Project/00_INDEX.md](/project/) (linkd) нарисуй слои защиты
+<details><summary>Ответ</summary>
+
+Команды: `getent group sudo docker`, `sudo grep -r NOPASSWD /etc/sudoers /etc/sudoers.d/`,
+`kubectl auth can-i --list --as=system:serviceaccount:<ns>:<sa>`. Помни: членство в группе
+`docker` = root на хосте ([Docker: 10. Безопасность контейнеров](/docker/10-security-best-practices)).
+Исправления: убрать из `docker`, конкретные команды в sudoers, отдельный SA с Role вместо
+default, protected-переменные.
+
+</details>
+
+#### C4. Defense in depth для одного сервиса
+Для сервиса из [Пет-проект](/project/) (linkd) нарисуй слои защиты
 edge → сеть → хост → контейнер → приложение → данные и отметь по каждому слою: какой
 контроль уже есть, какой detective-контроль есть, чего не хватает.
 
-### C5. Shared responsibility своего проекта
+<details><summary>Ответ</summary>
+
+Пример для linkd: edge — TLS на Ingress, rate limit (нет WAF → пробел); сеть —
+NetworkPolicy default deny (есть); хост/ноды — патчи нод (кто?); контейнер — non-root,
+PSA restricted (есть); приложение — зависимости сканирует Trivy (есть), SAST нет; данные —
+бэкапы есть, шифрование бэкапов и проверка восстановления — проверить. Detective: логи в Loki,
+аудит k8s — не включён → пробел.
+
+</details>
+
+#### C5. Shared responsibility своего проекта
 Составь таблицу «слой → кто отвечает» для своего портфолио (ВМ-трек и k8s-трек).
 Отдельно — внутренние границы: кто патчит базовые образы, кто одобряет исключения сканеров,
 кто реагирует на алерты безопасности.
 
-### C6. Zero trust: анализ разрывов
+<details><summary>Ответ</summary>
+
+ВМ-трек: ОС, патчи, SSH, файрвол — ты; k8s-трек на kind — всё ты, в managed —
+control plane у провайдера, ноды и всё выше — ты. В любом случае: IAM, секреты, данные,
+конфигурация. Внутренние границы записываются в README/ADR.
+
+</details>
+
+#### C6. Zero trust: анализ разрывов
 Возьми свой стенд или рабочий проект и найди три места, где доверие даётся по сетевому
 расположению (например, «из подсети 10.x — без пароля»). Для каждого предложи шаг к zero trust.
 
-### C7. Threat model пути доставки
+<details><summary>Ответ</summary>
+
+Типовые разрывы и шаги: доступ к БД «из подсети приложения без пароля» → отдельные
+учётки с паролем/динамические креды Vault; SSH по вечному ключу из офисной сети → SSH-сертификаты
+или OS Login/IAP; сервисы внутри кластера без аутентификации → NetworkPolicy + mTLS/токены.
+
+</details>
+
+#### C7. Threat model пути доставки
 Отдельно смоделируй только CI/CD: разработчик → GitLab → раннер → registry → кластер.
 Какие угрозы S/T/E здесь главные? Какие контроли из волта их закрывают?
 
-### C8. 🔑 Из угроз — в бэклог
+<details><summary>Ответ</summary>
+
+Главные угрозы: S — украденный токен разработчика/CI (MFA, короткие токены, OIDC);
+T — изменение `.gitlab-ci.yml` в ветке, отравленная зависимость или образ инструмента, подмена
+образа в registry (protected branches, ревью, пин по digest, подпись и admission); E — privileged
+раннер → хост раннера → все секреты (отдельные раннеры, без privileged, rootless BuildKit/buildah).
+Закрывают: [CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security), [CI/CD: 09. GitLab Runner](/cicd/09-gitlab-runner),
+[04. Управление уязвимостями](/security/04-vuln-management), [05. IAM и доступ](/security/05-iam-access), [06. Безопасность Kubernetes](/security/06-k8s-security).
+
+</details>
+
+#### C8. 🔑 Из угроз — в бэклог
 Возьми таблицу из C1, отсортируй по риску, топ-5 оформи как задачи (что сделать, критерий
 готовности, как проверить). Для одного принятого риска запиши: кто принял, до какой даты,
 чем компенсирован.
 
-### C9. Навигация по волту
+<details><summary>Ответ</summary>
+
+Формат задачи: «Включить block public access на бакете бэкапов. Готово, когда: политика
+в Terraform, `aws s3api get-public-access-block` (или аналог) показывает блок, алерт на изменение
+ACL настроен. Проверка: анонимный запрос к объекту → 403». Принятый риск: «DDoS L3/4 — принят,
+владелец CTO, до 01.04.2027, компенсация — защита провайдера/CDN, пересмотр при запуске
+платного тарифа».
+
+</details>
+
+#### C9. Навигация по волту
 Используя карту из конспекта, найди в волте ответ (файл и раздел) на вопросы: как запретить
 вход root по SSH; как Docker обходит iptables; как проверить права ServiceAccount; что делать
 при утечке секрета в CI; почему Secret в k8s — не шифрование.
 
+<details><summary>Ответ</summary>
+
+Запрет root по SSH — [Сети: 08. SSH](/network/08-ssh), раздел 6; Docker и iptables —
+[Сети: 11. Файрвол: iptables/nftables](/network/11-firewall-iptables), раздел 7; права SA —
+[Kubernetes: 17. RBAC](/kubernetes/17-rbac), раздел 6 (`kubectl auth can-i`); утечка секрета —
+[CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security), раздел 5 «Что делать при утечке»; Secret
+не шифрование — [Kubernetes: 08. ConfigMap и Secret](/kubernetes/08-configmap-secret), раздел 2.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Внешний исследователь пишет: «Ваш бакет с бэкапами БД открыт на чтение». Что делаешь
 в первые 30 минут и какие угрозы из модели это показало?
@@ -817,7 +842,7 @@ detective-контроля (алерта на изменение публичн�
 Нарушены least privilege (слишком сильный долгоживущий токен) и гигиена логов. Уменьшили
 бы ущерб: OIDC с короткими кредами вместо статического токена, protected-переменные только для
 protected-веток, маскирование + запрет вывода env, gitleaks. Действия — отозвать токен первым
-делом ([../CICD/13_quality_security.md](/cicd/13-quality-security)).
+делом ([CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security)).
 
 </details>
 
@@ -828,6 +853,8 @@ protected-веток, маскирование + запрет вывода env, 
 
 Elevation of privilege (через Spoofing сервиса metadata). Должны были остановить:
 валидация URL в приложении, IMDSv2 с hop limit 1, egress-правила/NetworkPolicy, запрещающие
+169.254.169.254, минимальные права роли ВМ, detective — алерт на использование кредов роли
+не с этой ВМ.
 
 </details>
 
@@ -848,7 +875,7 @@ Elevation of privilege (через Spoofing сервиса metadata). Должн
 
 Нарушены least privilege и сегментация (плоская сеть k8s, доверие по сети). Исправление:
 NetworkPolicy default deny и разрешение к БД только от нужного приложения
-([../Kubernetes/13_networkpolicy.md](/kubernetes/13-networkpolicy)), отдельные учётки БД, секреты
+([Kubernetes: 13. NetworkPolicy](/kubernetes/13-networkpolicy)), отдельные учётки БД, секреты
 только нужным подам.
 
 </details>
@@ -889,14 +916,13 @@ WAF), если всё же accept — письменно: кто принял, �
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как ты подходишь к безопасности инфраструктуры?
 
 <details><summary>Ответ</summary>
 
 От модели угроз: что защищаем (данные, доступность), от кого, где границы доверия; дальше
-   слои защиты по принципам least privilege и defense in depth, обязательно обнаружение и
-   план реакции; всё — в коде и пайплайне, с приоритетом по риску. Пример — threat model своего проекта.
+слои защиты по принципам least privilege и defense in depth, обязательно обнаружение и
+план реакции; всё — в коде и пайплайне, с приоритетом по риску. Пример — threat model своего проекта.
 
 </details>
 
@@ -905,7 +931,7 @@ WAF), если всё же accept — письменно: кто принял, �
 <details><summary>Ответ</summary>
 
 Confidentiality, integrity, availability — три свойства, которые нарушает угроза; с примерами
-   (утечка `.env`, подмена образа, DDoS).
+(утечка `.env`, подмена образа, DDoS).
 
 </details>
 
@@ -914,8 +940,8 @@ Confidentiality, integrity, availability — три свойства, котор
 <details><summary>Ответ</summary>
 
 Минимально необходимые права на нужный срок: конкретные команды в sudoers вместо ALL, Role
-   в namespace вместо cluster-admin, IAM-политика на один бакет, non-root контейнер. Вопрос —
-   «что потеряем, если утечёт».
+в namespace вместо cluster-admin, IAM-политика на один бакет, non-root контейнер. Вопрос —
+«что потеряем, если утечёт».
 
 </details>
 
@@ -924,7 +950,7 @@ Confidentiality, integrity, availability — три свойства, котор
 <details><summary>Ответ</summary>
 
 Несколько независимых слоёв защиты — edge, сеть, хост, контейнер, приложение, данные — плюс
-   identity и обнаружение; отказ одного слоя ловит следующий.
+identity и обнаружение; отказ одного слоя ловит следующий.
 
 </details>
 
@@ -933,8 +959,8 @@ Confidentiality, integrity, availability — три свойства, котор
 <details><summary>Ответ</summary>
 
 Отказ от доверия по сетевому расположению: каждый запрос аутентифицирован, авторизован,
-   зашифрован, доступ минимальный и короткоживущий. Практика — SSO+MFA, IAP/SSM, mTLS,
-   NetworkPolicy, короткие креды.
+зашифрован, доступ минимальный и короткоживущий. Практика — SSO+MFA, IAP/SSM, mTLS,
+NetworkPolicy, короткие креды.
 
 </details>
 
@@ -943,7 +969,7 @@ Confidentiality, integrity, availability — три свойства, котор
 <details><summary>Ответ</summary>
 
 Да, STRIDE-lite: схема с границами доверия, проход по STRIDE по элементам, топ угроз с
-   решениями и владельцами в `docs/threat-model.md`; главная находка обычно — путь CI/CD и публичные ресурсы.
+решениями и владельцами в `docs/threat-model.md`; главная находка обычно — путь CI/CD и публичные ресурсы.
 
 </details>
 
@@ -952,7 +978,7 @@ Confidentiality, integrity, availability — три свойства, котор
 <details><summary>Ответ</summary>
 
 Классификация угроз: Spoofing, Tampering, Repudiation, Information disclosure, DoS, Elevation
-   of privilege, каждая нарушает своё свойство безопасности.
+of privilege, каждая нарушает своё свойство безопасности.
 
 </details>
 
@@ -961,8 +987,8 @@ Confidentiality, integrity, availability — три свойства, котор
 <details><summary>Ответ</summary>
 
 Всё, через что можно дотянуться до системы: порты, эндпоинты, админки, зависимости, люди,
-   секреты, CI. Уменьшать — удалять лишнее, закрывать за VPN/IAP, минимальные образы, меньше прав
-   и вечных ключей.
+секреты, CI. Уменьшать — удалять лишнее, закрывать за VPN/IAP, минимальные образы, меньше прав
+и вечных ключей.
 
 </details>
 
@@ -971,7 +997,7 @@ Confidentiality, integrity, availability — три свойства, котор
 <details><summary>Ответ</summary>
 
 Провайдер отвечает за облако (железо, ДЦ, гипервизор, managed-движки), ты — за то, что в
-   облаке: IAM, конфигурацию, данные, ОС в IaaS. IAM, конфиг и данные — всегда твои.
+облаке: IAM, конфигурацию, данные, ОС в IaaS. IAM, конфиг и данные — всегда твои.
 
 </details>
 
@@ -980,11 +1006,9 @@ Confidentiality, integrity, availability — три свойства, котор
 <details><summary>Ответ</summary>
 
 Инвентаризация и быстрые победы по риску: публичные ресурсы и открытые порты → закрыть;
-    вечные ключи и лишние админские права → отозвать/урезать; SSH hardening и патчи; секреты из
-    репозиториев → секрет-менеджер и ротация; включить аудит-логи с вывозом; затем threat model и
-    план на квартал.
-
----
+вечные ключи и лишние админские права → отозвать/урезать; SSH hardening и патчи; секреты из
+репозиториев → секрет-менеджер и ротация; включить аудит-логи с вывозом; затем threat model и
+план на квартал.
 
 </details>
 

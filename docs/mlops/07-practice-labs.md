@@ -1,6 +1,6 @@
 ---
 title: "07. Практика: шесть лаб без GPU"
-description: "Блок → AI/MLOps-инфраструктура → практика. Всё на CPU с маленькими моделями: GPU не нужен,"
+description: "6 лаб без GPU: модель на CPU в kind, автоскейлинг сервинга по очереди, LLM-шлюз с лимитами и учётом, RAG на pgvector, MLflow registry → деплой, «безопасный агент»"
 ---
 
 # 07. Практика: шесть лаб без GPU
@@ -26,9 +26,9 @@ description: "Блок → AI/MLOps-инфраструктура → практ�
 
 **Что нужно до начала:**
 - 16 ГБ RAM (все лабы сразу не держи — уборка в конце каждой), `docker`, `kind`, `kubectl`, `helm`, `jq`, Python 3.12;
-- стенд блока: `kind create cluster --name ml --image kindest/node:v1.36.4` ([00_INDEX.md](/mlops/) → «Стенд»);
-- Envoy Gateway v1.9.1 и Gateway `web` в `infra` — [../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §7.2–7.3;
-- kube-prometheus-stack 91.7.1 — [../Left/02_Monitoring/11_long_term_and_operator.md](/monitoring/11-long-term-and-operator) §7 (лабы 1–3);
+- стенд блока: `kind create cluster --name ml --image kindest/node:v1.36.4` ([MLOps](/mlops/) → «Стенд»);
+- Envoy Gateway v1.9.1 и Gateway `web` в `infra` — [Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §7.2–7.3;
+- kube-prometheus-stack 91.7.1 — [Мониторинг: 11. Долгое хранение и Operator](/monitoring/11-long-term-and-operator) §7 (лабы 1–3);
 - каталог `~/labs/mlops/` под git: манифесты, скрипты и `NOTES.md` с замерами — это портфолио.
 
 ---
@@ -36,7 +36,7 @@ description: "Блок → AI/MLOps-инфраструктура → практ�
 ## 🧪 Лаба 1. Модель на CPU в kind 🔑
 
 **Цель:** модель отвечает из kind через Gateway по OpenAI-совместимому API, переживает рестарты
-без повторного скачивания, и ты знаешь её TTFT и tokens/s. **Темы:** [03_model_serving.md](/mlops/03-model-serving) §2–4, §7.
+без повторного скачивания, и ты знаешь её TTFT и tokens/s. **Темы:** [03. Сервинг моделей: vLLM, llama.cpp, Ollama, KServe, холодный старт, метрики, автоскейлинг](/mlops/03-model-serving) §2–4, §7.
 
 ### Стенд
 За основу — мини-лаба темы 03: llama.cpp `ghcr.io/ggml-org/llama.cpp:server-b11206` (проверь тег),
@@ -47,7 +47,7 @@ description: "Блок → AI/MLOps-инфраструктура → практ�
 1. Namespace `llm` с меткой, которую пускает Gateway (`gateway-access=true`, тема 12 §7.3).
 2. PVC `models` 2 Gi; init-контейнер кладёт модель в PVC **только если её там нет**.
    Вариант со звёздочкой: модель лежит в MinIO-форке `pgsty/silo` (бакет `models/qwen2.5-0.5b/v1/`),
-   под достаёт её из S3 (подключение kind к контейнеру — [../Storage/03_nfs_minio.md](/storage/03-nfs-minio) §5),
+   под достаёт её из S3 (подключение kind к контейнеру — [Хранилища: 03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio) §5),
    ключи — в Secret, а не в манифесте.
 3. Сервер: `--alias qwen2.5-0.5b`, `-np 2`, `-t 2`, `--metrics`; requests CPU 2 / memory 1Gi, limit memory 2Gi.
 4. Пробы: `startupProbe` с запасом ≥ 2× измеренного времени загрузки, `readinessProbe`,
@@ -66,7 +66,7 @@ kubectl get httproute -n llm llm -o jsonpath='{.status.parents[0].conditions[*].
 curl -s -H "Host: llm.example.com" localhost:8888/v1/models | jq '.data[].id'          # "qwen2.5-0.5b"
 python ttft.py                                              # скрипт из темы 03: TTFT, tokens/s
 for i in $(seq 6); do python ttft.py & done; wait           # 6 запросов на 2 слота
-```text
+```
 1. Запиши в `NOTES.md`: время старта пода (скачивание / загрузка весов), TTFT и tokens/s при 1 и 6
    параллельных запросах, `llamacpp:requests_deferred` на пике.
 2. `kubectl -n llm delete pod -l app=llm` — время до READY с кэшем. Удали PVC, повтори — без кэша.
@@ -96,7 +96,7 @@ for i in $(seq 6); do python ttft.py & done; wait           # 6 запросов
 
 **Цель:** Deployment `llm` из лабы 1 уходит в 0 без нагрузки, просыпается по очереди задач
 и растёт по очереди сервера; ты знаешь цену холодного старта в секундах.
-**Темы:** [03_model_serving.md](/mlops/03-model-serving) §4, §8; KEDA — [../Kubernetes/25_ecosystem.md](/kubernetes/25-ecosystem) §6.
+**Темы:** [03. Сервинг моделей: vLLM, llama.cpp, Ollama, KServe, холодный старт, метрики, автоскейлинг](/mlops/03-model-serving) §4, §8; KEDA — [Kubernetes: 25. Экосистема вокруг кластера](/kubernetes/25-ecosystem) §6.
 
 ### Главная загадка лабы
 Метрика `llamacpp:requests_deferred` живёт **в поде**. При 0 репликах пода нет — метрики нет — будить
@@ -104,19 +104,21 @@ for i in $(seq 6); do python ttft.py & done; wait           # 6 запросов
 HTTP-запросов (KEDA HTTP add-on). В лабе — очередь: это честный сценарий для scale-to-zero (тема 03 §8).
 Встроенный scale-to-zero у HPA — beta только с Kubernetes 1.37; на стенде 1.36.4 — KEDA.
 
-```text
+```text:no-line-numbers
  producer ──LPUSH──► Redis list "llm-jobs" ◄──BRPOP── worker ──► Service llm ──► llama.cpp
                           │                                           ▲
                           └──── KEDA (redis): 0 ↔ 1 ──────────────────┤
                  Prometheus: llamacpp:requests_deferred ── KEDA: 1 ↔ N┘
-```text
+```
+
 ### Стенд
 ```bash
 helm repo add kedacore https://kedacore.github.io/charts && helm repo update
 helm install keda kedacore/keda --version 2.21.0 -n keda --create-namespace   # KEDA 2.21 — Kubernetes 1.34–1.36
 kubectl -n llm create deployment redis --image=redis:8.8.3-alpine --port=6379   # тег проверь
 kubectl -n llm expose deployment redis --port=6379
-```text
+```
+
 ### Требования
 1. **Worker** (`~/labs/mlops/k8s/worker/`): берёт задачу из списка `llm-jobs` (`BRPOP`), отправляет
    промпт в `http://llm.llm.svc/v1/chat/completions`, пишет результат и время в лог, ретраит, пока
@@ -149,7 +151,7 @@ date +%T; for i in $(seq 20); do
   kubectl -n llm exec deploy/redis -- redis-cli LPUSH llm-jobs "Кратко: что такое Service №$i?" >/dev/null; done
 kubectl -n llm logs -l app=worker -f --prefix                   # когда пришёл первый ответ
 kubectl -n llm describe scaledobject llm | tail -15             # события активации
-```text
+```
 1. Замерь и запиши: t0 → под `llm` создан → READY → первый ответ worker; сравни с TTFT «тёплого» сервера.
 2. Под нагрузкой (20–50 задач) — сколько реплик `llm` поднялось и почему столько (формула HPA).
 3. Очередь пуста → через сколько `llm` и worker ушли в 0 (cooldown + опрос).
@@ -176,7 +178,7 @@ kubectl -n llm describe scaledobject llm | tail -15             # события
 ## 🧪 Лаба 3. LLM-шлюз для двух команд 🔑
 
 **Цель:** все ходят к модели через LiteLLM; у команд `support` и `search` свои ключи, бюджеты и лимиты;
-в Grafana видно, кто сколько токенов и денег тратит. **Темы:** [04_llm_gateway_rag.md](/mlops/04-llm-gateway-rag) §1–6.
+в Grafana видно, кто сколько токенов и денег тратит. **Темы:** [04. LLM-шлюз, RAG и векторные базы](/mlops/04-llm-gateway-rag) §1–6.
 
 ### Стенд (в kind, namespace `llm-gw`)
 | Компонент | Образ / чарт (проверь) | Примечание |
@@ -191,7 +193,7 @@ kubectl -n llm describe scaledobject llm | tail -15             # события
    `model_info` с «внутренней ценой»), `callbacks: ["prometheus"]`, `turn_off_message_logging: true`,
    `store_prompts_in_spend_logs: false`, `router_settings`/кэш через Redis.
 2. `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, `DATABASE_URL` — Secret (со звёздочкой — через ESO из Vault,
-   [../Left/08_Vault/05_vault_integrations.md](/vault/05-vault-integrations) §2).
+   [Vault: 05. Интеграции и динамические секреты](/vault/05-vault-integrations) §2).
 3. Deployment с пробами `/health/liveliness` и `/health/readiness`, 2 реплики, requests/limits.
 4. HTTPRoute `gw.example.com` → Service `litellm:4000`; **`/metrics` наружу не публикуется**
    (правило в HTTPRoute только для `/v1` и `/health`, метрики — ServiceMonitor изнутри).
@@ -217,7 +219,7 @@ curl -s -H "Host: gw.example.com" localhost:8888/metrics -o /dev/null -w "%{http
 # нагрузка: скрипт шлёт запросы с ключом команды (свой, 30–60 строк)
 python load.py --key "$SUPPORT_KEY" --rps 1 --duration 120
 python load.py --key "$SEARCH_KEY"  --rps 2 --duration 120
-```text
+```
 1. Докажи тремя ответами шлюза: rpm-лимит `support` → 429; бюджет `support` кончился → `budget_exceeded`;
    запрос `support` к несуществующей/запрещённой модели → отказ.
 2. Сверь: токены в `/team/info`, в Prometheus и сумма `usage` в ответах `load.py` — совпадают ли?
@@ -247,7 +249,7 @@ python load.py --key "$SEARCH_KEY"  --rps 2 --duration 120
 ## 🧪 Лаба 4. RAG на pgvector по документации linkd 🔑
 
 **Цель:** вопрос «как в linkd устроены бэкапы?» получает ответ со ссылками на файлы, а ты знаешь,
-сколько миллисекунд уходит на эмбеддинг, поиск и генерацию. **Темы:** [04_llm_gateway_rag.md](/mlops/04-llm-gateway-rag) §7–8, §11.
+сколько миллисекунд уходит на эмбеддинг, поиск и генерацию. **Темы:** [04. LLM-шлюз, RAG и векторные базы](/mlops/04-llm-gateway-rag) §7–8, §11.
 
 ### Стенд (compose, ~3 ГБ RAM)
 ```yaml
@@ -263,13 +265,13 @@ services:
     ports: ["11434:11434"]
     volumes: ["ollama:/root/.ollama"]
 volumes: { pgdata: {}, ollama: {} }
-```text
+```
 ```bash
 docker compose up -d
 docker compose exec ollama ollama pull bge-m3          # эмбеддинги, 1024 измерения, мультиязычная
 docker compose exec ollama ollama pull qwen2.5:0.5b    # генерация (или шлюз из лабы 3)
 curl -s localhost:11434/api/embed -d '{"model":"bge-m3","input":["проверка"]}' | jq '.embeddings[0] | length'   # 1024
-```text
+```
 **Корпус:** `~/Projects/devops/*/README.md` и `Life/DevOps/Project/*.md` этого волта — документация linkd.
 
 ### Требования к `ingest.py` (ingestion job)
@@ -297,7 +299,7 @@ psql -h localhost -p 5433 -U rag rag -c "SELECT count(*), count(DISTINCT doc_pat
 
 python ask.py "Как в linkd устроены бэкапы базы и как их проверить?"
 python ask.py "Какие метрики отдаёт linkd?" --k 8
-```text
+```
 1. Создай HNSW-индекс (`maintenance_work_mem` — осознанно) и сравни `EXPLAIN ANALYZE` поиска до/после.
    На маленьком корпусе планировщик может выбрать Seq Scan — объясни почему (и проверь с `SET enable_seqscan = off`).
 2. Таблица в `NOTES.md` для 5 вопросов: источники верные? время embed/search/TTFT/total; входные токены при k = 2, 4, 8.
@@ -325,21 +327,21 @@ python ask.py "Какие метрики отдаёт linkd?" --k 8
 ## 🧪 Лаба 5. MLflow registry → деплой по алиасу
 
 **Цель:** игрушечная модель проходит путь «обучение → gate → алиас `production` → CI пишет номер версии
-в git → кластер обновился», откат — `git revert`. **Темы:** [05_ml_pipelines.md](/mlops/05-ml-pipelines) §3–5, §8.
+в git → кластер обновился», откат — `git revert`. **Темы:** [05. Пайплайны и реестр моделей: MLflow, DVC, оркестраторы, CT/CD](/mlops/05-ml-pipelines) §3–5, §8.
 
 ### Стенд
 - MLflow + PostgreSQL + MinIO-форк в compose — тема 05 §3; `train.py` и `promote.py` — §4–5.
-- kind-кластер `ml`; контейнер MLflow подключи к сети kind: `docker network connect kind &lt;контейнер mlflow&gt;`
-  и возьми его IP (как для MinIO — [../Storage/03_nfs_minio.md](/storage/03-nfs-minio) §5). Запросы
+- kind-кластер `ml`; контейнер MLflow подключи к сети kind: `docker network connect kind <контейнер mlflow>`
+  и возьми его IP (как для MinIO — [Хранилища: 03. NFS и MinIO: файловое и объектное хранилище своими руками](/storage/03-nfs-minio) §5). Запросы
   по IP частной сети проходят `--allowed-hosts` по умолчанию; по имени — добавь имя в список.
 - Gitops-репозиторий `~/labs/mlops/ml-gitops` (локальный git; со звёздочкой — GitLab/GitHub + ArgoCD из
-  [../Left/07_ArgoCD/03_application.md](/argocd/03-application)).
+  [ArgoCD: 03. Application: синхронизация и здоровье](/argocd/03-application)).
 
 ### Требования
 1. **Образ сервинга = рантайм без модели:** `python:3.12-slim` + `mlflow==3.16.1` + `scikit-learn==1.9.1`
    (версии — как при обучении, сверь с `requirements.txt` модели), `ENTRYPOINT` — `mlflow models serve
    -m "$MODEL_URI" --env-manager local -h 0.0.0.0 -p 8080`. `kind load docker-image churn-serving:1.0 --name ml`.
-2. **Манифест** `apps/churn/`: Deployment с env `MODEL_URI=models:/churn/&lt;N&gt;` (номер, не алиас!) и
+2. **Манифест** `apps/churn/`: Deployment с env `MODEL_URI=models:/churn/<N>` (номер, не алиас!) и
    `MLFLOW_TRACKING_URI`, `startupProbe` на `/health`, Service, requests/limits. Номер версии — в одном
    месте (`values.yaml` или kustomize-патч).
 3. **Gate** `evaluate.py` (задача C7 темы 05): новая версия не хуже `@production` → `@staging`; иначе exit 1.
@@ -361,7 +363,8 @@ python train.py 0.5 && python evaluate.py          # v2 → @staging (если �
 # «одобрение»: @production → v2, затем
 ./ci/promote.sh && kubectl -n ml rollout status deploy/churn
 cd ~/labs/mlops/ml-gitops && git revert --no-edit HEAD && cd - && ./ci/apply.sh   # откат на v1
-```text
+```
+
 ### Критерии приёмки
 - [ ] Образ сервинга один на все версии модели; модель скачивается при старте пода
 - [ ] В git видно, какая версия в проде; `git log` = история выкаток модели
@@ -385,12 +388,12 @@ cd ~/labs/mlops/ml-gitops && git revert --no-edit HEAD && cd - && ./ci/apply.sh 
 
 **Цель:** у ИИ-ассистента есть доступ к кластеру, и ты **доказал**, что он может смотреть, но не может
 удалять, читать секреты и выполнять команды в подах; видел prompt injection своими глазами; написал
-политику команды. **Темы:** [06_ai_in_devops_work.md](/mlops/06-ai-in-devops-work) §4–10.
+политику команды. **Темы:** [06. ИИ в работе девопса: ассистенты, агенты, проверка и безопасность](/mlops/06-ai-in-devops-work) §4–10.
 
 ### Стенд
 Кластер `ml` с приложениями из лаб 1–5 (или отдельный `kind create cluster --name ai --image kindest/node:v1.36.4`
 с namespace `demo`, Deployment `web` и Secret `db-pass`). Со звёздочкой — кластер с audit log по конфигу
-стенда безопасности ([../Security/00_INDEX.md](/security/), kind-config с аудитом).
+стенда безопасности ([Безопасность](/security/), kind-config с аудитом).
 
 ### Часть A. Права
 1. Namespace `ai`, ServiceAccount `assistant`, RoleBinding на ClusterRole `view` **только** в `llm` и `demo`
@@ -467,5 +470,3 @@ cd ~/labs/mlops/ml-gitops && git revert --no-edit HEAD && cd - && ./ci/apply.sh 
 - [ ] Лаба 6: агент с read-only доступом, инъекция увидена, политика написана
 - [ ] Всё в `~/labs/mlops` под git: манифесты, скрипты, дашборд, `NOTES.md` с замерами, `AI_POLICY.md`
 - [ ] По каждой лабе могу рассказать историю на собесе: что делал, что сломал, какие цифры получил
-
-➡️ Дальше: [08_interview.md](/mlops/08-interview) — вопросы с собеседований

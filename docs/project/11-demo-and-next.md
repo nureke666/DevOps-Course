@@ -1,6 +1,6 @@
 ---
 title: "11. Финальный прогон, демо и развитие"
-description: "Цель этапа: доказать, что портфолио работает целиком и без подсказок: один"
+description: "сквозное демо, запись, план расширений"
 ---
 
 # 11. Финальный прогон, демо и развитие
@@ -39,7 +39,7 @@ description: "Цель этапа: доказать, что портфолио �
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
  0:00  README: схема и два репозитория
  0:01  правка в linkd-platform ─► MR ─► пайплайн (test / build / scan)
  0:04  merge ─► CI коммитит тег ─► Argo синхронизирует dev ─► новая версия отвечает
@@ -49,7 +49,8 @@ description: "Цель этапа: доказать, что портфолио �
        ─► revert ─► RESOLVED;  фолт задержки ─► медленный спан в Tempo
  0:14  self-heal + результат restore-test + таблица RPO/RTO
  0:15  вопросы
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -65,7 +66,8 @@ kubectl get externalsecret -A                             # SecretSynced
 # с port-forward к Prometheus на :9090 — какие алерты горят (в норме только Watchdog)
 curl -s localhost:9090/api/v1/alerts | jq -r '.data.alerts[] | select(.state=="firing") | .labels.alertname'
 curl -s "$PROD/readyz"
-```text
+```
+
 Плюс вне кластера: MinIO жив и в бакете есть свежий бэкап, токен CI → gitops не истёк,
 Telegram-бот отвечает. Что-то красное — это находка, а не провал: почини и запиши в журнал.
 
@@ -86,7 +88,8 @@ curl -s "$DEV/healthz"                                     # до: старая 
 argocd app wait linkd-dev --sync --health --timeout 600
 curl -s "$DEV/healthz"                                     # после: новая
 kubectl -n dev get deploy linkd -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
-```text
+```
+
 **3.2. Продвижение в prod.** Тег `v0.X.0` → retag в CI → MR в `linkd-gitops` → merge →
 `argocd app wait linkd-prod ...`. В выводе k6 за время выкатки — ноль ошибок (или
 единицы, и понятно почему).
@@ -97,7 +100,8 @@ kubectl -n dev get deploy linkd -o jsonpath='{.spec.template.spec.containers[0].
 ```bash
 kubectl -n dev get pods -w     # новый под не Ready, старый продолжает обслуживать
 argocd app get linkd-dev       # Progressing → Degraded
-```text
+```
+
 Исправление — `git revert` этого коммита. Для бага в коде revert делается в
 `linkd-platform`, иначе следующий merge снова принесёт его в dev.
 
@@ -114,9 +118,10 @@ argocd app get linkd-dev       # Progressing → Degraded
 
 ```bash
 kubectl -n dev delete svc linkd && sleep 10 && kubectl -n dev get svc linkd   # вернулся
-kubectl -n prod create job --from=cronjob/&lt;restore-test&gt; demo-restore
+kubectl -n prod create job --from=cronjob/<restore-test> demo-restore
 kubectl -n prod logs -f job/demo-restore                                      # данные восстановлены
-```text
+```
+
 И в конце — таблица RPO/RTO из README с замерами учений этапа 09.
 
 ### 4. Запись демо
@@ -130,9 +135,10 @@ kubectl -n prod logs -f job/demo-restore                                      # 
 
 ```bash
 gitleaks git --verbose .                                          # в обоих репозиториях
-grep -rn "&lt;you&gt;\|TODO\|FIXME" --include='*.yaml' --include='*.md' .   # плейсхолдеры и хвосты
+grep -rn "<you>\|TODO\|FIXME" --include='*.yaml' --include='*.md' .   # плейсхолдеры и хвосты
 git ls-files | grep -E 'TASKS.md|check.sh|\.state/|\.env$|tfstate'    # следы практики и секретов
-```text
+```
+
 Пройдись по README: версии, команды быстрого старта, ссылки, скриншоты — всё про
 текущее состояние, фолты выключены.
 
@@ -142,20 +148,20 @@ git ls-files | grep -E 'TASKS.md|check.sh|\.state/|\.env$|tfstate'    # след
 
 | Расширение | Что показывает | Опора в волте | Сложность |
 |-----------|----------------|---------------|-----------|
-| Перенос стенда в облако: Terraform-провайдер облака (сеть, firewall, ВМ, бакет), k3s через Ansible | работа с облаком, стоимость, переезд без правок чарта | [../Left/04_Cloud/03_network_vpc.md](/cloud/03-network-vpc), [../Kubernetes/16_cluster_deployment.md](/kubernetes/16-cluster-deployment) | 🔴 |
-| Off-site бэкапы в облачный бакет | настоящий DR, а не «вне кластера» | [../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage) | 🟢 |
-| CloudNativePG вместо своего StatefulSet: реплика, фейловер, PITR | операторы, HA БД, RPO в минутах | [../Left/01_Databases/06_replication.md](/databases/06-replication), [../Kubernetes/21_advanced_paths.md](/kubernetes/21-advanced-paths) | 🟡 |
-| Canary через Argo Rollouts с анализом метрик | прогрессивная доставка, автооткат по SLO | [../Left/07_ArgoCD/03_application.md](/argocd/03-application) | 🔴 |
-| Policy as code (Kyverno / OPA Gatekeeper): запрет `latest`, обязательные limits и пробы | guardrails для команды | [../Kubernetes/17_rbac.md](/kubernetes/17-rbac) | 🟡 |
-| Подпись образов (cosign) и SBOM | supply chain security | [../CICD/13_quality_security.md](/cicd/13-quality-security) | 🟡 |
-| Renovate: MR на обновление образов, чартов, провайдеров | гигиена версий без ручного труда | [../Docker/05_registry_tags.md](/docker/05-registry-tags) | 🟢 |
-| ApplicationSet и preview-окружение на каждый MR | масштабирование GitOps | [../Left/07_ArgoCD/04_app_of_apps.md](/argocd/04-app-of-apps) | 🔴 |
-| Terraform в CI: `plan` в MR, `apply` по кнопке | IaC-процесс как в команде | [../Left/06_Terraform/06_workflow_cicd.md](/terraform/06-workflow-cicd) | 🟡 |
-| postgres_exporter и blackbox-пробы снаружи | мониторинг зависимостей и «взгляд пользователя» | [../Left/01_Databases/07_db_monitoring.md](/databases/07-db-monitoring), [../Left/02_Monitoring/04_exporters.md](/monitoring/04-exporters) | 🟢 |
-| Очередь (RabbitMQ/Kafka) + worker, считающий переходы асинхронно | асинхронная архитектура, лаг консьюмеров | [../Left/05_Queues/00_INDEX.md](/queues/) | 🟡 |
-| Velero: бэкап ресурсов и томов | DR на уровне кластера | [../Kubernetes/21_advanced_paths.md](/kubernetes/21-advanced-paths) | 🟡 |
-| GitLab Runner в кластере (Kubernetes executor) | инфраструктура CI | [../CICD/09_gitlab_runner.md](/cicd/09-gitlab-runner) | 🟡 |
-| Хаос-тесты по расписанию + проверка SLO | отказоустойчивость на деле | [../SRE/06_reliability_patterns.md](/sre/06-reliability-patterns) | 🟡 |
+| Перенос стенда в облако: Terraform-провайдер облака (сеть, firewall, ВМ, бакет), k3s через Ansible | работа с облаком, стоимость, переезд без правок чарта | [Облака: 03. Сеть в облаке: VPC](/cloud/03-network-vpc), [Kubernetes: 16. Развёртывание кластера](/kubernetes/16-cluster-deployment) | 🔴 |
+| Off-site бэкапы в облачный бакет | настоящий DR, а не «вне кластера» | [Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage) | 🟢 |
+| CloudNativePG вместо своего StatefulSet: реплика, фейловер, PITR | операторы, HA БД, RPO в минутах | [Базы данных: 06. Репликация PostgreSQL](/databases/06-replication), [Kubernetes: 21. Развилка: куда дальше](/kubernetes/21-advanced-paths) | 🟡 |
+| Canary через Argo Rollouts с анализом метрик | прогрессивная доставка, автооткат по SLO | [ArgoCD: 03. Application: синхронизация и здоровье](/argocd/03-application) | 🔴 |
+| Policy as code (Kyverno / OPA Gatekeeper): запрет `latest`, обязательные limits и пробы | guardrails для команды | [Kubernetes: 17. RBAC](/kubernetes/17-rbac) | 🟡 |
+| Подпись образов (cosign) и SBOM | supply chain security | [CI/CD: 13. Качество и безопасность пайплайна](/cicd/13-quality-security) | 🟡 |
+| Renovate: MR на обновление образов, чартов, провайдеров | гигиена версий без ручного труда | [Docker: 05. Registry и тегирование](/docker/05-registry-tags) | 🟢 |
+| ApplicationSet и preview-окружение на каждый MR | масштабирование GitOps | [ArgoCD: 04. App of Apps и ApplicationSet](/argocd/04-app-of-apps) | 🔴 |
+| Terraform в CI: `plan` в MR, `apply` по кнопке | IaC-процесс как в команде | [Terraform: 06. Workflow и CI/CD](/terraform/06-workflow-cicd) | 🟡 |
+| postgres_exporter и blackbox-пробы снаружи | мониторинг зависимостей и «взгляд пользователя» | [Базы данных: 07. Мониторинг баз данных](/databases/07-db-monitoring), [Мониторинг: 04. Exporter'ы](/monitoring/04-exporters) | 🟢 |
+| Очередь (RabbitMQ/Kafka) + worker, считающий переходы асинхронно | асинхронная архитектура, лаг консьюмеров | [Очереди](/queues/) | 🟡 |
+| Velero: бэкап ресурсов и томов | DR на уровне кластера | [Kubernetes: 21. Развилка: куда дальше](/kubernetes/21-advanced-paths) | 🟡 |
+| GitLab Runner в кластере (Kubernetes executor) | инфраструктура CI | [CI/CD: 09. GitLab Runner](/cicd/09-gitlab-runner) | 🟡 |
+| Хаос-тесты по расписанию + проверка SLO | отказоустойчивость на деле | [SRE: 06. Паттерны надёжности, нагрузка и chaos engineering](/sre/06-reliability-patterns) | 🟡 |
 
 Как выбрать: в вакансии облака — перенос в облако и Terraform в CI; надёжность и SRE —
 CloudNativePG, off-site бэкапы, хаос-тесты; безопасность — Kyverno и cosign; Kafka —
@@ -207,13 +213,13 @@ CloudNativePG, off-site бэкапы, хаос-тесты; безопаснос�
 
 ## 📚 Теория в волте
 
-- Разбор инцидентов в кластере: [../Kubernetes/20_troubleshooting.md](/kubernetes/20-troubleshooting)
-- Метрики DORA: [../CICD/01_cicd_concepts.md](/cicd/01-cicd-concepts)
-- Self-heal и откаты в Argo CD: [../Left/07_ArgoCD/03_application.md](/argocd/03-application)
-- Ведение инцидента: [../SRE/04_incident_management.md](/sre/04-incident-management)
-- Что происходит при запросе от браузера до пода: [../Network/14_url_journey.md](/network/14-url-journey)
-- Карты блоков для повторения: [../00_INDEX.md](./),
-  [../Kubernetes/00_INDEX.md](/kubernetes/),
-  [../Left/00_INDEX.md](./)
+- Разбор инцидентов в кластере: [Kubernetes: 20. Траблшутинг кластера](/kubernetes/20-troubleshooting)
+- Метрики DORA: [CI/CD: 01. CI, CD и CD — концепции](/cicd/01-cicd-concepts)
+- Self-heal и откаты в Argo CD: [ArgoCD: 03. Application: синхронизация и здоровье](/argocd/03-application)
+- Ведение инцидента: [SRE: 04. Инцидент-менеджмент и on-call](/sre/04-incident-management)
+- Что происходит при запросе от браузера до пода: [Сети: 14. Путь запроса в браузере](/network/14-url-journey)
+- Карты блоков для повторения: «DevOps — главная карта обучения»,
+  [Kubernetes](/kubernetes/),
+  «Остальное — карта обучения (раздел 7 роадмапа)»
 
-➡️ Портфолио собрано. Вернуться к карте — [00_INDEX.md](/project/)
+➡️ Портфолио собрано. Вернуться к карте — [Пет-проект](/project/)

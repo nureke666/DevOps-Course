@@ -1,12 +1,12 @@
 ---
 title: "04. CLI, логирование и конфиги"
-description: "Блок → Python для DevOps → тема 4 из 8."
+description: "argparse, logging, YAML/TOML, приоритет настроек, dry-run"
 ---
 
 # 04. CLI, логирование и конфиги
 
 > Блок → **Python для DevOps** → тема 4 из 8.
-> Аналог в bash: `getopts`, `>&2`, `source config.env` из [25_bash_robust.md](/linux/25-bash-robust).
+> Аналог в bash: `getopts`, `>&2`, `source config.env` из [Linux: 25. Надёжный bash-скрипт](/linux/25-bash-robust).
 >
 > **После темы ты умеешь:** делать удобный CLI на `argparse` (флаги, подкоманды, `--dry-run`, `-v`),
 > понимаешь, когда брать click/typer; логируешь через `logging` (уровни, формат, stderr, файл, JSON),
@@ -17,7 +17,7 @@ description: "Блок → Python для DevOps → тема 4 из 8."
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
    ./opsctl.py -v --config ops.yaml cleanup /var/backups --days 14 --apply
         │       │        │              │           │         │        │
         └───────┴────────┴──── argparse (или click / typer) ──┴────────┘
@@ -28,7 +28,8 @@ description: "Блок → Python для DevOps → тема 4 из 8."
     YAML: safe_load            docker, k8s соберут сами)      --apply / --yes,
     TOML: tomllib              уровни через -v / -q           коды выхода 0/1/2
     JSON: json                 JSON-формат для Loki/ELK
-```text
+```
+
 ---
 
 ## 1. argparse: основы
@@ -54,7 +55,8 @@ parser.add_argument("--version", action="version", version="%(prog)s 1.2.0")
 
 args = parser.parse_args()         # в тестах: parser.parse_args(["/tmp", "--days", "3"])
 args.path, args.days, args.apply   # дефисы в именах → подчёркивания: --dry-run → args.dry_run
-```text
+```
+
 | Что нужно | Как |
 |-----------|-----|
 | Флаг вкл/выкл | `action="store_true"` |
@@ -84,7 +86,6 @@ from pathlib import Path
 
 log = logging.getLogger("opsctl")
 
-
 def cmd_cleanup(args: argparse.Namespace) -> int:
     mode = "удаляю" if args.apply else "[dry-run] к удалению"
     for p in sorted(args.path.glob(args.pattern)):
@@ -93,11 +94,9 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
             p.unlink(missing_ok=True)
     return 0
 
-
 def cmd_check(args: argparse.Namespace) -> int:
     log.info("проверяю %s", ", ".join(args.hosts))
     return 0
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="opsctl", description=__doc__)
@@ -116,12 +115,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_check)
     return parser
 
-
 def setup_logging(verbose: int, quiet: bool) -> None:
     level = logging.WARNING if quiet else (logging.DEBUG if verbose else logging.INFO)
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     logging.getLogger("urllib3").setLevel(logging.WARNING)      # приглушить болтливые библиотеки
-
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
@@ -132,16 +129,16 @@ def main(argv: list[str] | None = None) -> int:
         log.exception("команда %s упала", args.command)
         return 1
 
-
 if __name__ == "__main__":
     sys.exit(main())
-```text
+```
 ```bash
 ./opsctl.py --help
 ./opsctl.py -v cleanup /var/backups --pattern '*.sql.gz'          # dry-run
 ./opsctl.py cleanup /var/backups --apply
 ./opsctl.py check web1 web2; echo $?
-```text
+```
+
 ---
 
 ## 3. click и typer — когда argparse мало
@@ -171,7 +168,7 @@ def backup(db: str, bucket: Annotated[str, typer.Option(envvar="BACKUP_BUCKET")]
 
 if __name__ == "__main__":
     app()
-```text
+```
 ```python
 # click: то же на декораторах
 import click
@@ -190,7 +187,8 @@ def cleanup(path, days, apply):
 
 if __name__ == "__main__":
     cli()
-```text
+```
+
 ---
 
 ## 4. ⭐ logging вместо print
@@ -211,17 +209,19 @@ try:
     upload(file)
 except OSError:
     log.exception("не удалось загрузить %s", file)   # ERROR + traceback
-```text
+```
+
 **Почему не `print`:**
 - у лога есть уровень, время, источник — можно фильтровать и искать;
 - `logging` пишет в **stderr**, а stdout остаётся для данных: `./report.py --json | jq .` работает;
 - уровень меняется флагом `-v/-q`, без правки кода;
 - в systemd/docker/k8s stderr сам уходит в journald / `docker logs` / Loki.
 
-```text
+```text:no-line-numbers
 stdout  →  результат (таблица, JSON, CSV)   ← то, что пойдёт в pipe
 stderr  →  логи и диагностика               ← то, что увидит человек / соберёт journald
-```text
+```
+
 **Файл с ротацией** — только если нет journald/docker (голый сервер, cron):
 
 ```python
@@ -230,7 +230,8 @@ from logging.handlers import RotatingFileHandler
 handler = RotatingFileHandler("/var/log/opsctl.log", maxBytes=10_000_000, backupCount=5, encoding="utf-8")
 handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
 logging.getLogger().addHandler(handler)
-```text
+```
+
 **JSON-логи** для Loki/ELK — один объект на строку, поля ищутся без regex:
 
 ```python
@@ -243,7 +244,7 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),
-            **getattr(record, "ctx", {}),          # доп. поля: log.info("...", extra={"ctx": {...&#125;&#125;)
+            **getattr(record, "ctx", {}),          # доп. поля: log.info("...", extra={"ctx": {...}})
         }
         if record.exc_info:
             data["exc"] = self.formatException(record.exc_info)
@@ -252,9 +253,10 @@ class JsonFormatter(logging.Formatter):
 handler = logging.StreamHandler()
 handler.setFormatter(JsonFormatter())
 logging.basicConfig(level=logging.INFO, handlers=[handler])
-log.info("бэкап загружен", extra={"ctx": {"bucket": "backups", "size_mb": 512&#125;&#125;)
+log.info("бэкап загружен", extra={"ctx": {"bucket": "backups", "size_mb": 512}})
 # {"ts": "...", "level": "INFO", "logger": "__main__", "msg": "бэкап загружен", "bucket": "backups", "size_mb": 512}
-```text
+```
+
 ⚠️ Никогда не логируй токены, пароли, заголовки `Authorization`, весь конфиг или `os.environ`.
 
 ---
@@ -281,7 +283,8 @@ with open("pyproject.toml", "rb") as f:        # ⚠️ именно "rb"
 
 with open("manifests.yaml", encoding="utf-8") as f:
     docs = [d for d in yaml.safe_load_all(f) if d]    # несколько документов через ---
-```text
+```
+
 ⚠️ **YAML-сюрпризы** (PyYAML следует YAML 1.1):
 
 ```yaml
@@ -290,7 +293,7 @@ version: 1.10        # → 1.1 (float!)
 port_map: 22:22      # → 1342 (шестидесятеричное число)
 mode: 010            # → 8 (восьмеричное)
 safe: "1.10"         # → '1.10' — строки, похожие на числа/булевы, бери в кавычки
-```text
+```
 ⚠️ `yaml.load(f, Loader=yaml.Loader)` / `unsafe_load` на чужом файле может выполнить код
 (`!!python/object/apply:os.system`). Всегда `safe_load`.
 
@@ -298,12 +301,13 @@ safe: "1.10"         # → '1.10' — строки, похожие на числ
 
 ## 6. ⭐ Приоритет настроек: CLI > env > файл > дефолт
 
-```text
+```text:no-line-numbers
 дефолт в коде  ──►  конфиг-файл  ──►  переменные окружения  ──►  флаги CLI
  (разумно)          (общий для        (секреты, различия        (разовый
                     окружения)        dev/stage/prod, k8s)       запуск)
                                                      каждый следующий перекрывает предыдущий
-```text
+```
+
 ```python
 import os
 from dataclasses import dataclass, fields, replace
@@ -341,7 +345,7 @@ def load_settings(args) -> Settings:
     if s.keep_days < 1:
         raise ConfigError("keep_days должен быть >= 1")
     return s
-```text
+```
 Чтобы отличить «флаг не задан» от «задан дефолт», у CLI-опций `default=None`
 (`--keep-days` с `type=int, default=None`, `--dry-run/--no-dry-run` через `BooleanOptionalAction`).
 
@@ -367,7 +371,7 @@ if args.apply and plan and confirm(f"Удалить {len(plan)} файлов?", 
     for p in plan:
         p.unlink(missing_ok=True)                             # 3. выполнение
 log.info("итого: %d файлов, режим %s", len(plan), "apply" if args.apply else "dry-run")
-```text
+```
 Правила: разрушительное действие — dry-run по умолчанию; dry-run не меняет **ничего**
 (ни каталогов, ни файлов состояния); в конце — сводка, сколько затронуто.
 
@@ -442,13 +446,16 @@ log.info("итого: %d файлов, режим %s", len(plan), "apply" if arg
 9. Приоритет: CLI > env > файл > дефолт; у CLI-опций `default=None`, лишние ключи конфига — ошибка.
 10. Разрушительные действия — dry-run по умолчанию, `--apply`/`--yes` явно; секреты — не в аргументах.
 
-➡️ Дальше: [05_http_api.md](/python/05-http-api) · Задачи: 04_cli_logging_config_tasks.md
+---
 
+## Задачи
+
+> Стенд: `python3` 3.12+, venv с `pyyaml` (для C5 — ещё `typer` или `click`).
+> Рабочий каталог: `~/labs/py/04`.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем позиционный аргумент отличается от опции? Когда что выбирать?
 
@@ -587,200 +594,151 @@ stdout — результат (данные, отчёт, JSON), stderr — ло�
 
 ### Блок B. «Что выведет / что тут не так»
 
-
-```text:no-line-numbers
+```python
 # B1.
-```text
-```text:no-line-numbers
 p = argparse.ArgumentParser()
-```text
-```text:no-line-numbers
 p.add_argument("--verbose", type=bool, default=False)
-```text
-```text:no-line-numbers
 print(p.parse_args(["--verbose", "false"]).verbose)
-```text
-```text:no-line-numbers
+```
+```python
 # B2.
-```text
-```text:no-line-numbers
 p = argparse.ArgumentParser()
-```text
-```text:no-line-numbers
 p.add_argument("--dry-run", action="store_true")
-```text
-```text:no-line-numbers
 args = p.parse_args(["--dry-run"])
-```text
-```text:no-line-numbers
 print(args.dry-run)
-```text
-```text:no-line-numbers
+```
+```python
 # B3.
-```text
-```text:no-line-numbers
 import logging
-```text
-```text:no-line-numbers
 log = logging.getLogger("app")
-```text
-```text:no-line-numbers
 log.info("старт")
-```text
-```text:no-line-numbers
 logging.basicConfig(level=logging.INFO)
-```text
-```text:no-line-numbers
 log.info("работаю")
-```text
-```text:no-line-numbers
 log.debug("детали")
-```text
-```text:no-line-numbers
+```
+```python
 # B4.
-```text
-```text:no-line-numbers
 log.info("загружено %s файлов в %s", count)
-```text
-```text:no-line-numbers
+```
+```python
 # B5.
-```text
-```text:no-line-numbers
 import yaml
-```text
-```text:no-line-numbers
 print(yaml.safe_load("""
-```text
-```text:no-line-numbers
 country: NO
-```text
-```text:no-line-numbers
 version: 1.10
-```text
-```text:no-line-numbers
 enabled: off
-```text
-```text:no-line-numbers
 ports: 22:22
-```text
-```text:no-line-numbers
 name: "1.10"
-```text
-```text:no-line-numbers
 """))
-```text
-```text:no-line-numbers
+```
+```python
 # B6.
-```text
-```text:no-line-numbers
 import tomllib
-```text
-```text:no-line-numbers
 with open("pyproject.toml") as f:
-```text
-```text:no-line-numbers
     data = tomllib.load(f)
-```text
-```text:no-line-numbers
+```
+```python
 # B7.
-```text
-```text:no-line-numbers
 cfg = yaml.load(open("user_upload.yaml"), Loader=yaml.Loader)
-```text
-```text:no-line-numbers
+```
+```python
 # B8.
-```text
-```text:no-line-numbers
 print(f"Обработано {n} файлов")          # скрипт вызывают так: ./report.py --json | jq .
-```text
-```text:no-line-numbers
 print(json.dumps(result))
-```text
-```text:no-line-numbers
+```
+```python
 # B9.
-```text
-```text:no-line-numbers
 p.add_argument("--days", type=int, default=14)
-```text
-```text:no-line-numbers
 days = args.days or int(os.environ.get("KEEP_DAYS", 14))   # KEEP_DAYS=3 задан
-```text
-```text:no-line-numbers
-B10.  $ ./deploy.py --token glpat-xxxxxxxx --env prod
-```text
-<details><summary>Ответ</summary>
+```
+```bash
+B10. $ ./deploy.py --token glpat-xxxxxxxx --env prod
+```
+```python
+# B11.
+try:
+    upload(f)
+except Exception as e:
+    log.error("ошибка: " + str(e))
+```
+```python
+# B12.
+cfg = yaml.safe_load(open("empty.yaml"))      # файл пустой
+print(cfg.get("bucket", "backups"))
+```
 
-⚠️ Токен виден в `ps`, history, логах CI. Из env или файла.
+<details><summary>Ответы</summary>
+
+**B1.** `True` — `bool("false")`.
+
+**B2.** ⚠️ `args.dry - run` — вычитание: `NameError: name 'run' is not defined`. Правильно `args.dry_run`.
+
+**B3.** «старт» не выведется (по умолчанию WARNING и нет обработчика — сработает только аварийный
+вывод WARNING+), «работаю» — выведется, «детали» — нет (уровень INFO).
+
+**B4.** ⚠️ Два `%s`, один аргумент — `TypeError: not enough arguments for format string`, logging
+напечатает ошибку форматирования в stderr вместо сообщения.
+
+**B5.** `{'country': False, 'version': 1.1, 'enabled': False, 'ports': 1342, 'name': '1.10'}`.
+
+**B6.** `TypeError: File must be opened in binary mode, e.g. use open('foo.toml', 'rb')`.
+
+**B7.** ⚠️ Полный Loader на пользовательском файле — выполнение произвольного кода. `yaml.safe_load`.
+
+**B8.** ⚠️ Строка «Обработано ...» попадает в stdout перед JSON — `jq` падает. Сообщение — в лог (stderr).
+
+**B9.** ⚠️ `args.days` всегда 14 (дефолт), до env дело не доходит. Нужен `default=None`.
+
+**B10.** ⚠️ Токен виден в `ps`, history, логах CI. Из env или файла.
+
+**B11.** Нет traceback — причину не найти. `log.exception("не удалось загрузить %s", f)`.
+
+**B12.** ⚠️ `safe_load` пустого файла возвращает `None` → `AttributeError`. `yaml.safe_load(f) or {}`.
 
 </details>
 
-```text:no-line-numbers
-# B11.
-```text
-```text:no-line-numbers
-try:
-```text
-```text:no-line-numbers
-    upload(f)
-```text
-```text:no-line-numbers
-except Exception as e:
-```text
-```text:no-line-numbers
-    log.error("ошибка: " + str(e))
-```text
-```text:no-line-numbers
-# B12.
-```text
-```text:no-line-numbers
-cfg = yaml.safe_load(open("empty.yaml"))      # файл пустой
-```text
-```text:no-line-numbers
-print(cfg.get("bucket", "backups"))
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. argparse с нуля
+#### C1. argparse с нуля
 Сделай `ping_hosts.py HOST [HOST ...] --count N --timeout SEC --format {text,json}`:
 - `--count` по умолчанию 3, `--timeout` — 2.0, `--format` — text;
 - `--help` показывает дефолты;
 - если `--count` < 1 — ошибка через `parser.error` (код 2).
 Пока без реального ping — печатай разобранные аргументы.
 
-### C2. 🔑 Утилита с подкомандами
+<details><summary>Ответ</summary>
+
+```python
+p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+p.add_argument("hosts", nargs="+")
+p.add_argument("--count", type=int, default=3)
+p.add_argument("--timeout", type=float, default=2.0)
+p.add_argument("--format", choices=["text", "json"], default="text")
+args = p.parse_args()
+if args.count < 1:
+    p.error("--count должен быть >= 1")
+```
+
+</details>
+
+#### C2. 🔑 Утилита с подкомандами
 Собери `opsctl.py` из конспекта с подкомандами `cleanup` и `check`, добавь третью —
 `disk` (печатает занятость разделов из списка, код 1 при превышении порога).
 Проверь `opsctl.py --help`, `opsctl.py disk --help`, запуск без подкоманды (код?).
 
-### C3. 🔑 Логирование
-**1.** Добавь в `opsctl.py` уровни: по умолчанию INFO, `-v` — DEBUG, `-q` — WARNING.
-
-<details><summary>Ответ</summary>
-
-```python
-p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-p.add_argument("hosts", nargs="+")
-p.add_argument("--count", type=int, default=3)
-p.add_argument("--timeout", type=float, default=2.0)
-p.add_argument("--format", choices=["text", "json"], default="text")
-args = p.parse_args()
-if args.count < 1:
-    p.error("--count должен быть >= 1")
-```text
-</details>
-
-**2.** Приглуши логгер `urllib3`.
-
 <details><summary>Ответ</summary>
 
 Без подкоманды: `error: the following arguments are required: command`, код 2.
 
 </details>
 
-**3.** Проверь, что `./opsctl.py disk / 2>/dev/null` не печатает логов, а `2>&1 | grep WARNING` их находит.
+#### C3. 🔑 Логирование
+1. Добавь в `opsctl.py` уровни: по умолчанию INFO, `-v` — DEBUG, `-q` — WARNING.
+2. Приглуши логгер `urllib3`.
+3. Проверь, что `./opsctl.py disk / 2>/dev/null` не печатает логов, а `2>&1 | grep WARNING` их находит.
+4. Сделай так, чтобы исключение в подкоманде логировалось с traceback и давало код 1.
 
 <details><summary>Ответ</summary>
 
@@ -788,65 +746,10 @@ if args.count < 1:
 
 </details>
 
-**4.** Сделай так, чтобы исключение в подкоманде логировалось с traceback и давало код 1.
-
-<details><summary>Ответ</summary>
-
-Выбор форматтера:
-```python
-handler = logging.StreamHandler()
-handler.setFormatter(JsonFormatter() if args.log_format == "json"
-                     else logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-logging.basicConfig(level=level, handlers=[handler])
-log.warning("мало места", extra={"ctx": {"host": socket.gethostname(), "mount": "/"&#125;&#125;)
-```text
-</details>
-
-### C4. JSON-логи
+#### C4. JSON-логи
 Добавь флаг `--log-format {text,json}`. В JSON-режиме каждая строка — валидный JSON
 (`./opsctl.py --log-format json disk / 2>&1 >/dev/null | jq .level`). Добавь поле `host` через `extra`.
 
-### C5. typer или click
-Перепиши `cleanup` на typer (или click): аргумент `path`, опции `--days`, `--apply`,
-`--bucket` с чтением из env `BACKUP_BUCKET`. Сравни объём кода и `--help` с argparse-версией.
-
-### C6. 🔑 Конфиг по приоритетам
-Реализуй `load_settings` из конспекта для настроек `endpoint`, `bucket`, `keep_days`, `dry_run`:
-**1.** Конфиг `ops.yaml` задаёт `keep_days: 30`.
-
-<details><summary>Ответ</summary>
-
-```python
-p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-p.add_argument("hosts", nargs="+")
-p.add_argument("--count", type=int, default=3)
-p.add_argument("--timeout", type=float, default=2.0)
-p.add_argument("--format", choices=["text", "json"], default="text")
-args = p.parse_args()
-if args.count < 1:
-    p.error("--count должен быть >= 1")
-```text
-</details>
-
-**2.** `OPS_KEEP_DAYS=7` перекрывает файл.
-
-<details><summary>Ответ</summary>
-
-Без подкоманды: `error: the following arguments are required: command`, код 2.
-
-</details>
-
-**3.** `--keep-days 3` перекрывает всё.
-
-<details><summary>Ответ</summary>
-
-Проверка: `./opsctl.py disk / 2>/dev/null; echo $?` — логов нет, код есть.
-
-</details>
-
-**4.** Опечатка в конфиге (`keep_day: 3`) → понятная ошибка и код 2.
-Покажи все четыре сценария.
-
 <details><summary>Ответ</summary>
 
 Выбор форматтера:
@@ -855,31 +758,87 @@ handler = logging.StreamHandler()
 handler.setFormatter(JsonFormatter() if args.log_format == "json"
                      else logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
 logging.basicConfig(level=level, handlers=[handler])
-log.warning("мало места", extra={"ctx": {"host": socket.gethostname(), "mount": "/"&#125;&#125;)
-```text
+log.warning("мало места", extra={"ctx": {"host": socket.gethostname(), "mount": "/"}})
+```
+
 </details>
 
-### C7. YAML-ловушки
+#### C5. typer или click
+Перепиши `cleanup` на typer (или click): аргумент `path`, опции `--days`, `--apply`,
+`--bucket` с чтением из env `BACKUP_BUCKET`. Сравни объём кода и `--help` с argparse-версией.
+
+#### C6. 🔑 Конфиг по приоритетам
+Реализуй `load_settings` из конспекта для настроек `endpoint`, `bucket`, `keep_days`, `dry_run`:
+1. Конфиг `ops.yaml` задаёт `keep_days: 30`.
+2. `OPS_KEEP_DAYS=7` перекрывает файл.
+3. `--keep-days 3` перекрывает всё.
+4. Опечатка в конфиге (`keep_day: 3`) → понятная ошибка и код 2.
+Покажи все четыре сценария.
+
+#### C7. YAML-ловушки
 Составь YAML с `no`, `on`, `1.10`, `22:22`, `010`, `0x1F`, `~`, `2026-09-27` и посмотри,
 во что превращает их `safe_load`. Исправь файл так, чтобы всё было строками.
 
-### C8. TOML
+<details><summary>Ответ</summary>
+
+`no`→`False`, `on`→`True`, `1.10`→`1.1`, `22:22`→`1342`, `010`→`8`, `0x1F`→`31`, `~`→`None`,
+`2026-09-27`→`datetime.date(2026, 9, 27)`. Исправление — кавычки у каждого значения.
+
+</details>
+
+#### C8. TOML
 Создай `tool.toml` с секциями `[storage]` и `[[targets]]` (массив таблиц) и прочитай через `tomllib`.
 Выведи список целей.
 
-### C9. dry-run и подтверждение
+<details><summary>Ответ</summary>
+
+```toml
+[storage]
+endpoint = "http://localhost:9000"
+
+[[targets]]
+name = "api"
+url = "https://api.example.com/health"
+
+[[targets]]
+name = "web"
+url = "https://example.com"
+```
+```python
+with open("tool.toml", "rb") as f:
+    cfg = tomllib.load(f)
+for t in cfg["targets"]:
+    print(t["name"], t["url"])
+```
+
+</details>
+
+#### C9. dry-run и подтверждение
 Добавь в `cleanup` флаги `--apply` и `--yes`. Без `--apply` — только план; с `--apply` без `--yes` —
 вопрос `[y/N]`, но если stdin не терминал (`echo | ./opsctl.py ...`) — отказ без вопроса.
 В конце — сводка «N файлов, X МБ, режим».
 
-### C10. Секрет из файла
+#### C10. Секрет из файла
 Добавь `--token-file PATH` (по умолчанию из env `API_TOKEN_FILE`). Если не задан — берёт env
 `API_TOKEN`. Убедись, что токен нигде не попадает в логи даже на `-v`.
+
+<details><summary>Ответ</summary>
+
+```python
+def read_token(args) -> str:
+    if args.token_file:
+        return Path(args.token_file).read_text(encoding="utf-8").strip()
+    token = os.environ.get("API_TOKEN")
+    if not token:
+        raise ConfigError("нет токена: --token-file / API_TOKEN_FILE / API_TOKEN")
+    return token
+```
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** В лог-файле утилиты нет ни одной строки INFO, хотя `main()` вызывает
 `logging.basicConfig(level=logging.INFO, filename="/var/log/tool.log")`. Перед этим импортируется
@@ -963,7 +922,6 @@ Dry-run должен только читать и показывать план.
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как сделать CLI для Python-скрипта?
 
 <details><summary>Ответ</summary>
@@ -985,7 +943,7 @@ Dry-run должен только читать и показывать план.
 <details><summary>Ответ</summary>
 
 DEBUG — отладка, INFO — ход работы, WARNING — необычное без остановки, ERROR — операция не удалась,
-   CRITICAL — продолжать нельзя.
+CRITICAL — продолжать нельзя.
 
 </details>
 
@@ -1010,7 +968,7 @@ DEBUG — отладка, INFO — ход работы, WARNING — необыч
 <details><summary>Ответ</summary>
 
 Дефолты в коде, общий конфиг в git, различия окружений и секреты — через env; CLI — для разовых
-   переопределений. Приоритет CLI > env > файл > дефолт.
+переопределений. Приоритет CLI > env > файл > дефолт.
 
 </details>
 
@@ -1019,7 +977,7 @@ DEBUG — отладка, INFO — ход работы, WARNING — необыч
 <details><summary>Ответ</summary>
 
 Режим, в котором утилита показывает план действий, ничего не меняя. Защищает от ошибок
-   в фильтрах и путях при разрушительных операциях.
+в фильтрах и путях при разрушительных операциях.
 
 </details>
 
@@ -1044,9 +1002,7 @@ DEBUG — отладка, INFO — ход работы, WARNING — необыч
 <details><summary>Ответ</summary>
 
 `main(argv)` + `parse_args(argv)` → вызывать из pytest с разными argv, проверять код выхода
-    и вывод через `capsys`/`caplog` (тема 08).
-
----
+и вывод через `capsys`/`caplog` (тема 08).
 
 </details>
 

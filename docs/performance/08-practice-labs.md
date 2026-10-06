@@ -1,6 +1,6 @@
 ---
 title: "08. Практика: 6 инцидентов на стенде"
-description: "Блок → Deep Linux Troubleshooting & Performance → практика."
+description: "6 инцидентов: CPU hog + flame graph, утечка до OOM, «диск полон, файлов нет», conntrack/порты, throttling в контейнере, D-state + strace"
 ---
 
 # 08. Практика: 6 инцидентов на стенде
@@ -8,7 +8,7 @@ description: "Блок → Deep Linux Troubleshooting & Performance → прак
 > Блок → Deep Linux Troubleshooting & Performance → практика.
 > Каждая лаба — маленький инцидент по одной схеме: **сломать → найти методом → доказать
 > причину командой → починить → записать мини-постмортем**. Стенд — VM `perf-lab`
-> из [00_INDEX.md](/performance/).
+> из [Performance](/performance/).
 >
 > ⚠️ Всё ниже ломает систему по-настоящему (OOM, заполненный диск, D-state, дропы пакетов).
 > **Только на VM**, перед каждой лабой — `vagrant snapshot save before_lab_N`.
@@ -28,18 +28,19 @@ description: "Блок → Deep Linux Troubleshooting & Performance → прак
 
 ## 📝 Мини-постмортем (для каждой лабы)
 
-Полный шаблон и культура blameless — в [../SRE/05_postmortems.md](/sre/05-postmortems).
+Полный шаблон и культура blameless — в [SRE: 05. Постмортемы](/sre/05-postmortems).
 Для лаб хватит короткой версии, файл `~/perf/labN/postmortem.md`:
 
 ```markdown
-# PM-lab-N: &lt;что случилось одной строкой&gt;
+# PM-lab-N: <что случилось одной строкой>
 **Симптом:**        как это увидел бы пользователь или алерт
 **Обнаружение:**    метод (60 секунд / USE / RED) и команды по порядку, с временем
 **Доказательство:** команда + фрагмент вывода, который однозначно показывает причину
 **Причина:**        триггер и сопутствующие факторы (почему не поймали раньше)
 **Фикс:**           что сделал сейчас (mitigation) и что сделать навсегда
 **Как не повторить:** алерт / лимит / тест / изменение кода — с владельцем и сроком
-```text
+```
+
 > 💡 Забрать файл с VM на хост (общей папки у стенда нет):
 > `vagrant ssh -c 'cat ~/perf/lab1/cpu.svg' > cpu.svg`.
 
@@ -79,7 +80,8 @@ class H(BaseHTTPRequestHandler):
         pass
 
 ThreadingHTTPServer(("0.0.0.0", 8000), H).serve_forever()
-```text
+```
+
 ```bash
 mkdir -p ~/perf/lab1 && cd ~/perf/lab1
 python3 -X perf app.py &            # -X perf (Python 3.12+): perf увидит имена Python-функций
@@ -103,7 +105,8 @@ sudo profile-bpfcc -F 99 -f -p $APP 30 > bpf.folded               # то же ч
 
 # уборка
 kill $(jobs -p)
-```text
+```
+
 ### Требования
 - [ ] «60 секунд» сохранены в файл (`~/perf/60s.sh`); по ним назван ресурс и процесс
 - [ ] Объяснено, почему `python3` может показывать > 100% CPU, хотя в Python есть GIL
@@ -123,7 +126,8 @@ python3 -X perf -c 'import sys; print(sys.is_stack_trampoline_active())'   # Tru
 sudo perf report -f -i ~/perf/lab1/perf.data --stdio --no-children --sort symbol | grep -m5 -E 'py::|sha|%'
 ls -l ~/perf/lab1/{cpu,py,bpf}.svg                  # три flame graph'а
 grep -E 'real' ~/perf/lab1/postmortem.md            # время 20 запросов до и после
-```text
+```
+
 ### Вопросы себе
 - Почему в `perf report` без `-g` и с `-g` доли функций разные? Что такое `self` и `children`?
 - Почему `-F 99`, а не 100? Что будет с оверхедом при `-F 10000`?
@@ -155,7 +159,8 @@ while True:
     if i % 100 == 0:
         print(f"cached {i} MiB", flush=True)
     time.sleep(0.05)                        # ~20 МиБ/с
-```text
+```
+
 ```bash
 mkdir -p ~/perf/lab2 && cd ~/perf/lab2
 
@@ -181,7 +186,8 @@ python3 ~/perf/lab2/leaky.py > /dev/null &
 sleep 1; cat /proc/$!/oom_score /proc/$!/oom_score_adj
 wait                                                   # ~3 минуты до OOM на 4 ГБ
 sudo dmesg -T | grep -B2 -A40 'invoked oom-killer' > oom-report.txt
-```text
+```
+
 ### Требования
 - [ ] По `rss.log` построен ряд RSS во времени и посчитана скорость утечки (МиБ/мин)
 - [ ] Показано, что растёт именно анонимная память (`[ anon ]` в `pmap`, `Private_Dirty`
@@ -193,7 +199,7 @@ sudo dmesg -T | grep -B2 -A40 'invoked oom-killer' > oom-report.txt
       `gfp_mask`, `order`), состояние памяти (`Mem-Info`), таблица задач (`rss`,
       `oom_score_adj`), `constraint=CONSTRAINT_NONE`, жертва и её `anon-rss`
 - [ ] Объяснено, почему убили именно этот процесс (badness = rss + swap + page tables + adj)
-- [ ] Бонус: второй процесс держит 1 ГБ (`python3 -c "x=bytearray(1<&lt;30); import time; time.sleep(3600)"`),
+- [ ] Бонус: второй процесс держит 1 ГБ (`python3 -c "x=bytearray(1<<30); import time; time.sleep(3600)"`),
       ему выставлен `oom_score_adj` 500 через `echo 500 | sudo tee /proc/PID/oom_score_adj` —
       докажи, что теперь OOM убивает его, хотя утекает не он
 - [ ] Фикс: кэш с ограничением (например, `collections.OrderedDict` с вытеснением после
@@ -206,7 +212,8 @@ head -3 ~/perf/lab2/rss.log; tail -3 ~/perf/lab2/rss.log      # рост RSS в�
 journalctl -u leaky --no-pager | grep -i 'oom'                 # «killed by the OOM killer», oom-kill
 grep -E 'constraint=|Killed process' ~/perf/lab2/oom-report.txt
 sudo dmesg -T | grep -c 'Killed process'                       # ≥ 2 (часть B и часть C)
-```text
+```
+
 ### Вопросы себе
 - Почему `free` в момент перед OOM показывает маленький `buff/cache`? Куда делся кэш?
 - Почему VM «подвисает» перед глобальным OOM, хотя свопа нет? (Подсказка: page cache
@@ -228,7 +235,7 @@ sudo dmesg -T | grep -c 'Killed process'                       # ≥ 2 (част
 sudo mkfs.ext4 -q /dev/vdb                    # второй диск стенда (4 ГБ)
 sudo mkdir -p /mnt/data && sudo mount /dev/vdb /mnt/data && sudo chown vagrant: /mnt/data
 mkdir -p ~/perf/lab3
-```text
+```
 ```python
 # ~/perf/lab3/writer.py — «сервис», который открыл лог один раз и никогда не переоткрывает
 import time
@@ -243,21 +250,22 @@ with open("/mnt/data/app.log", "a") as f:
             print(f"write failed: {e}", flush=True)
             time.sleep(1)
         time.sleep(0.05)                      # ~20 МиБ/с
-```text
+```
 ```bash
-python3 ~/perf/lab3/writer.py&gt; ~/perf/lab3/writer.out 2>&1 &
+python3 ~/perf/lab3/writer.py > ~/perf/lab3/writer.out 2>&1 &
 sleep 60; df -h /mnt/data                     # ~30% занято
 rm /mnt/data/app.log                          # «уборщик почистил логи»
 sleep 120; df -h /mnt/data; du -sh /mnt/data  # df растёт, du — пусто
 echo test > /mnt/data/new.txt                 # когда дойдёт до 100%: No space left on device
-```text
+```
+
 ### Требования
 - [ ] Показано расхождение: `df -h` против `du -sh`, и `df -i` исключён (inode есть)
 - [ ] Виновник найден двумя способами: `sudo lsof +aL1 /mnt/data` и
-      `ls -l /proc/&lt;PID&gt;/fd | grep deleted`; объяснено, что значит `NLINK 0` в выводе lsof
-- [ ] Место освобождено без рестарта: `sudo truncate -s 0 /proc/&lt;PID&gt;/fd/&lt;N&gt;`; объяснено,
+      `ls -l /proc/<PID>/fd | grep deleted`; объяснено, что значит `NLINK 0` в выводе lsof
+- [ ] Место освобождено без рестарта: `sudo truncate -s 0 /proc/<PID>/fd/<N>`; объяснено,
       почему после этого файл не растёт снова до гигабайт (режим `O_APPEND`)
-- [ ] Показано, что восстановить «удалённые» данные можно через `cp /proc/&lt;PID&gt;/fd/&lt;N&gt; …`
+- [ ] Показано, что восстановить «удалённые» данные можно через `cp /proc/<PID>/fd/<N> …`
       (пока процесс жив)
 - [ ] `pidstat -d 1` и `iostat -xz 1` показывают писателя и нагрузку на vdb
 - [ ] Постоянный фикс описан: logrotate с `copytruncate` или `create` + сигнал на переоткрытие;
@@ -272,7 +280,8 @@ df -h /mnt/data; sudo du -sh /mnt/data
 sudo lsof -nP +aL1 /mnt/data                  # после фикса: SIZE/OFF маленький
 ls -l /proc/$(pgrep -f lab3/writer.py)/fd | grep deleted
 echo ok > /mnt/data/new.txt && cat /mnt/data/new.txt
-```text
+```
+
 ### Вопросы себе
 - Что стало бы с местом, если бы писатель открыл файл без `O_APPEND` (режим `"w"`), а ты
   сделал `truncate`? Что покажут `ls -ls` и `du` про такой файл?
@@ -308,7 +317,7 @@ def handle(c):
 while True:
     conn, _ = srv.accept()
     threading.Thread(target=handle, args=(conn,), daemon=True).start()
-```text
+```
 ```python
 # ~/perf/lab4/churn.py — клиент без пула: новое соединение на каждый «запрос»
 import socket
@@ -330,7 +339,8 @@ while True:
         held.append(s)
     else:
         s.close()                   # клиент закрывает первым → TIME_WAIT на стороне клиента
-```text
+```
+
 ```bash
 mkdir -p ~/perf/lab4 && cd ~/perf/lab4 && python3 sink.py &
 
@@ -350,7 +360,8 @@ python3 churn.py hold                    # Cannot assign requested address по�
 sudo sysctl -w net.ipv4.tcp_tw_reuse=0   # по умолчанию 2: reuse только для loopback
 python3 churn.py close                   # то же, но из-за TIME_WAIT
 ss -tan state time-wait | wc -l ; ss -s
-```text
+```
+
 ### Требования
 - [ ] A: доказательство цепочкой — `conntrack -C` = `nf_conntrack_max`, в `conntrack -S`
       растёт `drop` (и/или `insert_failed`), в `dmesg` — `nf_conntrack: table full, dropping packet`
@@ -376,7 +387,8 @@ sudo dmesg -T | grep -c 'table full'                  # > 0
 python3 ~/perf/lab4/churn.py hold 2>&1 | tail -1       # «после ~100 соединений … Errno 99»
 sysctl net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse   # вернулись к 32768 60999 и 2
 sudo iptables -S INPUT | grep -c conntrack             # 0 после уборки
-```text
+```
+
 ### Вопросы себе
 - Почему conntrack вообще работает на машине без «файрвола»? Кто его включил на стенде?
 - Где в Kubernetes conntrack становится проблемой (kube-proxy, NodePort, DNS по UDP)?
@@ -420,7 +432,7 @@ class H(BaseHTTPRequestHandler):
         pass
 
 ThreadingHTTPServer(("0.0.0.0", 8080), H).serve_forever()
-```text
+```
 ```bash
 mkdir -p ~/perf/lab5 && cd ~/perf/lab5
 python3 -c "import hashlib,time; t=time.time(); hashlib.pbkdf2_hmac('sha256',b'pw',b'salt',60000); print(time.time()-t)"
@@ -436,7 +448,8 @@ docker exec burst-lim cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu.stat    # д
 lat 8081 ; lat 8082
 docker exec burst-lim cat /sys/fs/cgroup/cpu.stat                           # после: nr_throttled вырос
 docker stats --no-stream burst-free burst-lim                               # ~20% CPU — «всё хорошо»
-```text
+```
+
 ### Требования
 - [ ] До фикса: `cpu.max` = `50000 100000`; p50/p90 для `burst-free` и `burst-lim` записаны
 - [ ] Посчитано: сколько CPU-времени съедает запрос, сколько 100-мс периодов ему нужно при квоте
@@ -454,10 +467,11 @@ docker stats --no-stream burst-free burst-lim                               # ~2
 ### Критерии приёмки
 ```bash
 docker exec burst-lim sh -c 'cat /sys/fs/cgroup/cpu.max; grep -E "nr_periods|nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat'
-docker inspect burst-lim --format '&#123;&#123;.HostConfig.NanoCpus&#125;&#125;'     # после фикса 2000000000
+docker inspect burst-lim --format '{{.HostConfig.NanoCpus}}'     # после фикса 2000000000
 grep -E 'p50|p90' ~/perf/lab5/postmortem.md                      # цифры до/после
 docker rm -f burst-free burst-lim                                # уборка
-```text
+```
+
 ### Вопросы себе
 - Почему с 4 потоками на 2 vCPU запрос без лимита занимает ~100 мс, а не ~50?
 - Что изменится, если период CFS будет 10 мс вместо 100 мс?
@@ -482,7 +496,7 @@ echo "0 $SZ delay /dev/vdb 0 0" | sudo dmsetup create slowdisk      # пока �
 sudo mkfs.ext4 -q /dev/mapper/slowdisk
 sudo mkdir -p /mnt/slow && sudo mount /dev/mapper/slowdisk /mnt/slow && sudo chown vagrant: /mnt/slow
 mkdir -p ~/perf/lab6
-```text
+```
 ```python
 # ~/perf/lab6/wal.py — «база»: пишет запись, делает fsync, печатает время коммита
 import os
@@ -495,7 +509,7 @@ while True:
     os.fsync(fd)
     print(f"commit {1000 * (time.perf_counter() - t):.1f} ms", flush=True)
     time.sleep(0.2)
-```text
+```
 ```bash
 python3 ~/perf/lab6/wal.py > ~/perf/lab6/wal.log &
 W=$!; sleep 5; tail -3 ~/perf/lab6/wal.log                          # commit ~1–3 ms
@@ -522,9 +536,10 @@ sudo dmsetup resume slowdisk                                        # проце
 
 # уборка
 sudo umount /mnt/slow && sudo dmsetup remove slowdisk
-```text
+```
+
 ### Требования
-- [ ] A: в strace видно, что время уходит в `fsync` (`&lt;0.4…&gt;`), а `write` быстрый; объяснено,
+- [ ] A: в strace видно, что время уходит в `fsync` (`<0.4…>`), а `write` быстрый; объяснено,
       почему `strace -c` без `-w` показал бы fsync «дешёвым» (по умолчанию — системное время,
       а не время ожидания)
 - [ ] A: `iostat` и `biolatency` подтверждают: latency устройства ~200+ мс при почти нулевой
@@ -543,11 +558,12 @@ sudo umount /mnt/slow && sudo dmsetup remove slowdisk
 
 ### Критерии приёмки
 ```bash
-grep -E 'fsync' ~/perf/lab6/postmortem.md                  # фрагмент strace с &lt;время&gt;
+grep -E 'fsync' ~/perf/lab6/postmortem.md                  # фрагмент strace с <время>
 sudo dmesg -T | grep -c 'blocked for more than'            # ≥ 1
 sudo dmesg -T | grep -c 'Show Blocked State'               # ≥ 1
 sudo dmsetup ls                                            # после уборки: No devices found
-```text
+```
+
 ### Вопросы себе
 - Чем отличается ожидание в `fsync` от ожидания в `epoll_wait` для strace и для LA?
 - Почему `dmsetup suspend` на смонтированной ФС сначала пытается сделать sync?
@@ -558,7 +574,7 @@ sudo dmsetup ls                                            # после убор
 
 ## 🏁 Что должно остаться после блока
 
-```text
+```text:no-line-numbers
 ~/perf/
 ├── 60s.sh                        # «60 секунд» в файл — кладётся в runbook
 ├── lab1/  app.py  cpu.svg  py.svg  bpf.svg  postmortem.md
@@ -567,12 +583,11 @@ sudo dmsetup ls                                            # после убор
 ├── lab4/  sink.py  churn.py  postmortem.md
 ├── lab5/  burst.py  postmortem.md
 └── lab6/  wal.py  wal.log  postmortem.md
-```text
+```
+
 Это превращает ответ «знаю perf и cgroups» в «вот flame graph, где видно горячую функцию;
 вот OOM-отчёт, разобранный построчно; вот `cpu.stat`, где throttling съедал p90».
 
 > 🔥 Хочешь инциденты, где дан только симптом, без подсказок? —
 > `99-incidents`: особенно
 > «Сервер тормозит, вентилятор воет» и «Диск забит, но я не нахожу чем».
-
-➡️ Дальше: [09_interview.md](/softskills/09-interview)

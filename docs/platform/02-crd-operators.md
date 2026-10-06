@@ -1,6 +1,6 @@
 ---
 title: "02. CRD и операторы: API платформы и паттерн контроллера"
-description: "Блок → Platform Engineering → тема 02. Вопросы собеса: «Что такое оператор?»,"
+description: "Схема и валидация CRD (OpenAPI, CEL), status, версии, паттерн контроллера, owner references, финализаторы, готовые операторы"
 ---
 
 # 02. CRD и операторы: API платформы и паттерн контроллера
@@ -16,14 +16,14 @@ description: "Блок → Platform Engineering → тема 02. Вопросы 
 > который оператор из темы 03 будет реализовывать.
 > Версии и статусы фич — «проверь, сентябрь 2026» (стенд — `kindest/node:v1.36.4`).
 
-База «что такое CRD и оператор, зачем они» — [../Kubernetes/21_advanced_paths.md](/kubernetes/21-advanced-paths) §2.
+База «что такое CRD и оператор, зачем они» — [Kubernetes: 21. Развилка: куда дальше](/kubernetes/21-advanced-paths) §2.
 Здесь — как делать **правильно**.
 
 ---
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
   команда пишет                API-сервер                      оператор (тема 03)
  ┌──────────────┐   apply   ┌──────────────────────────┐ watch ┌──────────────────────┐
  │ LinkdApp     │ ────────► │ CRD: схема + defaults    │ ────► │ informer → cache     │
@@ -36,7 +36,8 @@ description: "Блок → Platform Engineering → тема 02. Вопросы 
         │  READY REPLICAS URL (§5)       │           Deployment · Service · HTTPRoute
         └────────────────────────────────┘           ownerReferences → LinkdApp (§8)
    удаление: deletionTimestamp → finalizer (§9) → уборка внешнего → GC детей
-```text
+```
+
 ---
 
 ## 1. CRD — это публичный API платформы
@@ -122,7 +123,8 @@ ports:
   maxItems: 16
   items: { type: integer, minimum: 1, maximum: 65535 }
   x-kubernetes-validations: [{ rule: "self.all(p, self.exists_one(q, q == p))", message: "порты не должны повторяться" }]
-```text
+```
+
 | Нюанс | Что знать |
 |-------|-----------|
 | Правила с `oldSelf` | ⭐ Вычисляются только на **update** и только если старое значение есть |
@@ -167,7 +169,8 @@ status:
   conditions:
     - { type: Ready, status: "True", reason: AllResourcesReady, observedGeneration: 3,
         message: "Deployment 2/2, HTTPRoute Accepted", lastTransitionTime: "2026-09-28T10:00:00Z" }
-```text
+```
+
 > ⭐ **Правило:** оператор ставит условие **сразу**, даже `Unknown` («Reconciling»),
 > и всегда пишет `observedGeneration`. Если `observedGeneration < generation` — статус
 > устарел, верить `Ready=True` нельзя. CI ждёт так: `kubectl wait la/shortener
@@ -206,7 +209,8 @@ conversion:
   webhook:
     conversionReviewVersions: [v1]
     clientConfig: { service: { name: linkd-operator, namespace: platform, path: /convert } }
-```text
+```
+
 | Изменение | Можно в той же версии? |
 |-----------|------------------------|
 | Новое **необязательное** поле с дефолтом | ✅ Да |
@@ -237,7 +241,7 @@ conversion:
 Контроллер — бесконечный цикл: **наблюдать → сравнить желаемое с реальным → сделать шаг
 к желаемому → записать статус**. Он не «выполняет команду создать», а **сводит мир** к spec.
 
-```text
+```text:no-line-numbers
             ┌──────────────── API-сервер ────────────────┐
             │  LinkdApp, Deployment, Service, HTTPRoute  │
             └───────▲───────────────────┬────────────────┘
@@ -252,7 +256,8 @@ conversion:
             │ очередь: дедупликация, rate limit,  │
             │ повтор с backoff при ошибке         │
             └─────────────────────────────────────┘
-```text
+```
+
 | Понятие | Что это | Почему важно |
 |---------|---------|--------------|
 | **Level-triggered** | Реакция на **текущее состояние**, а не на событие | ⭐ Пропустил событие (рестарт, сеть) — следующий reconcile всё равно приведёт к нужному |
@@ -290,7 +295,8 @@ metadata:
       uid: 6f1c…              # ⭐ по UID: пересоздали родителя с тем же именем — это другой владелец
       controller: true        # главный владелец (может быть только один)
       blockOwnerDeletion: true  # при foreground-удалении родитель ждёт этого ребёнка
-```text
+```
+
 | Правило | Суть |
 |---------|------|
 | Удалили родителя → GC удаляет детей | Оператору не нужно чистить свои Kubernetes-объекты |
@@ -313,7 +319,7 @@ Finalizer — строка в `metadata.finalizers`. Пока она есть, �
 API-сервер только ставит `deletionTimestamp`, и контроллер должен убрать за собой
 и снять finalizer.
 
-```text
+```text:no-line-numbers
 kubectl delete la shortener
    │
    ▼ API-сервер: finalizers не пуст → ставит deletionTimestamp, объект остаётся
@@ -321,7 +327,8 @@ kubectl delete la shortener
    │
    ▼ patch: убрать свой finalizer из списка
 finalizers пуст → объект удалён → GC удаляет детей по ownerReferences
-```text
+```
+
 **Нужен** — для внешних ресурсов (база в облаке, DNS-запись, бакет, запись в CMDB) и действий
 перед удалением (бэкап). **Не нужен** — для детей-объектов кластера с ownerReference: их уберёт GC.
 
@@ -342,7 +349,8 @@ kubectl api-resources --verbs=list --namespaced -o name \
 # ⚠️ крайняя мера — снять finalizer руками (внешний ресурс останется сиротой!)
 kubectl patch la shortener -n team-a --type=json \
   -p='[{"op":"remove","path":"/metadata/finalizers"}]'
-```text
+```
+
 > ⚠️ Снять finalizer руками = признать, что уборки не будет: база в облаке продолжит
 > работать и стоить денег. Сначала запиши, что осталось, и убери вручную.
 
@@ -356,7 +364,8 @@ kubectl patch la shortener -n team-a --type=json \
 
 ```bash
 kubectl get lease -n platform           # HOLDER — имя пода-лидера, RENEW — когда продлил
-```text
+```
+
 В controller-runtime (Go) — `LeaderElection: true` в менеджере. В kopf — **peering**
 (свои объекты `KopfPeering`/`ClusterKopfPeering`: работает экземпляр с высшим приоритетом,
 тема 03). Одна реплика — тоже вариант: под перезапустится, а level-triggered reconcile ничего не потеряет.
@@ -367,25 +376,26 @@ kubectl get lease -n platform           # HOLDER — имя пода-лидер�
 
 **Уровни возможностей** (Operator Framework, проверь, сентябрь 2026):
 
-```text
+```
 1 Basic Install      установить приложение, показать статус
 2 Seamless Upgrades  обновлять версию приложения и себя
 3 Full Lifecycle     бэкапы, восстановление, failover, масштабирование
 4 Deep Insights      метрики, алерты, анализ состояния
 5 Auto Pilot         сам тюнит, лечит, масштабирует (CloudNativePG расписывает возможности до этого уровня)
-```text
+```
+
 Оператор LinkdApp из темы 03 — уровень 1–2. И это нормально: ценность в том, что
 **платформенный** API короткий.
 
 Примеры в волте: **CloudNativePG** (PostgreSQL: `Cluster`, бэкапы, PITR —
-[../Storage/06_db_backup_replication.md](/storage/06-db-backup-replication) §10) и **cert-manager**
-(`Certificate`, `ClusterIssuer` — [../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §5).
+[Хранилища: 06. Бэкапы и репликация БД: PITR, Patroni, CloudNativePG](/storage/06-db-backup-replication) §10) и **cert-manager**
+(`Certificate`, `ClusterIssuer` — [Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §5).
 
 **Чек-лист «ставим чужой оператор в прод»:**
 
 | Вопрос | Почему |
 |--------|--------|
-| Матрица совместимости с версией Kubernetes | Оператор — ещё строка в плане обновления кластера ([../Kubernetes/24_cluster_lifecycle.md](/kubernetes/24-cluster-lifecycle)) |
+| Матрица совместимости с версией Kubernetes | Оператор — ещё строка в плане обновления кластера ([Kubernetes: 24. Жизненный цикл кластера](/kubernetes/24-cluster-lifecycle)) |
 | ⭐ Как обновляются CRD | Helm **не обновляет** CRD из каталога `crds/` при `upgrade` — у многих чартов отдельный шаг или флаг |
 | Область: весь кластер или namespaces | Права ClusterRole на Secret во всех namespace — это серьёзно |
 | Что будет, если оператор лежит | Работающие ресурсы живут? (у CNPG — да, база работает; failover — нет) |
@@ -411,7 +421,7 @@ kubectl get lease -n platform           # HOLDER — имя пода-лидер�
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: linkdapps.platform.example.com        # &lt;plural&gt;.&lt;group&gt;
+  name: linkdapps.platform.example.com        # <plural>.<group>
 spec:
   group: platform.example.com
   scope: Namespaced
@@ -494,7 +504,8 @@ spec:
                       lastTransitionTime: { type: string, format: date-time }
                       reason: { type: string, maxLength: 128 }
                       message: { type: string, maxLength: 1024 }
-```text
+```
+
 ```yaml
 # shortener.yaml — всё, что пишет команда
 apiVersion: platform.example.com/v1alpha1
@@ -505,11 +516,12 @@ spec:
   replicas: 2
   host: links.team-a.example.com
   database: true            # path и size — по умолчанию
-```text
+```
+
 | Поле spec | Во что превращает оператор (тема 03) |
 |-----------|--------------------------------------|
 | `image`, `replicas`, `size` | Deployment: образ, реплики, requests/limits по пресету, probes на `/healthz` и `/readyz` linkd 2.0 |
-| `host`, `path` | HTTPRoute к Gateway `web` в `infra` (Envoy Gateway, [../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §7) |
+| `host`, `path` | HTTPRoute к Gateway `web` в `infra` (Envoy Gateway, [Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §7) |
 | — | Service ClusterIP на порт приложения |
 | `database: true` | PostgreSQL для linkd: в учебной версии — Secret + ссылка на базу; в лабах — LinkdDatabase через Crossplane (namespaced XR, тема 07) |
 
@@ -526,7 +538,8 @@ kubectl create namespace team-a
 kubectl apply -f shortener.yaml
 kubectl get la -n team-a                   # READY и REPLICAS пустые — оператора нет
 kubectl get la shortener -n team-a -o yaml | grep -A4 'spec:'   # path: / и size: small — дефолты
-```text
+```
+
 **Шаг 2. Сломай валидацию** (`kubectl apply --dry-run=server`): `image: …:latest`;
 `image: localhost:5001/linkd` (почему `:5001` — не тег?); `replicas: 0` и `size: huge`;
 `database: true` + `replicas: 7` (подсвечено `spec.replicas`); `database: false` у уже
@@ -538,12 +551,13 @@ kubectl get la shortener -n team-a -o yaml | grep -A4 'spec:'   # path: / и siz
 kubectl patch la shortener -n team-a --subresource=status --type=merge -p \
  '{"status":{"observedGeneration":1,"readyReplicas":2,"url":"http://links.team-a.example.com/",
    "conditions":[{"type":"Ready","status":"True","reason":"Manual","message":"проставлено руками",
-   "lastTransitionTime":"2026-09-28T10:00:00Z"}]&#125;&#125;'
+   "lastTransitionTime":"2026-09-28T10:00:00Z"}]}}'
 kubectl get la -n team-a                   # READY True, REPLICAS 2, URL
 kubectl wait la/shortener -n team-a --for=condition=Ready --timeout=5s
-kubectl patch la shortener -n team-a --type=merge -p '{"spec":{"replicas":3&#125;&#125;'
+kubectl patch la shortener -n team-a --type=merge -p '{"spec":{"replicas":3}}'
 kubectl get la shortener -n team-a -o jsonpath='{.metadata.generation} {.status.observedGeneration}{"\n"}'  # generation больше observedGeneration
-```text
+```
+
 **Шаг 4. Зависший finalizer:** добавь `metadata.finalizers: ["platform.example.com/cleanup"]`
 (`kubectl patch --type=merge`), удали LinkdApp и namespace с `--wait=false`, найди
 `deletionTimestamp` у CR и причину в `status.conditions` namespace (команды — в §9),
@@ -596,7 +610,7 @@ kubectl get la shortener -n team-a -o jsonpath='{.metadata.generation} {.status.
 | Колонки в `kubectl get` | `additionalPrinterColumns` (+ `Age` явно) |
 | Сменить схему несовместимо | Новая версия + conversion webhook + миграция хранения |
 | Что держит namespace | `kubectl get ns x -o jsonpath='{.status.conditions}'` |
-| Кто лидер | `kubectl get lease -n &lt;ns&gt;` |
+| Кто лидер | `kubectl get lease -n <ns>` |
 
 ---
 
@@ -621,13 +635,17 @@ kubectl get la shortener -n team-a -o jsonpath='{.metadata.generation} {.status.
 12. Чужой оператор: матрица версий, обновление CRD отдельно от Helm, область прав, поведение при падении.
 13. `LinkdApp`: image, replicas, host, path, database, size → Deployment + Service + HTTPRoute (+ база).
 
-➡️ Дальше: [03_writing_operator.md](/platform/03-writing-operator) · Задачи: 02_crd_operators_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«Что такое оператор и reconcile loop?»*, *«Зачем finalizer?»*,
+> *«Namespace висит в Terminating — что делать?»* — отвечай через **механику**
+> (generation, ownerReferences, deletionTimestamp), а не «перезапущу под».
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Что такое CRD и что такое оператор? Чем CR отличается от ConfigMap с тем же YAML?
 
@@ -926,173 +944,230 @@ finalizers и порядок удаления, HA и ресурсы, метри�
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```yaml
 # B1 — CRD без status subresource
-```text
-```text:no-line-numbers
 subresources: {}
-```text
-```text:no-line-numbers
 # команда делает: kubectl apply -f la.yaml, где в файле есть status.conditions Ready=True
-```text
+```
 Вопрос: что будет со статусом? А если subresource включён?
 
-```text:no-line-numbers
+```yaml
 # B2
-```text
-```text:no-line-numbers
 spec:
-```text
-```text:no-line-numbers
   properties:
-```text
-```text:no-line-numbers
     replicas: { type: integer, default: 1 }
-```text
-```text:no-line-numbers
 # команда прислала: spec: { replcas: 3 }
-```text
+```
 Вопрос: сколько реплик будет у объекта и что увидит команда?
 
-```text:no-line-numbers
+```yaml
 # B3 — правило на поле storageClass
-```text
-```text:no-line-numbers
 x-kubernetes-validations: [{ rule: "self == oldSelf" }]
-```text
-```text:no-line-numbers
 # объект создаётся впервые с storageClass: fast
-```text
+```
 Вопрос: пройдёт ли создание? Что будет при смене на `slow`?
 
-```text:no-line-numbers
+```yaml
 # B4 — правило на spec
-```text
-```text:no-line-numbers
 x-kubernetes-validations: [{ rule: "self.tags.all(t, t.size() < 64)" }]
-```text
-```text:no-line-numbers
 properties:
-```text
-```text:no-line-numbers
   tags: { type: array, items: { type: string } }
-```text
+```
 Вопрос: что ответит API-сервер при `kubectl apply` этого CRD?
 
-```text:no-line-numbers
+```text
 # B5
-```text
-```text:no-line-numbers
 metadata.generation: 7
-```text
-```text:no-line-numbers
 status.observedGeneration: 5
-```text
-```text:no-line-numbers
 status.conditions: [{type: Ready, status: "True"}]
-```text
+```
 Вопрос: можно ли считать, что последняя версия spec выкачена?
 
-```text:no-line-numbers
+```yaml
 # B6 — ребёнок в другом namespace
-```text
-```text:no-line-numbers
 # Deployment в ns shared, ownerReference → LinkdApp в ns team-a
-```text
+```
 Вопрос: что будет при удалении LinkdApp?
 
-```text:no-line-numbers
+```bash
 # B7
-```text
-```text:no-line-numbers
 kubectl delete la shortener --cascade=orphan
-```text
+```
 Вопрос: что станет с Deployment, Service и HTTPRoute? Что сделает оператор, если LinkdApp
 создать заново с тем же именем?
 
-```text:no-line-numbers
+```text
 # B8 — оператор удалили helm uninstall; в кластере 12 LinkdApp с finalizer
-```text
-```text:no-line-numbers
 kubectl delete ns team-a
-```text
+```
 Вопрос: что увидишь и почему?
 
-```text:no-line-numbers
+```yaml
 # B9 — CRD
-```text
-```text:no-line-numbers
 versions:
-```text
-```text:no-line-numbers
   - { name: v1alpha1, served: true, storage: false }
-```text
-```text:no-line-numbers
   - { name: v1beta1,  served: true, storage: true }
-```text
-```text:no-line-numbers
 # status.storedVersions: ["v1alpha1", "v1beta1"]
-```text
+```
 Вопрос: можно ли сейчас удалить `v1alpha1` из CRD? Что сделать сначала?
 
-```text:no-line-numbers
-# B10 — две реплики оператора без leader election
 ```text
+# B10 — две реплики оператора без leader election
+```
 Вопрос: что будет происходить с Deployment и status LinkdApp?
+
+<details><summary>Ответы</summary>
+
+**B1.** Без subresource status — обычная часть объекта: команда запишет себе `Ready=True`,
+и generation будет расти от изменений статуса. С subresource изменения status через основной
+путь игнорируются — статус пишет только тот, у кого права на `/status`.
+
+**B2.** Зависит от клиента. `kubectl` по умолчанию шлёт строгую проверку полей и получит
+отказ `strict decoding error: unknown field "spec.replcas"`. Клиент без строгой проверки
+(скрипт на client library, `--validate=false`) — поле вырежется (pruning), `replicas` получит
+дефолт 1, и команда ошибки не увидит. Поэтому в CI — `kubectl apply --dry-run=server`
+со строгой проверкой.
+
+**B3.** Создание пройдёт: правила с `oldSelf` на create не вычисляются. Смена на `slow` будет
+отклонена.
+
+**B4.** CRD отклонят: список без `maxItems` и строки без `maxLength` — оценка стоимости
+правила превышает лимит. Нужно добавить `maxItems` и `maxLength`.
+
+**B5.** Нет: статус посчитан по generation 5, а spec уже 7. `Ready=True` относится к старой версии.
+
+**B6.** Cross-namespace ownerReference недопустима: GC не свяжет Deployment с владельцем
+(событие `OwnerRefInvalidNamespace`), Deployment не удалится вместе с LinkdApp или поведение
+будет неожиданным. Дети должны жить в namespace родителя.
+
+**B7.** Дети останутся без ownerReference на удалённого родителя (GC убирает ссылку). Новый
+LinkdApp — другой UID; оператор при reconcile найдёт существующие объекты по имени и, в
+зависимости от реализации, «усыновит» их (обновит и поставит ownerReference) или упадёт
+с конфликтом «уже существует».
+
+**B8.** Namespace зависнет в `Terminating`: LinkdApp получат `deletionTimestamp`, но снимать
+finalizer некому. В `status.conditions` namespace — `NamespaceFinalizersRemaining` / контент,
+который не удаляется.
+
+**B9.** Нет: объекты ещё лежат в `v1alpha1`. Сначала перезаписать все объекты (миграция хранения),
+затем обновить `status.storedVersions` CRD до `["v1beta1"]`, потом убирать версию.
+
+**B10.** Обе реплики делают reconcile: конфликты 409, лишние патчи, статус «прыгает»,
+при неидемпотентной логике — дубли ресурсов. Нужен leader election (или одна реплика).
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 CRD LinkdApp
+#### C1. 🔑 CRD LinkdApp
 Пройди мини-лабу: примени CRD из §12, создай `shortener`, проверь дефолты (`path`, `size`),
 `kubectl explain la.spec`, колонки `kubectl get la` и `-o wide`.
 
-### C2. 🔑 Сломай валидацию
+#### C2. 🔑 Сломай валидацию
 Добейся по очереди каждой ошибки: `:latest`, образ без тега (`localhost:5001/linkd`),
 `replicas: 0`, `size: huge`, `database: true` + `replicas: 7`, выключение `database`.
 Запиши точный текст каждой ошибки. Какая из них пришла от схемы, какая — от CEL?
 
-### C3. Pruning
+<details><summary>Ответ</summary>
+
+`replicas: 0` и `size: huge` — ошибки схемы (`should be greater than or equal to 1`,
+`Unsupported value`); `:latest`, «без тега», правило 5 реплик и выключение базы — CEL
+(в ответе видно `message` из правила). У `localhost:5001/linkd` последнее `:` стоит левее
+последнего `/`, значит это порт реестра, а не тег.
+
+</details>
+
+#### C3. Pruning
 Добавь в spec поле с опечаткой и примени обычным `kubectl apply`, затем с `--validate=false`.
 Что ответил API-сервер в первом случае и куда делось поле во втором? Сравни с тем, что будет,
 если в CRD на spec поставить `x-kubernetes-preserve-unknown-fields: true`.
 
-### C4. 🔑 Status и generation
+<details><summary>Ответ</summary>
+
+Обычный `apply` отклонён: `unknown field` (строгая проверка полей). С
+`--validate=false` запись проходит, поле вырезано. С `preserve-unknown-fields` оно
+сохранится в etcd — и опечатки начнут приниматься молча.
+
+</details>
+
+#### C4. 🔑 Status и generation
 Проставь status руками через `--subresource=status`, убедись, что `kubectl wait
 --for=condition=Ready` проходит. Измени spec и покажи, что `generation` ушёл вперёд
 `observedGeneration`. Попробуй записать status без `--subresource` — что вышло?
 
-### C5. Новое CEL-правило
+<details><summary>Ответ</summary>
+
+Без `--subresource=status` изменения status игнорируются (команда вернёт «patched»
+или «no change», но статус прежний).
+
+</details>
+
+#### C5. Новое CEL-правило
 Добавь в CRD поле `spec.env` (map строк, `maxProperties: 20`) и правило: ключи — только
 `[A-Z_][A-Z0-9_]*`, и нельзя задавать `DATABASE_URL` (его ставит оператор). Проверь
 `--dry-run=server`. Подсказка: для map — `self.all(k, …)` перебирает ключи.
 
-### C6. Правило с messageExpression
+<details><summary>Ответ</summary>
+
+Пример: `rule: "self.all(k, k.matches('^[A-Z_][A-Z0-9_]*$') && k != 'DATABASE_URL')"`,
+`maxProperties: 20` и `additionalProperties: { type: string, maxLength: 1024 }`.
+
+</details>
+
+#### C6. Правило с messageExpression
 Перепиши правило «не больше 5 реплик с базой» так, чтобы сообщение содержало фактическое
 число реплик. Проверь.
 
-### C7. Ratcheting
+<details><summary>Ответ</summary>
+
+`messageExpression: "'с database: true — не больше 5 реплик, сейчас ' + string(self.replicas)"`.
+
+</details>
+
+#### C7. Ratcheting
 Создай LinkdApp с `replicas: 8`. Ужесточи схему до `maximum: 5`. Попробуй: (а) поменять
 `image`, не трогая `replicas`; (б) поменять `replicas` на 7. Объясни результат.
 
-### C8. 🔑 Owner references руками
+<details><summary>Ответ</summary>
+
+(а) Пройдёт — ratcheting: невалидное поле не менялось. (б) Будет отклонено: поле
+изменено и по-прежнему невалидно.
+
+</details>
+
+#### C8. 🔑 Owner references руками
 Создай Deployment с ownerReference на свой LinkdApp (UID возьми из `kubectl get la -o
 jsonpath='{.metadata.uid}'`). Удали LinkdApp и посмотри, что стало с Deployment. Повтори
 с `--cascade=orphan` и `--cascade=foreground` (посмотри `deletionTimestamp` у родителя).
 
-### C9. Зависший namespace
+<details><summary>Ответ</summary>
+
+Без флагов (background) Deployment удалит GC. С `orphan` Deployment останется,
+ссылка на владельца исчезнет. С `foreground` у LinkdApp появится `deletionTimestamp` и
+finalizer `foregroundDeletion`, пока Deployment не удалится.
+
+</details>
+
+#### C9. Зависший namespace
 Воспроизведи шаг 4 мини-лабы. Запиши, какие условия (`type`) и сообщения показывает
 namespace. Найди все объекты, которые его держат, одной командой.
 
-### C10. Версия v1beta1 (со звёздочкой)
+#### C10. Версия v1beta1 (со звёздочкой)
 Добавь в CRD версию `v1beta1` с той же схемой (`conversion.strategy: None`), сделай её
 storage. Посмотри `status.storedVersions`. Перезапиши объекты, чтобы в etcd остались только
 `v1beta1`, и убери `v1alpha1` из `storedVersions`. Какая команда меняет `storedVersions`?
 
-### C11. Аудит чужого оператора
+<details><summary>Ответ</summary>
+
+`storedVersions` меняют через subresource status CRD, например:
+<code v-pre>kubectl patch crd linkdapps.platform.example.com --subresource=status --type=merge
+-p '{"status":{"storedVersions":\["v1beta1"\]}}'</code> — только после перезаписи всех объектов.
+
+</details>
+
+#### C11. Аудит чужого оператора
 Поставь cert-manager (или CloudNativePG) и ответь по чек-листу §11: как обновляются CRD,
 какие ClusterRole создаются, какие finalizers ставит оператор, есть ли leader election
 (`kubectl get lease -A`), что будет с ресурсами, если оператор остановить.
@@ -1100,7 +1175,6 @@ storage. Посмотри `status.storedVersions`. Перезапиши объе
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Namespace `team-b` три часа в `Terminating`. Порядок диагностики и исправления?
 
@@ -1154,7 +1228,7 @@ Helm не обновляет CRD из каталога `crds/` при `upgrade`:
 
 Неидемпотентное создание: `generateName` вместо фиксированного имени, или reconcile
 создаёт без проверки существования; события приходят несколько раз — каждый раз новый объект.
-Имя ребёнка должно быть детерминированным (`&lt;имя LinkdApp&gt;`), создание — create-or-update.
+Имя ребёнка должно быть детерминированным (`<имя LinkdApp>`), создание — create-or-update.
 
 </details>
 
@@ -1195,13 +1269,12 @@ ArgoCD с selfHeal из git, другой контроллер или втора
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Что такое оператор? Приведите пример, когда он нужен, а когда хватает Helm.
 
 <details><summary>Ответ</summary>
 
 Контроллер для своего типа, кодирующий операционные знания: failover БД, бэкапы,
-   обновления. Helm хватает, когда нужно только разложить манифесты и нет постоянного ухода.
+обновления. Helm хватает, когда нужно только разложить манифесты и нет постоянного ухода.
 
 </details>
 
@@ -1210,7 +1283,7 @@ ArgoCD с selfHeal из git, другой контроллер или втора
 <details><summary>Ответ</summary>
 
 Цикл «наблюдать → сравнить → привести → записать статус»; level-triggered, чтобы
-   пропущенные события и рестарты не теряли изменения.
+пропущенные события и рестарты не теряли изменения.
 
 </details>
 
@@ -1219,7 +1292,7 @@ ArgoCD с selfHeal из git, другой контроллер или втора
 <details><summary>Ответ</summary>
 
 Схема + CEL в CRD: быстро, без внешнего компонента и точек отказа; мало, когда нужны
-   внешние данные или сложная логика — тогда webhook.
+внешние данные или сложная логика — тогда webhook.
 
 </details>
 
@@ -1236,7 +1309,7 @@ ArgoCD с selfHeal из git, другой контроллер или втора
 <details><summary>Ответ</summary>
 
 Защита уборки внешних ресурсов перед удалением. Смотреть условия namespace, кто держит,
-   живы ли оператор и APIService; снимать руками — последнее средство.
+живы ли оператор и APIService; снимать руками — последнее средство.
 
 </details>
 
@@ -1253,7 +1326,7 @@ ownerReferences + GC-контроллер, политики Background/Foregroun
 <details><summary>Ответ</summary>
 
 Добавлять необязательные поля; несовместимое — новая версия, conversion webhook,
-   миграция хранения, deprecation-предупреждения.
+миграция хранения, deprecation-предупреждения.
 
 </details>
 
@@ -1262,7 +1335,7 @@ ownerReferences + GC-контроллер, политики Background/Foregroun
 <details><summary>Ответ</summary>
 
 Состояние — в API и status, reconcile идемпотентный и level-triggered; несколько реплик —
-   leader election.
+leader election.
 
 </details>
 
@@ -1271,7 +1344,7 @@ ownerReferences + GC-контроллер, политики Background/Foregroun
 <details><summary>Ответ</summary>
 
 Зрелые проекты (CloudNativePG, cert-manager, Prometheus Operator); проверяю матрицу
-   версий, обновление CRD, права, поведение при падении, finalizers, HA, метрики.
+версий, обновление CRD, права, поведение при падении, finalizers, HA, метрики.
 
 </details>
 
@@ -1280,9 +1353,7 @@ ownerReferences + GC-контроллер, политики Background/Foregroun
 <details><summary>Ответ</summary>
 
 Намерение, а не реализация: image, replicas, host, path, database, size; дефолты
-    и валидация; status с conditions и URL; сырой pod template не отдаю.
-
----
+и валидация; status с conditions и URL; сырой pod template не отдаю.
 
 </details>
 

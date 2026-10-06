@@ -1,6 +1,6 @@
 ---
 title: "04. Инфраструктура: Terraform, Ansible и кластер одной командой"
-description: "Цель этапа: собрать в infra/ результаты 11-blueprint (Terraform) и 06-fleet"
+description: "IaC: Terraform + Ansible, два трека деплоя"
 ---
 
 # 04. Инфраструктура: Terraform, Ansible и кластер одной командой
@@ -54,7 +54,7 @@ systemd) и современный (Kubernetes + Helm + Argo CD). Работод
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
  infra/
  ├── terraform/                 ← 11-blueprint
  │   ├── modules/
@@ -70,7 +70,8 @@ systemd) и современный (Kubernetes + Helm + Argo CD). Работод
  make infra   ─► terraform apply            ресурсы стенда вне кластера
  make vms     ─► vagrant up + ansible       VM-трек: nginx ─► linkd@web1/web2 ─► PostgreSQL@db1
  make cluster ─► kind create + bootstrap    k8s-трек (этапы 05–06)
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -80,7 +81,8 @@ systemd) и современный (Kubernetes + Helm + Argo CD). Работод
 ```bash
 cd ~/Projects/devops/11-blueprint && ./check.sh
 cd ~/Projects/devops/06-fleet && ./check.sh
-```text
+```
+
 ### 2. Перенос и `.gitignore`
 
 Раскладка — как в схеме. До первого коммита в `.gitignore`: `*.tfstate*`, `.terraform/`,
@@ -137,7 +139,7 @@ Job'ы из этапа 03 для `infra/`: `terraform fmt -check` и `validate` 
 
 - Раздел «Инфраструктура»: таблица трёх слоёв, схема из «Что получится», цели `Makefile`.
 - ADR «Terraform с docker provider вместо облака»: деньги, воспроизводимость, чем
-  пришлось заплатить, как выглядел бы переезд (расширение — в [11_demo_and_next.md](/project/11-demo-and-next)).
+  пришлось заплатить, как выглядел бы переезд (расширение — в [11. Финальный прогон, демо и развитие](/project/11-demo-and-next)).
 - ADR «Два трека деплоя»: зачем в портфолио и ВМ, и кластер.
 
 ### 7. Коммит
@@ -145,7 +147,8 @@ Job'ы из этапа 03 для `infra/`: `terraform fmt -check` и `validate` 
 ```bash
 git add infra Makefile README.md docs/adr .gitignore
 git commit -m "infra: terraform, ansible VM track and kind cluster config"
-```text
+```
+
 ---
 
 ## ✅ Критерии приёмки
@@ -196,23 +199,23 @@ git commit -m "infra: terraform, ansible VM track and kind cluster config"
 
 ## 📚 Теория в волте
 
-- IaC и Terraform vs Ansible: [../Left/06_Terraform/01_iac_intro.md](/terraform/01-iac-intro),
-  [../Ansible/01_ansible_intro.md](/ansible/01-ansible-intro)
-- Terraform: [../Left/06_Terraform/02_terraform_basics.md](/terraform/02-terraform-basics),
-  [../Left/06_Terraform/03_state_backend.md](/terraform/03-state-backend),
-  [../Left/06_Terraform/04_variables_outputs.md](/terraform/04-variables-outputs),
-  [../Left/06_Terraform/05_modules.md](/terraform/05-modules),
-  [../Left/06_Terraform/06_workflow_cicd.md](/terraform/06-workflow-cicd)
-- S3 и объектные хранилища: [../Left/04_Cloud/04_s3_storage.md](/cloud/04-s3-storage)
-- Ansible: [../Ansible/03_inventory.md](/ansible/03-inventory),
-  [../Ansible/09_handlers_idempotency.md](/ansible/09-handlers-idempotency),
-  [../Ansible/11_roles.md](/ansible/11-roles),
-  [../Ansible/12_vault.md](/ansible/12-vault),
-  [../Ansible/13_best_practices.md](/ansible/13-best-practices)
-- systemd-юниты: [../Linux/13_init.md](/linux/13-init)
-- PostgreSQL на сервере: [../Left/01_Databases/02_pg_install.md](/databases/02-pg-install),
-  [../Left/01_Databases/03_pg_hba_access.md](/databases/03-pg-hba-access)
-- SSH и hardening: [../Network/08_ssh.md](/network/08-ssh)
-- Способы развернуть кластер: [../Kubernetes/16_cluster_deployment.md](/kubernetes/16-cluster-deployment)
+- IaC и Terraform vs Ansible: [Terraform: 01. Infrastructure as Code](/terraform/01-iac-intro),
+  [Ansible: 01. Введение в Ansible](/ansible/01-ansible-intro)
+- Terraform: [Terraform: 02. Terraform: основы](/terraform/02-terraform-basics),
+  [Terraform: 03. State и backend](/terraform/03-state-backend),
+  [Terraform: 04. Переменные и outputs](/terraform/04-variables-outputs),
+  [Terraform: 05. Модули](/terraform/05-modules),
+  [Terraform: 06. Workflow и CI/CD](/terraform/06-workflow-cicd)
+- S3 и объектные хранилища: [Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage)
+- Ansible: [Ansible: 03. Inventory](/ansible/03-inventory),
+  [Ansible: 09. Handlers и идемпотентность](/ansible/09-handlers-idempotency),
+  [Ansible: 11. Роли](/ansible/11-roles),
+  [Ansible: 12. Ansible Vault](/ansible/12-vault),
+  [Ansible: 13. Best practices, отладка, CI/CD](/ansible/13-best-practices)
+- systemd-юниты: [Linux: 13. Init: systemd](/linux/13-init)
+- PostgreSQL на сервере: [Базы данных: 02. PostgreSQL: установка и устройство](/databases/02-pg-install),
+  [Базы данных: 03. Доступ: pg_hba.conf, роли и права](/databases/03-pg-hba-access)
+- SSH и hardening: [Сети: 08. SSH](/network/08-ssh)
+- Способы развернуть кластер: [Kubernetes: 16. Развёртывание кластера](/kubernetes/16-cluster-deployment)
 
-➡️ Следующий этап: [05_kubernetes_helm.md](/project/05-kubernetes-helm)
+➡️ Следующий этап: [05. Kubernetes и Helm: чарт linkd 2.0 и данные в кластере](/project/05-kubernetes-helm)

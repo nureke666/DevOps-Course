@@ -1,14 +1,14 @@
 ---
 title: "06. Progressive delivery: Argo Rollouts, анализ метрик, feature flags"
-description: "Блок → Platform Engineering → безопасная выкатка. Стратегии (rolling, blue-green, canary)"
+description: "Argo Rollouts: canary и blue-green, AnalysisTemplate на Prometheus, трафик через Gateway API, автооткат; Flagger; feature flags"
 ---
 
 # 06. Progressive delivery: Argo Rollouts, анализ метрик, feature flags
 
 > Блок → Platform Engineering → **безопасная выкатка**. Стратегии (rolling, blue-green, canary)
-> на уровне идеи — [../CICD/03_pipeline_design.md](/cicd/03-pipeline-design) §7–8,
-> обзор Rollouts/Flagger — [../Kubernetes/21_advanced_paths.md](/kubernetes/21-advanced-paths) §6,
-> SLI и пороги — [../SRE/02_sli_slo_error_budget.md](/sre/02-sli-slo-error-budget).
+> на уровне идеи — [CI/CD: 03. Проектирование пайплайна](/cicd/03-pipeline-design) §7–8,
+> обзор Rollouts/Flagger — [Kubernetes: 21. Развилка: куда дальше](/kubernetes/21-advanced-paths) §6,
+> SLI и пороги — [SRE: 02. SLI, SLO и error budget](/sre/02-sli-slo-error-budget).
 > Вопросы собеса: *«Как вы выкатываете без простоя и страха?»*, *«Что будет, если canary плохая?»*,
 > *«Чем деплой отличается от релиза?»*
 > **После темы ты умеешь:** заменить Deployment на Rollout, вести canary через HTTPRoute
@@ -21,7 +21,7 @@ description: "Блок → Platform Engineering → безопасная вык�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  git: linkd:2.1 ──► ArgoCD ──► Rollout (вместо Deployment) ──► новая ревизия шаблона пода
                                   │ Argo Rollouts: ReplicaSet stable + canary, шаги
                                   │ setWeight 20 → pause → 50 → analysis → 100
@@ -30,7 +30,8 @@ description: "Блок → Platform Engineering → безопасная вык�
  HTTPRoute: stable 80 / canary 20 ◄── Envoy Gateway        ▼
                                            abort: веса 100/0, canary в 0, Rollout Degraded
  рядом: флаг OpenFeature + flagd включает функцию 5% пользователей независимо от деплоя
-```text
+```
+
 ---
 
 ## 1. Почему canary нужен анализ
@@ -59,12 +60,13 @@ Canary без автоматической проверки — **просто �
 **Argo Rollouts v1.10.0** (08.2026; проверь) — контроллер и CRD `argoproj.io/v1alpha1`:
 `Rollout`, `AnalysisTemplate`, `ClusterAnalysisTemplate`, `AnalysisRun`, `Experiment`.
 
-```text
+```text:no-line-numbers
  Rollout linkd (spec.template = шаблон пода, как у Deployment)
     ├── ReplicaSet linkd-6f7c9 (stable, ревизия 3)  ◄── Service linkd-stable (селектор + hash)
     └── ReplicaSet linkd-8d2b1 (canary, ревизия 4)  ◄── Service linkd-canary (селектор + hash)
                метка rollouts-pod-template-hash — её контроллер дописывает в селекторы Service
-```text
+```
+
 - **Rollout заменяет Deployment**: те же `replicas`, `selector`, `template`, но вместо
   `strategy: RollingUpdate` — `canary` или `blueGreen`. ReplicaSet'ами управляет контроллер Rollouts.
 - **Новая ревизия** появляется при изменении `spec.template` (образ, env, ресурсы). Изменение
@@ -82,7 +84,8 @@ kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/rele
 curl -LO https://github.com/argoproj/argo-rollouts/releases/download/v1.10.0/kubectl-argo-rollouts-linux-amd64
 install -m 755 kubectl-argo-rollouts-linux-amd64 ~/.local/bin/kubectl-argo-rollouts
 kubectl argo rollouts version
-```text
+```
+
 ---
 
 ## 3. Canary: шаги
@@ -101,7 +104,8 @@ strategy:
       - analysis:                      # inline: шаг не пройдёт, пока анализ не завершится
           templates: [{ templateName: linkd-p95 }]
     # после последнего шага — 100% и canary становится stable
-```text
+```
+
 | Шаг | Что делает |
 |-----|------------|
 | `setWeight: N` | Доля трафика в canary; с trafficRouting — вес в маршруте, без него — доля подов (5 реплик → шаг 20%) |
@@ -129,7 +133,8 @@ data:
   trafficRouterPlugins: |-
     - name: "argoproj-labs/gatewayAPI"
       location: "https://github.com/argoproj-labs/rollouts-plugin-trafficrouter-gatewayapi/releases/download/v0.17.0/gatewayapi-plugin-linux-amd64"
-```text
+```
+
 ```bash
 kubectl apply -f rollouts-plugin.yaml
 # 2. права на маршруты (на services у контроллера права уже есть)
@@ -139,9 +144,10 @@ kubectl create clusterrolebinding argo-rollouts-gatewayapi --clusterrole=argo-ro
   --serviceaccount=argo-rollouts:argo-rollouts
 kubectl -n argo-rollouts rollout restart deploy/argo-rollouts
 kubectl -n argo-rollouts logs deploy/argo-rollouts | grep -i "plugin"   # Downloading plugin ... Download complete
-```text
+```
+
 > ⚠️ Контроллер **скачивает** плагин с GitHub при старте. В закрытом контуре — init-контейнер
-> с образом `ghcr.io/argoproj-labs/rollouts-plugin-trafficrouter-gatewayapi:&lt;версия&gt;` и
+> с образом `ghcr.io/argoproj-labs/rollouts-plugin-trafficrouter-gatewayapi:<версия>` и
 > `location: file:///plugins/...` (значения Helm-чарта `controller.initContainers`, `trafficRouterPlugins`).
 
 ```yaml
@@ -163,12 +169,13 @@ spec:
         argoproj-labs/gatewayAPI:
           httpRoute: linkd             # или httpRoutes: [{ name: ... }] — несколько маршрутов
           namespace: linkd
-```text
+```
+
 Во время выкатки плагин ставит на маршрут метку `rollouts.argoproj.io/gatewayapi-canary=in-progress`
 (`kubectl get httproute -A -l rollouts.argoproj.io/gatewayapi-canary` — «где сейчас идут canary»).
 
 > 💡 Тот же плагин управляет и **GAMMA**-маршрутом (HTTPRoute с `parentRefs` на Service) —
-> canary для внутренних вызовов через mesh из [05_gateway_mesh.md](/platform/05-gateway-mesh).
+> canary для внутренних вызовов через mesh из [05. Gateway API глубже и service mesh](/platform/05-gateway-mesh).
 
 ---
 
@@ -176,7 +183,7 @@ spec:
 
 Чтобы мерить **только canary**, метрики должны нести метку ReplicaSet. Rollouts ставит на поды
 `rollouts-pod-template-hash`; ServiceMonitor переносит её в метрики через `podTargetLabels`
-(как устроен ServiceMonitor — [../Left/02_Monitoring/11_long_term_and_operator.md](/monitoring/11-long-term-and-operator) §8–9).
+(как устроен ServiceMonitor — [Мониторинг: 11. Долгое хранение и Operator](/monitoring/11-long-term-and-operator) §8–9).
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -186,7 +193,8 @@ spec:
   selector: { matchLabels: { app.kubernetes.io/name: linkd } }   # отдельный Service linkd-metrics
   podTargetLabels: [rollouts-pod-template-hash]   # → метка rollouts_pod_template_hash в метриках
   endpoints: [{ port: http, path: /metrics, interval: 15s }]
-```text
+```
+
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
@@ -206,11 +214,11 @@ spec:
           query: |
             sum(rate(linkd_http_requests_total{namespace="linkd", code!~"5..",
                 path!~"/healthz|/readyz|/metrics",
-                rollouts_pod_template_hash="&#123;&#123;args.canary-hash&#125;&#125;"}[1m]))
+                rollouts_pod_template_hash="{{args.canary-hash}}"}[1m]))
             /
             sum(rate(linkd_http_requests_total{namespace="linkd",
                 path!~"/healthz|/readyz|/metrics",
-                rollouts_pod_template_hash="&#123;&#123;args.canary-hash&#125;&#125;"}[1m]))
+                rollouts_pod_template_hash="{{args.canary-hash}}"}[1m]))
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
@@ -228,8 +236,9 @@ spec:
           address: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
           query: |
             histogram_quantile(0.95, sum by (le) (rate(linkd_request_duration_seconds_bucket{
-              namespace="linkd", path="/r/:code", rollouts_pod_template_hash="&#123;&#123;args.canary-hash&#125;&#125;"}[2m])))
-```text
+              namespace="linkd", path="/r/:code", rollouts_pod_template_hash="{{args.canary-hash}}"}[2m])))
+```
+
 | Поле | Смысл | По умолчанию |
 |------|-------|--------------|
 | `interval` | Как часто мерить | Нет — один замер |
@@ -270,7 +279,8 @@ strategy:
       - analysis:                      # INLINE: блокирует шаг до результата
           templates: [{ templateName: linkd-p95 }]
           args: [{ name: canary-hash, valueFrom: { podTemplateHashValue: Latest } }]
-```text
+```
+
 | | Фоновый (`strategy.canary.analysis`) | Inline (шаг `analysis`) |
 |---|------------------------------|--------------------------|
 | Когда идёт | Параллельно шагам, до конца выкатки | Только на этом шаге |
@@ -297,7 +307,8 @@ strategy:
       templates: [{ templateName: linkd-success-rate }]
       args: [{ name: canary-hash, valueFrom: { podTemplateHashValue: Latest } }]
     scaleDownDelaySeconds: 60          # старую версию держим минуту — мгновенный откат
-```text
+```
+
 `linkd-smoke` — AnalysisTemplate с провайдером **`job`**: анализ успешен, если Job завершился
 с кодом 0. Внутри — `curlimages/curl`: `curl -fsS http://linkd-preview.linkd/readyz` и `POST /api/links`
 на preview. Так проверяют версию, на которую ещё не идёт пользовательский трафик.
@@ -330,20 +341,21 @@ spec:
       jqPathExpressions: [".spec.rules[].backendRefs[].weight"]
   syncPolicy:
     syncOptions: [RespectIgnoreDifferences=true]   # не затирать при sync
-```text
+```
+
 - ⭐ **Откат в GitOps.** После abort кластер снова на stable, но в git по-прежнему плохой образ:
   ArgoCD `Synced`, Rollout `Degraded`. Настоящий откат — `git revert` коммита с образом;
   `kubectl argo rollouts undo` в GitOps — временная мера, ArgoCD её перезапишет.
 - Уведомления о шагах и провалах — Argo Rollouts notifications (Slack, Telegram webhook).
 
-Подробно про Application и sync — [../Left/07_ArgoCD/03_application.md](/argocd/03-application).
+Подробно про Application и sync — [ArgoCD: 03. Application: синхронизация и здоровье](/argocd/03-application).
 
 ---
 
 ## 🧪 Мини-лаба: canary linkd с анализом и автооткатом
 
-Стенд: кластер `platform` из [00_INDEX.md](/platform/), Envoy Gateway и Gateway `web`
-в `infra` с `allowedRoutes: All` ([../Kubernetes/12_ingress.md](/kubernetes/12-ingress) §7.3),
+Стенд: кластер `platform` из [Platform Engineering](/platform/), Envoy Gateway и Gateway `web`
+в `infra` с `allowedRoutes: All` ([Kubernetes: 12. Ingress и Ingress Controller](/kubernetes/12-ingress) §7.3),
 kube-prometheus-stack релизом `prometheus` в `monitoring`, образ `linkd:2.0.0` в kind (см. тему 05),
 Argo Rollouts + плагин + RBAC (§2, §4).
 
@@ -379,11 +391,13 @@ spec:
         plugins: { argoproj-labs/gatewayAPI: { httpRoute: linkd, namespace: linkd } }
       analysis: { ... }                # фоновый success-rate — из §5
       steps: [...]                     # шаги и inline-analysis — из §5 «Фоновый и inline-анализ»
-```text
+```
+
 ```bash
 kubectl apply -f rollout-lab.yaml
 kubectl argo rollouts get rollout linkd -n linkd --watch      # держи в отдельном окне
-```text
+```
+
 **Шаг 2. Нагрузка** — ~20 RPS через Gateway (404 на несуществующий код — это не ошибка сервиса):
 
 ```bash
@@ -392,7 +406,8 @@ ENVOY=$(kubectl get svc -n envoy-gateway-system \
   -o jsonpath='{.items[0].metadata.name}')
 kubectl -n linkd run load --image=curlimages/curl --command -- sh -c \
   "while true; do curl -s -o /dev/null -H 'Host: linkd.local' http://$ENVOY.envoy-gateway-system/r/nope; sleep 0.05; done"
-```text
+```
+
 **Шаг 3. Хороший релиз.** Меняем шаблон пода — новая ревизия:
 
 ```bash
@@ -401,15 +416,17 @@ kubectl -n linkd patch rollout linkd --type=json \
   -p='[{"op":"add","path":"/spec/template/spec/containers/0/env","value":[{"name":"LINKD_LOG_FORMAT","value":"json"}]}]'
 kubectl get httproute linkd -n linkd -o jsonpath='{.spec.rules[0].backendRefs[*].weight}{"\n"}'   # 80 20
 kubectl -n linkd get analysisrun                          # Running → Successful
-```text
+```
+
 Через ~6 минут ревизия 2 — stable, веса снова `100 0`, метка `in-progress` с маршрута снята.
 
 **Шаг 4. Плохой релиз — 30% ответов 500 на `/r/*`:**
 
 ```bash
 kubectl -n linkd patch rollout linkd --type=json \
-  -p='[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"LINKD_FAULT_ERROR_RATE","value":"0.3"&#125;&#125;]'
-```text
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"LINKD_FAULT_ERROR_RATE","value":"0.3"}}]'
+```
+
 Смотри в окне `--watch`: canary получает 20%, через 30–90 с `success-rate` проваливается
 (≈ 0,7 < 0,99), AnalysisRun `Failed`, Rollout — `Degraded`, веса `100 0`, canary-поды уходят.
 Ошибки видели ~20% запросов в течение минуты-двух — это и есть **радиус поражения** canary.
@@ -417,7 +434,8 @@ kubectl -n linkd patch rollout linkd --type=json \
 ```bash
 kubectl -n linkd describe analysisrun $(kubectl -n linkd get analysisrun -o name | tail -1 | cut -d/ -f2) | grep -A5 "Measurements"
 kubectl argo rollouts status linkd -n linkd               # Degraded: RolloutAborted
-```text
+```
+
 **Шаг 5. Починка.** Убери `LINKD_FAULT_ERROR_RATE` из шаблона (в жизни — `git revert`), выкатка
 пойдёт заново. Попробуй `kubectl argo rollouts promote linkd -n linkd` на паузе и
 `promote --full` — чем они отличаются?
@@ -426,7 +444,7 @@ kubectl argo rollouts status linkd -n linkd               # Degraded: RolloutAbo
 Что будет, если убрать нагрузку из шага 2 и выкатить плохой релиз? Сколько времени прошло
 от выкатки до abort и из чего оно сложилось (`initialDelay`, `interval`, окно `rate`, `failureLimit`)?
 
-Уборка: `kubectl delete ns linkd`; `kubectl delete -n argo-rollouts -f &lt;install.yaml&gt;`.
+Уборка: `kubectl delete ns linkd`; `kubectl delete -n argo-rollouts -f <install.yaml>`.
 
 ---
 
@@ -453,7 +471,7 @@ kubectl argo rollouts status linkd -n linkd               # Degraded: RolloutAbo
 | | Argo Rollouts | Flagger |
 |---|---------------|---------|
 | Что пишет команда | Rollout **вместо** Deployment (или `workloadRef`) | Обычный Deployment + CRD `Canary` рядом |
-| Как устроено | Контроллер ведёт ReplicaSet'ы и веса по шагам | Создаёт копию `&lt;name&gt;-primary`, гоняет трафик между primary и canary, в конце копирует шаблон в primary |
+| Как устроено | Контроллер ведёт ReplicaSet'ы и веса по шагам | Создаёт копию `<name>-primary`, гоняет трафик между primary и canary, в конце копирует шаблон в primary |
 | Шаги | Явный список `steps` | `stepWeight`, `maxWeight`, `interval`, `threshold` |
 | Метрики | AnalysisTemplate: Prometheus, Datadog, CloudWatch, Job, Web, плагины | Встроенные `request-success-rate`/`request-duration` для провайдеров + `MetricTemplate` |
 | Трафик | Istio, SMI, ALB, NGINX, Traefik, Gateway API (плагин) и др. | Istio, Linkerd, Contour, Gloo, NGINX, Gateway API и др. |
@@ -498,7 +516,8 @@ Canary проверяет **бинарник**: не падает ли нова�
     }
   }
 }
-```text
+```
+
 ```python
 # linkd: pip install openfeature-sdk openfeature-provider-flagd
 from openfeature import api
@@ -513,10 +532,11 @@ def new_code(user_id: str, email: str) -> str:
     if flags.get_boolean_value("linkd-readable-codes", False, ctx):   # False — если flagd недоступен
         return readable_code()
     return random_code()
-```text
+```
+
 Локально: `docker run --rm -p 8013:8013 -v $(pwd):/etc/flagd ghcr.io/open-feature/flagd:latest
 start --uri file:./etc/flagd/flags.json`, проверка — `POST localhost:8013/flagd.evaluation.v2.Service/ResolveBoolean`
-с телом `{"flagKey":"linkd-readable-codes","context":{"targetingKey":"u42"&#125;&#125;`.
+с телом <code v-pre>{"flagKey":"linkd-readable-codes","context":{"targetingKey":"u42"}}</code>.
 
 - `fractional` делит по хешу `targetingKey`: пользователь стабильно в одной группе.
 - Дефолт в коде (`False`) — поведение при недоступном flagd: безопасный вариант.
@@ -539,7 +559,7 @@ start --uri file:./etc/flagd/flags.json`, проверка — `POST localhost:8
 | ArgoCD `selfHeal` без `ignoreDifferences` | Веса возвращаются в 100/0 посреди выкатки | `ignoreDifferences` на `weight` + `RespectIgnoreDifferences` |
 | Abort — и всё, «откатили» | В git плохой образ, следующий sync снова начнёт выкатку | `git revert`, алерт на `Degraded` |
 | Плагин не скачался (нет интернета) | Rollout завис, в логах контроллера ошибка загрузки | init-контейнер с образом плагина |
-| Миграция БД ломает stable | Canary 20%, но новая схема уже сломала старую версию | Expand/contract-миграции ([../Left/01_Databases/13_schema_migrations.md](/databases/13-schema-migrations)) |
+| Миграция БД ломает stable | Canary 20%, но новая схема уже сломала старую версию | Expand/contract-миграции ([Базы данных: 13. Миграции схемы](/databases/13-schema-migrations)) |
 
 ---
 
@@ -593,13 +613,16 @@ start --uri file:./etc/flagd/flags.json`, проверка — `POST localhost:8
 12. Flagger — то же для мира Flux, работает рядом с Deployment через `-primary`.
 13. ⭐ Deploy ≠ release: OpenFeature + flagd включают функцию сегменту без деплоя; у флага есть срок жизни.
 
-➡️ Дальше: [07_crossplane_self_service.md](/platform/07-crossplane-self-service) · Задачи: 06_progressive_delivery_tasks.md
+---
 
+## Задачи
+
+> ⭐ Вопросы собеса: *«Как вы выкатываете?»*, *«Что будет, если canary плохая?»*,
+> *«Deploy и release — это одно и то же?»* — сильный ответ содержит метрику, порог и время до отката.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Почему canary без автоматического анализа называют «медленным деплоем»?
 
@@ -807,7 +830,7 @@ Abort вернул трафик на stable, но желаемое состоя�
 
 <details><summary>Ответ</summary>
 
-Flagger оставляет обычный Deployment и CRD `Canary` рядом, создаёт копию `&lt;name&gt;-primary`,
+Flagger оставляет обычный Deployment и CRD `Canary` рядом, создаёт копию `<name>-primary`,
 гоняет трафик между primary и canary и в конце копирует шаблон в primary. Метрики — встроенные для
 провайдеров + `MetricTemplate`, ворота и нагрузка — webhooks. Argo Rollouts заменяет Deployment
 на Rollout со списком шагов и интегрирован с ArgoCD.
@@ -847,188 +870,213 @@ OpenFeature — вендор-нейтральный API флагов с SDK дл
 
 ### Блок B. «Что произойдёт»
 
-
-```text:no-line-numbers
+```yaml
 # B1
-```text
-```text:no-line-numbers
 replicas: 4
-```text
-```text:no-line-numbers
 strategy:
-```text
-```text:no-line-numbers
   canary:
-```text
-```text:no-line-numbers
     steps: [{ setWeight: 10 }, { pause: {} }]
-```text
-```text:no-line-numbers
 # trafficRouting не задан
-```text
+```
 Вопрос: сколько подов canary и какая доля трафика на паузе?
 
-```text:no-line-numbers
+```yaml
 # B2 — изменили только replicas: 5 → 8
-```text
+```
 Вопрос: начнётся ли canary с шагами?
 
-```text:no-line-numbers
+```yaml
 # B3 — анализ
-```text
-```text:no-line-numbers
 interval: 30s
-```text
-```text:no-line-numbers
 failureLimit: 2
-```text
-```text:no-line-numbers
 successCondition: result[0] >= 0.99
-```text
-```text:no-line-numbers
 # замеры: 0.995, 0.97, 0.99, 0.96, 0.98
-```text
+```
 Вопрос: на каком замере анализ провалится?
 
-```text:no-line-numbers
+```yaml
 # B4
-```text
-```text:no-line-numbers
 successCondition: result[0] >= 0.99
-```text
-```text:no-line-numbers
 # canary получает 0 запросов: Prometheus возвращает NaN
-```text
+```
 Вопрос: что будет с замером? А если запрос вернул пустой вектор?
 
-```text:no-line-numbers
+```yaml
 # B5 — inline-шаг
-```text
-```text:no-line-numbers
 - analysis:
-```text
-```text:no-line-numbers
     templates: [{ templateName: linkd-p95 }]
-```text
-```text:no-line-numbers
 # в шаблоне: interval: 30s, count не задан
-```text
+```
 Вопрос: что будет с выкаткой?
 
-```text:no-line-numbers
+```promql
 # B6 — анализ без метки ReplicaSet, 5 реплик, canary 1 под при 20% трафика
-```text
-```text:no-line-numbers
 sum(rate(linkd_http_requests_total{code=~"5.."}[1m])) / sum(rate(linkd_http_requests_total[1m]))
-```text
-```text:no-line-numbers
 # canary отдаёт 30% ошибок, stable — 0%
-```text
+```
 Вопрос: что покажет запрос и заметит ли анализ проблему с порогом «ошибок < 5%»?
 
-```text:no-line-numbers
+```yaml
 # B7 — ArgoCD Application linkd: selfHeal: true, ignoreDifferences не задан
-```text
-```text:no-line-numbers
 # идёт canary, плагин поставил веса 80/20
-```text
+```
 Вопрос: что будет через минуту?
 
-```text:no-line-numbers
+```bash
 # B8 — анализ провалился, Rollout Degraded, в git остался образ linkd:2.1
-```text
-```text:no-line-numbers
 argocd app sync linkd
-```text
+```
 Вопрос: что случится?
 
-```text:no-line-numbers
+```yaml
 # B9 — blue-green
-```text
-```text:no-line-numbers
 autoPromotionEnabled: false
-```text
-```text:no-line-numbers
 prePromotionAnalysis: { templates: [{ templateName: linkd-success-rate }] }
-```text
-```text:no-line-numbers
 # success-rate считает долю не-5xx у preview-подов по боевому трафику
-```text
+```
 Вопрос: почему анализ, скорее всего, провалится или будет бессмысленным?
 
-```text:no-line-numbers
+```json
 // B10 — flagd
-```text
-```text:no-line-numbers
 "targeting": { "fractional": [["on", 5], ["off", 95]] }
-```text
-```text:no-line-numbers
 // в коде: get_boolean_value("f", False, EvaluationContext())  — без targeting_key
-```text
+```
 Вопрос: будет ли пользователь стабильно в одной группе?
+
+<details><summary>Ответы</summary>
+
+**B1.** 1 canary-под из 4 (ceil 10% от 4 = 1), stable — 3: фактически ~25% трафика вместо 10%.
+
+**B2.** Нет: `replicas` — не часть шаблона пода, новой ревизии нет; Rollout просто масштабируется.
+
+**B3.** Провалы — 2-й (0.97) и 4-й (0.96); третий провал — 5-й (0.98 < 0.99). При `failureLimit: 2`
+анализ Failed на 5-м замере (провалов стало больше 2).
+
+**B4.** NaN → сравнение ложно → замер Failed. Пустой вектор → `result[0]` не существует → ошибка
+замера (Error), считается в `consecutiveErrorLimit`.
+
+**B5.** Без `count` inline-анализ никогда не завершится успешно: шаг и выкатка будут висеть,
+пока анализ не провалится или не вмешается человек.
+
+**B6.** Canary получает 20% трафика с 30% ошибок → общая доля ≈ 6%. Порог 5% сработает впритык,
+а при 10% трафика (3%) — нет. Смешанная метрика размывает проблему; мерить нужно canary-поды.
+
+**B7.** ArgoCD увидит дрейф в весах и вернёт `100/0` из git: canary останется без трафика
+или будет «дёргаться». Нужен `ignoreDifferences` на `weight`.
+
+**B8.** Rollout уже с этим шаблоном — синхронизация ничего не поменяет, Rollout останется `Degraded`
+(или выкатка повторится после `retry`). Откат — `git revert` на прошлый образ.
+
+**B9.** На preview нет боевого трафика: доля не-5xx — NaN или по крохам от тестов. Для
+`prePromotionAnalysis` нужен смоук-тест (провайдер `job`) или синтетическая нагрузка на preview,
+а метрики боевого трафика — в `postPromotionAnalysis`.
+
+**B10.** Нет: без `targeting_key` у `fractional` нет стабильного ключа для хеша, пользователь может
+попадать в разные группы. Нужен `targeting_key` (ID пользователя).
+
+</details>
 
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Rollouts и плагин
+#### C1. 🔑 Rollouts и плагин
 Поставь Argo Rollouts v1.10.0, kubectl-плагин и плагин Gateway API v0.17.0 на стенд.
 Найди в логах контроллера строку о загрузке плагина. Проверь права:
 `kubectl auth can-i patch httproutes --as=system:serviceaccount:argo-rollouts:argo-rollouts -n linkd`.
 
-### C2. 🔑 Canary с весами
+#### C2. 🔑 Canary с весами
 Разверни linkd как Rollout из мини-лабы без анализа (только шаги). Выкати новую ревизию
 и на каждом шаге проверь веса в HTTPRoute и число подов canary. Пройди паузу `promote`.
 
-### C3. Без роутера
+#### C3. Без роутера
 Удали `trafficRouting`, поставь 3 реплики и `setWeight: 10`. Посчитай curl'ом долю ответов
 новой версии (отличи версии переменной `LINKD_FAULT_LATENCY_MS=200` и `time_total`).
 
-### C4. 🔑 Анализ и автооткат
+<details><summary>Ответ</summary>
+
+Около 1/3 ответов с задержкой 200 мс — вес превратился в долю подов.
+
+</details>
+
+#### C4. 🔑 Анализ и автооткат
 Добавь ServiceMonitor с `podTargetLabels`, AnalysisTemplate success-rate и нагрузку.
 Выкати ревизию с `LINKD_FAULT_ERROR_RATE=0.3`. Запиши: время от выкатки до abort,
 замеры AnalysisRun, долю ошибок, которую видели клиенты.
 
-### C5. Латентность
+<details><summary>Ответ</summary>
+
+Типично: 1–2 минуты от выкатки до abort (`initialDelay` 30 с + `interval` 30 с × (`failureLimit` + 1)
++ окно `rate[1m]`); клиенты видели ~20% × 30% ≈ 6% ошибок за это время.
+
+</details>
+
+#### C5. Латентность
 Выкати ревизию с `LINKD_FAULT_LATENCY_MS=400` и inline-анализом p95 < 250 мс. Проверь, что
 success-rate проходит, а p95 — нет. Объясни, почему для порога 250 мс важно наличие корзины `0.25`.
 
-### C6. dryRun
+<details><summary>Ответ</summary>
+
+Доля успешных — 100% (ошибок нет), p95 ≈ 0,4 с > 0,25 → inline-анализ Failed → abort.
+
+</details>
+
+#### C6. dryRun
 Включи `dryRun` для метрики success-rate и повтори C4. Что изменилось в поведении и в статусе
 AnalysisRun?
 
-### C7. 🔑 Blue-green
+<details><summary>Ответ</summary>
+
+Метрика считается и видна в AnalysisRun, но её провал не влияет на результат: выкатка
+дошла до 100%. Так подбирают пороги.
+
+</details>
+
+#### C7. 🔑 Blue-green
 Переведи linkd на blue-green с `previewService`, `prePromotionAnalysis` через провайдер `job`
 (smoke: `/readyz` + `POST /api/links`) и `postPromotionAnalysis` на success-rate. Сломай
 preview так, чтобы smoke провалился (например, `LINKD_DATABASE_URL` на несуществующий хост),
 и убедись, что переключения не было.
 
-### C8. ArgoCD
+#### C8. ArgoCD
 Положи манифесты лабы в git-репозиторий (Gitea из 12-autopilot подойдёт), создай Application.
 Проверь health на паузе (`Suspended`) и после abort (`Degraded`). Добавь `ignoreDifferences`
 на веса и объясни, что происходило без него.
 
-### C9. Feature flag
+#### C9. Feature flag
 Подними flagd с флагом `linkd-readable-codes` (5% + все `@example.kz`). Напиши на Python
 функцию, которая возвращает вариант для 1000 случайных `targeting_key`, и посчитай долю `on`.
 Выключи флаг в файле и проверь, что поведение меняется без рестарта.
 
-### C10. Сравнение с Flagger (со звёздочкой)
+<details><summary>Ответ</summary>
+
+Около 5% `on` для случайных ключей + 100% для `@example.kz`; после правки файла flagd
+перечитывает флаги без рестарта.
+
+</details>
+
+#### C10. Сравнение с Flagger (со звёздочкой)
 Опиши, как тот же canary linkd выглядел бы во Flagger: какие объекты создаёт команда,
 какие создаёт Flagger, где задаются метрики и пороги.
+
+<details><summary>Ответ</summary>
+
+Команда: Deployment `linkd`, Service, `Canary` (targetRef на Deployment, `service.port`,
+`analysis: interval, threshold, maxWeight, stepWeight, metrics`), при своих метриках — `MetricTemplate`.
+Flagger создаёт `linkd-primary`, Services `linkd-primary`/`linkd-canary` и управляет маршрутом.
+
+</details>
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Rollout завис на первом шаге, AnalysisRun `Running` уже 20 минут, замеров нет. Где искать?
 
 <details><summary>Ответ</summary>
 
 Статус AnalysisRun и `Message`: недоступен Prometheus (адрес, DNS, NetworkPolicy), ошибка
-в запросе, `initialDelay` слишком большой, аргументы не подставились (`&#123;&#123;args...&#125;&#125;` в запросе).
+в запросе, `initialDelay` слишком большой, аргументы не подставились (<code v-pre>{{args...}}</code> в запросе).
 Логи контроллера Rollouts.
 
 </details>
@@ -1106,14 +1154,13 @@ ArgoCD видит изменённые контроллером веса HTTPRou
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** ⭐ Расскажи, как устроен canary с автоматическим анализом.
 
 <details><summary>Ответ</summary>
 
 Rollout вместо Deployment, шаги 20 → 50 → 100 с паузами; трафик — веса в HTTPRoute через плагин
-   Gateway API; фоновый анализ доли не-5xx на canary-подах из Prometheus, inline p95 перед 100%;
-   провал → abort за 1–2 минуты, алерт, `git revert`.
+Gateway API; фоновый анализ доли не-5xx на canary-подах из Prometheus, inline p95 перед 100%;
+провал → abort за 1–2 минуты, алерт, `git revert`.
 
 </details>
 
@@ -1122,7 +1169,7 @@ Rollout вместо Deployment, шаги 20 → 50 → 100 с паузами; �
 <details><summary>Ответ</summary>
 
 Через trafficRouting: встроенные роутеры (Istio, ALB, NGINX…) или плагины; плагин Gateway API
-   меняет веса двух `backendRefs` в HTTPRoute, работает с любой реализацией с весами.
+меняет веса двух `backendRefs` в HTTPRoute, работает с любой реализацией с весами.
 
 </details>
 
@@ -1131,7 +1178,7 @@ Rollout вместо Deployment, шаги 20 → 50 → 100 с паузами; �
 <details><summary>Ответ</summary>
 
 SLI из SLO: доля успешных и латентность по корзине; порог «явно сломано» ниже SLO; мерить
-   canary отдельно; для старта — `dryRun` неделю.
+canary отдельно; для старта — `dryRun` неделю.
 
 </details>
 
@@ -1140,7 +1187,7 @@ SLI из SLO: доля успешных и латентность по корз�
 <details><summary>Ответ</summary>
 
 Canary — трафик есть, нужна статистика и малый радиус; blue-green — мгновенный откат,
-   мало трафика, проверка до переключения, ×2 ресурсов.
+мало трафика, проверка до переключения, ×2 ресурсов.
 
 </details>
 
@@ -1157,7 +1204,7 @@ Canary — трафик есть, нужна статистика и малый 
 <details><summary>Ответ</summary>
 
 Следовать за GitOps: ArgoCD → Rollouts, Flux → Flagger; Rollouts — явные шаги и UI,
-   Flagger — рядом с Deployment и webhooks.
+Flagger — рядом с Deployment и webhooks.
 
 </details>
 
@@ -1166,7 +1213,7 @@ Canary — трафик есть, нужна статистика и малый 
 <details><summary>Ответ</summary>
 
 Canary ловит поломку сборки, флаг управляет функцией по сегментам и выключается без деплоя;
-   вместе: код катится canary, функция включается флагом.
+вместе: код катится canary, функция включается флагом.
 
 </details>
 
@@ -1183,7 +1230,7 @@ Expand/contract: сначала совместимое расширение сх
 <details><summary>Ответ</summary>
 
 `dryRun` и сравнение решений анализа с реальностью, пороги из SLO, `failureLimit` > 0,
-   `initialDelay`, достаточный трафик, отдельная проверка объёма.
+`initialDelay`, достаточный трафик, отдельная проверка объёма.
 
 </details>
 
@@ -1192,9 +1239,7 @@ Expand/contract: сначала совместимое расширение сх
 <details><summary>Ответ</summary>
 
 Canary по умолчанию в API платформы: поле в LinkdApp/чарте, стандартные ClusterAnalysisTemplate,
-    ServiceMonitor с `podTargetLabels`, `ignoreDifferences` в шаблоне Application.
-
----
+ServiceMonitor с `podTargetLabels`, `ignoreDifferences` в шаблоне Application.
 
 </details>
 

@@ -1,13 +1,13 @@
 ---
 title: "04. OpenCost и Kubecost: сколько стоит каждый namespace"
-description: "Блок → FinOps → тема 04. Опирается на"
+description: "Allocation-модель, custom pricing, API и kubectl cost, idle и общие расходы, Grafana, алерты, showback"
 ---
 
 # 04. OpenCost и Kubecost: сколько стоит каждый namespace
 
 > Блок → FinOps → тема 04. Опирается на
-> [../Left/02_Monitoring/03_promql.md](/monitoring/03-promql) (джойны `on`/`group_left`,
-> recording rules), [../Left/02_Monitoring/06_grafana.md](/monitoring/06-grafana)
+> [Мониторинг: 03. Типы метрик и PromQL](/monitoring/03-promql) (джойны `on`/`group_left`,
+> recording rules), [Мониторинг: 06. Grafana](/monitoring/06-grafana)
 > (дашборды) и темы [01](/finops/01-finops-intro) (showback, общие расходы) и
 > [02](/finops/02-k8s-rightsizing) (requests и эффективность).
 >
@@ -21,7 +21,7 @@ description: "Блок → FinOps → тема 04. Опирается на"
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  kube-state-metrics + cAdvisor ──► Prometheus ◄── scrape ── OpenCost (цены нод, PV, LB → метрики)
                                        │                        │
                                        └──── запросы ──────────►│ allocation-модель
@@ -31,7 +31,8 @@ description: "Блок → FinOps → тема 04. Опирается на"
    UI :9090              API :9003 /allocation         kubectl cost            метрики *_hourly_cost
    (по namespace,        (namespace, label:team,       (из терминала)          → Grafana, алерты
     controller, pod)      controller, idle)                                    → showback-отчёт
-```text
+```
+
 ---
 
 ## 1. OpenCost или Kubecost: расклад на 2026 год
@@ -46,12 +47,13 @@ description: "Блок → FinOps → тема 04. Опирается на"
 | Сверх allocation | UI, API, `/cloudCost`, плагины внешних расходов, MCP-сервер для AI-агентов | Рекомендации по requests и node groups, бюджеты, алерты, аномалии, прогноз, SSO/RBAC |
 | Бесплатно | Всё | Free tier; в 3.0 ограничен объёмом расходов (порядка $100k за 30 дней), а не числом ядер, как раньше — проверяй условия на сайте |
 
-```text
+```text:no-line-numbers
 Выбор:
   учиться, один-два кластера, нужна прозрачность и API      → OpenCost
   десятки кластеров, нужна сверка со счётом, рекомендации,
   SSO и готовые отчёты для финансов, есть бюджет             → Kubecost / аналоги (CAST AI, Vantage и др.)
-```text
+```
+
 > 💡 Концепции одинаковые: allocation по namespace/лейблам, idle, эффективность, общие расходы.
 > Разобравшись с OpenCost, в Kubecost ты будешь как дома.
 
@@ -59,7 +61,7 @@ description: "Блок → FinOps → тема 04. Опирается на"
 
 ## 2. Модель allocation: как OpenCost считает деньги
 
-```text
+```
 стоимость контейнера за интервал =
       max(CPU request, CPU usage)   × цена vCPU·час × часы
     + max(RAM request, RAM usage)   × цена GiB·час  × часы
@@ -69,20 +71,21 @@ description: "Блок → FinOps → тема 04. Опирается на"
 
 цена ноды = прайс по типу инстанса (облако) или custom pricing; делится на CPU/RAM/GPU
 idle      = стоимость нод − всё, что распределено по контейнерам
-```text
+```
+
 - **`max(request, usage)`**: запросил 2 ядра, использовал 0,2 — платишь за 2 (ты их занял).
   Использовал 3 при request 2 (без лимита) — платишь за 3.
 - **Idle** (`__idle__`) — оплаченная, но никем не запрошенная мощность нод. Её можно
   показывать отдельно или распределять (`shareIdle`) — раздел 5.
 - **Эффективность** — `usage / request` в деньгах: `cpuEfficiency`, `ramEfficiency`, `totalEfficiency`.
 - **Агрегации:** `cluster`, `node`, `namespace`, `controllerKind`, `controller`, `pod`, `container`,
-  `service`, `label:&lt;ключ&gt;` (например, `label:team`), и их комбинации.
+  `service`, `label:<ключ>` (например, `label:team`), и их комбинации.
 
 ---
 
 ## 3. Установка OpenCost рядом с kube-prometheus-stack
 
-Предполагается стенд из [00_INDEX.md](/finops/): релиз `prometheus` в namespace `monitoring`,
+Предполагается стенд из [FinOps](/finops/): релиз `prometheus` в namespace `monitoring`,
 сервис `prometheus-kube-prometheus-prometheus:9090` (проверь: `kubectl -n monitoring get svc`).
 
 ```yaml
@@ -116,7 +119,7 @@ opencost:
       zoneNetworkEgress: "0.0"
       regionNetworkEgress: "0.0"
       internetNetworkEgress: "0.0"
-```text
+```
 ```bash
 helm repo add opencost-charts https://opencost.github.io/opencost-helm-chart
 helm repo update
@@ -127,7 +130,7 @@ kubectl -n opencost port-forward svc/opencost 9003:9003 9091:9090
 # API: http://localhost:9003   UI: http://localhost:9091 (9090 локально занят Prometheus)
 
 curl -s localhost:9003/metrics | grep -E '^node_(cpu|ram)_hourly_cost' | head
-```text
+```
 Проверь в Prometheus, что таргет OpenCost `UP`, а `node_total_hourly_cost` возвращает ряды.
 Через 10–20 минут появятся первые данные allocation.
 
@@ -143,8 +146,8 @@ curl -s localhost:9003/metrics | grep -E '^node_(cpu|ram)_hourly_cost' | head
 **Единицы — за час:** CPU — $ за vCPU·час, RAM — $ за GiB·час, storage — $ за GiB·час
 (поэтому в дефолтном `default.json` storage = 0.00005479452 — это $0,04 за ГБ·мес / 730).
 
-Расчёт от полной стоимости сервера (TCO из [01_finops_intro.md](/finops/01-finops-intro), раздел 8):
-```text
+Расчёт от полной стоимости сервера (TCO из [01. Что такое FinOps и как устроены деньги в облаке](/finops/01-finops-intro), раздел 8):
+```
 Сервер 32 vCPU / 128 GiB, полная стоимость $600/мес (амортизация + электричество + колокация + люди).
 Делим 50/50 между CPU и RAM (можно по рыночному соотношению цен):
 
@@ -153,7 +156,8 @@ RAM:     $300 / (128 GiB × 730 ч)  = $0,0032 за GiB·час
 Storage: $0,05 за GiB·мес (СХД)    = 0,05 / 730 = $0,0000685 за GiB·час
 
 Проверка: 32 × 0,0128 × 730 + 128 × 0,0032 × 730 = 299 + 299 ≈ $598/мес ✅
-```text
+```
+
 | Ошибка | Последствие |
 |--------|-------------|
 | Ввести месячную цену как часовую | Всё дороже в 730 раз |
@@ -190,7 +194,8 @@ curl -sG localhost:9003/allocation \
 # по контроллерам (Deployment/StatefulSet) внутри namespace
 curl -sG localhost:9003/allocation/compute -d window=1d -d aggregate=controller \
   -d accumulate=true | jq '.data[0] | map_values({cpu: .cpuCost, ram: .ramCost, eff: .totalEfficiency})'
-```text
+```
+
 | Параметр | Значения | Смысл |
 |----------|----------|-------|
 | `window` | `1d`, `7d`, `today`, `yesterday`, `lastweek`, `lastmonth`, пара RFC3339 | Период |
@@ -208,12 +213,13 @@ curl -sG localhost:9003/allocation/compute -d window=1d -d aggregate=controller 
 
 ## 6. Idle и общие расходы
 
-```text
+```text:no-line-numbers
  стоимость нод кластера (100%)
  ├── распределено по namespace команд          60%   ← прямые расходы команд
  ├── инфраструктурные namespace               15%   ← kube-system, monitoring, ingress, opencost
  └── __idle__                                 25%   ← никем не запрошено
-```text
+```
+
 | Что | Варианты | Рекомендация |
 |-----|----------|--------------|
 | **Idle** | Показать отдельно / `shareIdle` пропорционально / `idleByNode` | Для showback — отдельно (это задача платформы: consolidation), для chargeback — распределять |
@@ -221,11 +227,12 @@ curl -sG localhost:9003/allocation/compute -d window=1d -d aggregate=controller 
 
 OpenCost API распределяет idle; общие namespace распределяешь сам в отчёте (или Kubecost:
 параметры `shareNamespaces`, `shareSplit`). Пример на Python-подобном псевдокоде:
-```text
+```
 shared  = cost[kube-system] + cost[monitoring] + cost[ingress-nginx] + cost[opencost]
 direct  = {ns: cost[ns] for ns in team_namespaces}
 итог[ns] = direct[ns] + shared × direct[ns] / sum(direct)
-```text
+```
+
 ---
 
 ## 7. UI и kubectl cost
@@ -242,7 +249,7 @@ kubectl cost $OC namespace --window 7d --show-cpu --show-memory --show-pv --show
 kubectl cost $OC namespace --window 2h --show-efficiency=true    # ⭐ прогноз на месяц по последним 2 часам
 kubectl cost $OC deployment --window 1d -n demo
 kubectl cost $OC label --historical -l team --window 7d
-```text
+```
 Без `--historical` плагин показывает **прогноз месячной стоимости** по выбранному окну,
 с `--historical` — фактическую стоимость за окно.
 
@@ -273,7 +280,8 @@ sum by (namespace) (
 
 # Стоимость PV по namespace, $ в час
 sum by (namespace) (pod_pvc_allocation * on (persistentvolume) group_left() pv_hourly_cost / 1024^3)
-```text
+```
+
 Recording rule, чтобы дашборды и алерты не джойнили сырые ряды каждый раз:
 ```yaml
 # в PrometheusRule (как в теме 02)
@@ -285,7 +293,8 @@ Recording rule, чтобы дашборды и алерты не джойнил�
       + avg by (namespace, pod, container, node) (container_memory_allocation_bytes) / 1024^3
           * on (node) group_left() avg by (node) (node_ram_hourly_cost)
     )
-```text
+```
+
 | Панель | Запрос |
 |--------|--------|
 | Месячный прогноз кластера | `sum(node_total_hourly_cost) * 730` (Stat, единицы `currencyUSD`) |
@@ -307,7 +316,7 @@ Recording rule, чтобы дашборды и алерты не джойнил�
   for: 2h
   labels: { severity: warning, team: finops }
   annotations:
-    summary: "Расходы &#123;&#123; $labels.namespace &#125;&#125; выросли больше чем на 50% к средним за неделю"
+    summary: "Расходы {{ $labels.namespace }} выросли больше чем на 50% к средним за неделю"
 
 - alert: ClusterIdleTooHigh
   expr: 1 - sum(namespace:opencost_hourly_cost:sum) / sum(node_total_hourly_cost) > 0.4
@@ -320,9 +329,9 @@ Recording rule, чтобы дашборды и алерты не джойнил�
   expr: sum(node_total_hourly_cost) * 730 > 3000
   for: 1h
   labels: { severity: warning, team: finops }
-```text
+```
 Маршрутизация — через Alertmanager по лейблу `team` в канал владельца
-([../Left/02_Monitoring/05_alertmanager.md](/monitoring/05-alertmanager)).
+([Мониторинг: 05. Алерты и Alertmanager](/monitoring/05-alertmanager)).
 
 ---
 
@@ -334,8 +343,9 @@ curl -sG localhost:9003/allocation/compute -d window=lastmonth -d aggregate=labe
   -d accumulate=true -d shareIdle=true \
 | jq -r '.data[0] | to_entries[] | [.key, .value.cpuCost, .value.ramCost, .value.pvCost,
          .value.totalCost, .value.totalEfficiency] | @csv' > showback-2026-09.csv
-```text
-```text
+```
+
+```text:no-line-numbers
 SHOWBACK — кластер prod-kz, сентябрь 2026 (цены — custom pricing, $)
 ┌───────────────┬───────┬───────┬──────┬──────────┬───────────┬────────┬─────────┬────────────────────┐
 │ команда       │ CPU   │ RAM   │ PV   │ платформа│ итого     │ Δ к авг│ эффект. │ топ-действие       │
@@ -344,7 +354,7 @@ SHOWBACK — кластер prod-kz, сентябрь 2026 (цены — custom 
 │ team-data     │ 2 100 │ 980   │ 640  │ 740      │ 4 460     │ +31% ⚠️│ 22%     │ батчи на spot      │
 │ __unallocated__│ 310  │ 90    │ 0    │ —        │ 400       │        │         │ повесить лейбл team│
 └───────────────┴───────┴───────┴──────┴──────────┴───────────┴────────┴─────────┴────────────────────┘
-```text
+```
 Хороший отчёт — это не таблица, а **действия**: у каждой строки владелец и следующий шаг.
 
 ---
@@ -428,13 +438,17 @@ SHOWBACK — кластер prod-kz, сентябрь 2026 (цены — custom 
 9. OpenCost не знает скидок и внешних расходов — для chargeback нужна сверка со счётом.
 10. ⭐ Showback ценен действиями: у каждой строки — владелец и следующий шаг.
 
-➡️ Дальше: [05_infracost_iac.md](/finops/05-infracost-iac) · Задачи: 04_kubecost_opencost_tasks.md
+---
 
+## Задачи
+
+> Стенд: kind + kube-prometheus-stack из [FinOps](/finops/), OpenCost из раздела 3
+> конспекта, namespace `demo` из лабы 1. API: `kubectl -n opencost port-forward svc/opencost 9003:9003 9091:9090`.
+> ⚠️ Цены — твоя custom-модель, иллюстративные.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Каков статус OpenCost и Kubecost в 2026 году? Что бесплатно, что платно?
 
@@ -484,6 +498,7 @@ OpenCost вычисляет allocation запросами к Prometheus, в то
 <details><summary>Ответ</summary>
 
 За час: CPU — $ за vCPU·час, RAM — $ за GiB·час, storage — $ за GiB·час.
+0,00005479452 = $0,04 за ГБ·мес / 730 часов.
 
 </details>
 
@@ -581,218 +596,116 @@ On-prem — только твоя модель цен.
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
-```text:no-line-numbers
+```
 B1.  # values-opencost.yaml
-```text
-<details><summary>Ответ</summary>
+     opencost:
+       metrics: { serviceMonitor: { enabled: false } }
+     # «UI через час показывает $0 по всем namespace»
 
-⚠️ Prometheus не собирает метрики OpenCost — нет цен, стоимость 0. Включить
+B2.  customPricing:
+       costModel: { CPU: "23.36", RAM: "3.10", storage: "0.08" }   # «цены из прайса за месяц»
+
+B3.  # лейбл team висит только на объектах Namespace
+     curl -sG localhost:9003/allocation/compute -d window=7d -d aggregate=label:team -d accumulate=true
+
+B4.  # «OpenCost насчитал за месяц $8 400, а счёт AWS за ноды — $6 100. OpenCost сломан»
+
+B5.  - alert: NamespaceExpensive
+       expr: namespace:opencost_hourly_cost:sum > 1
+
+B6.  # showback по командам без idle: сумма команд = 60% стоимости кластера
+     # финансы: «а где остальные 40%?»
+
+B7.  # Prometheus retention 10d; 3-го числа строим отчёт window=lastmonth
+
+B8.  sum by (namespace) (container_cpu_allocation * node_cpu_hourly_cost)
+
+B9.  # showback для всех команд с shareIdle=true; idle в кластере — 45%, никто об этом не знает
+
+B10. kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090 &
+     kubectl -n opencost port-forward svc/opencost 9003 9090
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Prometheus не собирает метрики OpenCost — нет цен, стоимость 0. Включить
 ServiceMonitor (с лейблом `release: prometheus`, если селекторы kube-prometheus-stack закрыты).
 
-</details>
-
-```text:no-line-numbers
-     opencost:
-```text
-```text:no-line-numbers
-       metrics: { serviceMonitor: { enabled: false } }
-```text
-```text:no-line-numbers
-     # «UI через час показывает $0 по всем namespace»
-```text
-```text:no-line-numbers
-B2.  customPricing:
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Цены должны быть за час: $23,36 за vCPU·мес = 23,36 / 730 ≈ $0,032 за vCPU·час.
+**B2.** ⚠️ Цены должны быть за час: $23,36 за vCPU·мес = 23,36 / 730 ≈ $0,032 за vCPU·час.
 Сейчас всё дороже в 730 раз (storage тоже).
 
-</details>
-
-```text:no-line-numbers
-       costModel: { CPU: "23.36", RAM: "3.10", storage: "0.08" }   # «цены из прайса за месяц»
-```text
-```text:no-line-numbers
-B3.  # лейбл team висит только на объектах Namespace
-```text
-<details><summary>Ответ</summary>
-
-⚠️ OpenCost агрегирует по лейблам подов — всё уйдёт в `__unallocated__`. Нужны лейблы
+**B3.** ⚠️ OpenCost агрегирует по лейблам подов — всё уйдёт в `__unallocated__`. Нужны лейблы
 в шаблонах подов (или агрегировать по namespace и мапить namespace → команда в отчёте).
 
-</details>
-
-```text:no-line-numbers
-     curl -sG localhost:9003/allocation/compute -d window=7d -d aggregate=label:team -d accumulate=true
-```text
-```text:no-line-numbers
-B4.  # «OpenCost насчитал за месяц $8 400, а счёт AWS за ноды — $6 100. OpenCost сломан»
-```text
-<details><summary>Ответ</summary>
-
-⚠️ OpenCost считает по публичным ценам on-demand, а счёт уже со скидками (savings plans,
+**B4.** ⚠️ OpenCost считает по публичным ценам on-demand, а счёт уже со скидками (savings plans,
 spot). Расхождение ожидаемо; для chargeback сверяют и распределяют разницу пропорционально.
 
-</details>
-
-```text:no-line-numbers
-B5.  - alert: NamespaceExpensive
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Абсолютный порог одинаков для всех namespace — дорогие горят всегда, дешёвые никогда
+**B5.** ⚠️ Абсолютный порог одинаков для всех namespace — дорогие горят всегда, дешёвые никогда
 не сработают даже при росте в 10 раз. Нужно сравнение со своей нормой и минимальная сумма.
 
-</details>
-
-```text:no-line-numbers
-       expr: namespace:opencost_hourly_cost:sum > 1
-```text
-```text:no-line-numbers
-B6.  # showback по командам без idle: сумма команд = 60% стоимости кластера
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Не показан idle (и, возможно, инфраструктурные namespace). `includeIdle=true`
+**B6.** ⚠️ Не показан idle (и, возможно, инфраструктурные namespace). `includeIdle=true`
 и решение, как распределять; idle — отдельная задача платформы.
 
-</details>
-
-```text:no-line-numbers
-     # финансы: «а где остальные 40%?»
-```text
-```text:no-line-numbers
-B7.  # Prometheus retention 10d; 3-го числа строим отчёт window=lastmonth
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Данных за первые ~20 дней месяца уже нет — отчёт неполный. Retention ≥ 35 дней или
+**B7.** ⚠️ Данных за первые ~20 дней месяца уже нет — отчёт неполный. Retention ≥ 35 дней или
 ежедневная/еженедельная выгрузка отчётов (CSV в S3), либо долговременное хранилище.
 
-</details>
-
-```text:no-line-numbers
-B8.  sum by (namespace) (container_cpu_allocation * node_cpu_hourly_cost)
-```text
-<details><summary>Ответ</summary>
-
-⚠️ У рядов разные наборы лейблов — без `on (node) group_left()` сопоставление не найдёт
+**B8.** ⚠️ У рядов разные наборы лейблов — без `on (node) group_left()` сопоставление не найдёт
 пар, результат пустой. Нужно `container_cpu_allocation * on (node) group_left() node_cpu_hourly_cost`.
 
-</details>
-
-```text:no-line-numbers
-B9.  # showback для всех команд с shareIdle=true; idle в кластере — 45%, никто об этом не знает
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Idle «растворился» в расходах команд: команды видят рост, а 45% простоя — проблема
+**B9.** ⚠️ Idle «растворился» в расходах команд: команды видят рост, а 45% простоя — проблема
 платформы (consolidation, размер нод), которую никто не чинит. Показывать idle отдельно
 хотя бы во внутреннем отчёте платформы.
 
-</details>
-
-```text:no-line-numbers
-B10.  kubectl -n monitoring port-forward svc/prometheus-kube-prometheus-prometheus 9090 &
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Локальный порт 9090 уже занят port-forward Prometheus — второй не поднимется.
+**B10.** ⚠️ Локальный порт 9090 уже занят port-forward Prometheus — второй не поднимется.
 Проброс UI на другой локальный порт: `9091:9090`.
 
 </details>
 
-```text:no-line-numbers
-     kubectl -n opencost port-forward svc/opencost 9003 9090
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 OpenCost на стенде
-**1.** Установи OpenCost с `values-opencost.yaml` из конспекта.
-
-<details><summary>Ответ</summary>
-
-В kind custom pricing применяется ко всем нодам; прогноз = `sum(node_total_hourly_cost) * 730`.
-Ручная проверка: (vCPU всех нод × 0,0128 + GiB × 0,0032) × 730. Небольшое расхождение —
-из-за округлений и того, что RAM ноды в метриках — фактическая ёмкость.
-
-</details>
-
-**2.** Проверь: под `Running`, таргет OpenCost `UP` в Prometheus, `node_total_hourly_cost` есть.
-
-<details><summary>Ответ</summary>
-
-```text
-CPU:     0,6 × $1 400 = $840;  $840 / (96 vCPU × 730 ч) = 840 / 70 080 ≈ $0,0120 за vCPU·ч
-RAM:     0,4 × $1 400 = $560;  $560 / (384 GiB × 730 ч) = 560 / 280 320 ≈ $0,0020 за GiB·ч
-Storage: $0,08 / 730 ≈ $0,00011 за GiB·ч
-Проверка: 96 × 0,012 × 730 = $840,96; 384 × 0,002 × 730 = $560,64; итого ≈ $1 401,6 ✅
-```text
-</details>
-
-**3.** Посчитай в Prometheus месячный прогноз стоимости кластера и сверь с ручным расчётом:
+#### C1. 🔑 OpenCost на стенде
+1. Установи OpenCost с `values-opencost.yaml` из конспекта.
+2. Проверь: под `Running`, таргет OpenCost `UP` в Prometheus, `node_total_hourly_cost` есть.
+3. Посчитай в Prometheus месячный прогноз стоимости кластера и сверь с ручным расчётом:
    число vCPU и GiB нод kind × твои цены × 730.
 
 <details><summary>Ответ</summary>
 
-```text
-Кластер: 120 + 300 + 60 + 40 + 70 + 20 + 10 + 180 = $800
-Общие (инфраструктура): 40 + 70 + 20 + 10 = $140;  idle: $180;  прямые: 120 + 300 + 60 = $480
-Доли прямых: shop 25%, data 62,5%, dev 12,5%
+В kind custom pricing применяется ко всем нодам; прогноз = `sum(node_total_hourly_cost) * 730`.
+Ручная проверка: (vCPU всех нод × 0,0128 + GiB × 0,0032) × 730. Небольшое расхождение —
+из-за округлений и того, что RAM ноды в метриках — фактическая ёмкость.
 
-команда  прямые  + общие (140)   + idle (180)   = итого
-shop     120     + 35            + 45           = 200
-data     300     + 87,5          + 112,5        = 500
-dev       60     + 17,5          + 22,5         = 100
-сумма    480     + 140           + 180          = 800 ✅
-```text
-```bash
-curl -sG localhost:9003/allocation/compute -d window=30d -d aggregate=namespace -d accumulate=true \
-| jq -r '.data[0] | to_entries | sort_by(-.value.totalCost)[] | "\(.key)\t\(.value.totalCost)"'
-```text
 </details>
 
-### C2. 🔑 Свои цены (расчёт)
+#### C2. 🔑 Свои цены (расчёт)
 Два сервера по 48 vCPU / 192 GiB, полная стоимость обоих — $1 400/мес. Раздели 60% на CPU
 и 40% на RAM. Хранилище — $0,08 за ГБ·мес. Посчитай значения `CPU`, `RAM`, `storage`
 для `costModel` и проверь обратным расчётом.
 
-### C3. 🔑 Showback с общими расходами
-API за месяц вернул (`$`): `shop` 120, `data` 300, `dev` 60, `kube-system` 40, `monitoring` 70,
-`ingress-nginx` 20, `opencost` 10, `__idle__` 180.
-**1.** Посчитай стоимость кластера, общие расходы и прямые расходы команд.
-
 <details><summary>Ответ</summary>
 
-В kind custom pricing применяется ко всем нодам; прогноз = `sum(node_total_hourly_cost) * 730`.
-Ручная проверка: (vCPU всех нод × 0,0128 + GiB × 0,0032) × 730. Небольшое расхождение —
-из-за округлений и того, что RAM ноды в метриках — фактическая ёмкость.
-
-</details>
-
-**2.** Распредели общие расходы и idle пропорционально прямым. Сделай итоговую таблицу.
-
-<details><summary>Ответ</summary>
-
-```text
+```
 CPU:     0,6 × $1 400 = $840;  $840 / (96 vCPU × 730 ч) = 840 / 70 080 ≈ $0,0120 за vCPU·ч
 RAM:     0,4 × $1 400 = $560;  $560 / (384 GiB × 730 ч) = 560 / 280 320 ≈ $0,0020 за GiB·ч
 Storage: $0,08 / 730 ≈ $0,00011 за GiB·ч
 Проверка: 96 × 0,012 × 730 = $840,96; 384 × 0,002 × 730 = $560,64; итого ≈ $1 401,6 ✅
-```text
+```
+
 </details>
 
-**3.** Напиши `jq`, который из ответа `/allocation/compute` печатает `namespace, totalCost`,
+#### C3. 🔑 Showback с общими расходами
+API за месяц вернул (`$`): `shop` 120, `data` 300, `dev` 60, `kube-system` 40, `monitoring` 70,
+`ingress-nginx` 20, `opencost` 10, `__idle__` 180.
+1. Посчитай стоимость кластера, общие расходы и прямые расходы команд.
+2. Распредели общие расходы и idle пропорционально прямым. Сделай итоговую таблицу.
+3. Напиши `jq`, который из ответа `/allocation/compute` печатает `namespace, totalCost`,
    отсортированные по убыванию.
 
 <details><summary>Ответ</summary>
 
-```text
+```
 Кластер: 120 + 300 + 60 + 40 + 70 + 20 + 10 + 180 = $800
 Общие (инфраструктура): 40 + 70 + 20 + 10 = $140;  idle: $180;  прямые: 120 + 300 + 60 = $480
 Доли прямых: shop 25%, data 62,5%, dev 12,5%
@@ -802,79 +715,87 @@ shop     120     + 35            + 45           = 200
 data     300     + 87,5          + 112,5        = 500
 dev       60     + 17,5          + 22,5         = 100
 сумма    480     + 140           + 180          = 800 ✅
-```text
+```
 ```bash
 curl -sG localhost:9003/allocation/compute -d window=30d -d aggregate=namespace -d accumulate=true \
 | jq -r '.data[0] | to_entries | sort_by(-.value.totalCost)[] | "\(.key)\t\(.value.totalCost)"'
-```text
+```
+
 </details>
 
-### C4. kubectl cost
+#### C4. kubectl cost
 Поставь плагин через krew, выведи стоимость namespace за 1 час с эффективностью —
 в режиме прогноза и в режиме `--historical`. Объясни, почему цифры отличаются в сотни раз.
 
-### C5. Дашборд стоимости
+<details><summary>Ответ</summary>
+
+Режим по умолчанию экстраполирует расходы за 1 час на месяц (× ~730), `--historical`
+показывает фактическую стоимость за этот час — отсюда разница в сотни раз.
+
+</details>
+
+#### C5. Дашборд стоимости
 Добавь recording rule `namespace:opencost_hourly_cost:sum` и собери 4 панели: месячный
 прогноз кластера, топ namespace в $/мес, доля idle, тренд по namespace. Экспортируй JSON.
 
-### C6. 🔑 Алерт на всплеск
-**1.** Создай `PrometheusRule` с `NamespaceCostSpike`, но для стенда: окно `[1h] offset 10m`, `for: 5m`,
+<details><summary>Ответ</summary>
+
+Панели — из таблицы раздела 8 конспекта; единицы `currencyUSD`, для доли idle —
+`percentunit`. JSON — в git через provisioning ([Мониторинг: 06. Grafana](/monitoring/06-grafana)).
+
+</details>
+
+#### C6. 🔑 Алерт на всплеск
+1. Создай `PrometheusRule` с `NamespaceCostSpike`, но для стенда: окно `[1h] offset 10m`, `for: 5m`,
    минимальная сумма `> 0.001`.
+2. Увеличь реплики одного Deployment в `demo` в 5 раз.
+3. Дождись `pending` → `firing` на `/alerts`. Верни реплики и проверь, что алерт погас.
 
 <details><summary>Ответ</summary>
 
-В kind custom pricing применяется ко всем нодам; прогноз = `sum(node_total_hourly_cost) * 730`.
-Ручная проверка: (vCPU всех нод × 0,0128 + GiB × 0,0032) × 730. Небольшое расхождение —
-из-за округлений и того, что RAM ноды в метриках — фактическая ёмкость.
+```yaml
+- alert: NamespaceCostSpikeLab
+  expr: |
+    namespace:opencost_hourly_cost:sum
+      > 1.5 * avg_over_time(namespace:opencost_hourly_cost:sum[1h] offset 10m)
+    and namespace:opencost_hourly_cost:sum > 0.001
+  for: 5m
+```
+После ×5 реплик стоимость namespace растёт скачком (новые requests), через несколько минут
+(OpenCost + scrape + recording rule) — `pending`, через `for` — `firing`. После возврата
+условие перестаёт выполняться, когда текущее значение снова < 1,5 × средней.
 
 </details>
 
-**2.** Увеличь реплики одного Deployment в `demo` в 5 раз.
-
-<details><summary>Ответ</summary>
-
-```text
-CPU:     0,6 × $1 400 = $840;  $840 / (96 vCPU × 730 ч) = 840 / 70 080 ≈ $0,0120 за vCPU·ч
-RAM:     0,4 × $1 400 = $560;  $560 / (384 GiB × 730 ч) = 560 / 280 320 ≈ $0,0020 за GiB·ч
-Storage: $0,08 / 730 ≈ $0,00011 за GiB·ч
-Проверка: 96 × 0,012 × 730 = $840,96; 384 × 0,002 × 730 = $560,64; итого ≈ $1 401,6 ✅
-```text
-</details>
-
-**3.** Дождись `pending` → `firing` на `/alerts`. Верни реплики и проверь, что алерт погас.
-
-<details><summary>Ответ</summary>
-
-```text
-Кластер: 120 + 300 + 60 + 40 + 70 + 20 + 10 + 180 = $800
-Общие (инфраструктура): 40 + 70 + 20 + 10 = $140;  idle: $180;  прямые: 120 + 300 + 60 = $480
-Доли прямых: shop 25%, data 62,5%, dev 12,5%
-
-команда  прямые  + общие (140)   + idle (180)   = итого
-shop     120     + 35            + 45           = 200
-data     300     + 87,5          + 112,5        = 500
-dev       60     + 17,5          + 22,5         = 100
-сумма    480     + 140           + 180          = 800 ✅
-```text
-```bash
-curl -sG localhost:9003/allocation/compute -d window=30d -d aggregate=namespace -d accumulate=true \
-| jq -r '.data[0] | to_entries | sort_by(-.value.totalCost)[] | "\(.key)\t\(.value.totalCost)"'
-```text
-</details>
-
-### C7. Эффективность в деньгах (расчёт)
+#### C7. Эффективность в деньгах (расчёт)
 Namespace стоит $400/мес при `totalEfficiency` = 0,2. Сколько он будет стоить, если после
 rightsizing эффективность станет 0,6 (потребление то же)? Сколько сэкономится?
 
-### C8. Выбор инструмента
+<details><summary>Ответ</summary>
+
+Потребление в деньгах = 400 × 0,2 = $80. При эффективности 0,6: 80 / 0,6 ≈ $133.
+Экономия ≈ $267/мес (−67%) — при условии, что освободившиеся ноды удалятся.
+
+</details>
+
+#### C8. Выбор инструмента
 Компания: 3 кластера EKS, облако $40 000/мес, финансы хотят chargeback с учётом savings plans,
 одна платформенная команда из двух человек. Напиши короткое обоснование: OpenCost или Kubecost/
 коммерческий аналог — и что понадобится в каждом случае.
 
+<details><summary>Ответ</summary>
+
+Для 3 кластеров и chargeback со скидками при маленькой команде разумнее Kubecost
+или коммерческий аналог: федерация, сверка со счётом (savings plans), готовые отчёты,
+поддержка. OpenCost возможен, если готовы строить сами: три установки, общий Prometheus/Thanos,
+выгрузка CUR/FOCUS и свой отчёт со сверкой — это недели работы и сопровождение. Бюджет
+инструмента сравнить с ожидаемой экономией и стоимостью времени инженеров.
+
+</details>
+
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** OpenCost работает неделю, а UI показывает данные только за последние 2 дня.
 
@@ -951,13 +872,12 @@ CloudWatch, RDS/S3. Дополнить `/cloudCost` по billing export или �
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как узнать, сколько стоит каждый namespace или команда в Kubernetes?
 
 <details><summary>Ответ</summary>
 
 Поставить OpenCost (или Kubecost): allocation по namespace, контроллерам и лейблам
-   `team`/`service`; цены — облачные или custom; результат — API/UI/Grafana и showback.
+`team`/`service`; цены — облачные или custom; результат — API/UI/Grafana и showback.
 
 </details>
 
@@ -966,7 +886,7 @@ CloudWatch, RDS/S3. Дополнить `/cloudCost` по billing export или �
 <details><summary>Ответ</summary>
 
 OpenCost — открытый движок и спецификация (CNCF Incubating); Kubecost — коммерческий
-   продукт IBM на его основе: федерация, сверка со счётом, рекомендации, SSO, free tier.
+продукт IBM на его основе: федерация, сверка со счётом, рекомендации, SSO, free tier.
 
 </details>
 
@@ -975,7 +895,7 @@ OpenCost — открытый движок и спецификация (CNCF Inc
 <details><summary>Ответ</summary>
 
 `max(request, usage)` по CPU и RAM × цена за единицу·час (из прайса ноды или custom) × время,
-   плюс GPU, PV по PVC, сеть и LB.
+плюс GPU, PV по PVC, сеть и LB.
 
 </details>
 
@@ -984,7 +904,7 @@ OpenCost — открытый движок и спецификация (CNCF Inc
 <details><summary>Ответ</summary>
 
 Мощность нод, которую никто не запросил. Показываю отдельно как задачу платформы
-   (consolidation, размер нод) и решаю, распределять ли её в chargeback.
+(consolidation, размер нод) и решаю, распределять ли её в chargeback.
 
 </details>
 
@@ -993,7 +913,7 @@ OpenCost — открытый движок и спецификация (CNCF Inc
 <details><summary>Ответ</summary>
 
 Пропорционально прямым расходам или по драйверу потребления (серии метрик, объём логов,
-   запросы через ingress); правило согласовать и зафиксировать.
+запросы через ingress); правило согласовать и зафиксировать.
 
 </details>
 
@@ -1002,7 +922,7 @@ OpenCost — открытый движок и спецификация (CNCF Inc
 <details><summary>Ответ</summary>
 
 TCO сервера (амортизация, электричество, колокация, люди, резерв) → цена vCPU·часа
-   и GiB·часа → custom pricing в OpenCost.
+и GiB·часа → custom pricing в OpenCost.
 
 </details>
 
@@ -1011,7 +931,7 @@ TCO сервера (амортизация, электричество, коло
 <details><summary>Ответ</summary>
 
 OpenCost — публичные цены без скидок и только ресурсы кластера; счёт — со скидками
-   и внешними расходами. Для chargeback — сверка.
+и внешними расходами. Для chargeback — сверка.
 
 </details>
 
@@ -1020,7 +940,7 @@ OpenCost — публичные цены без скидок и только р�
 <details><summary>Ответ</summary>
 
 Recording rule стоимости namespace и алерт «выше средней за неделю на 50% и больше
-   минимальной суммы», `for: 2h`, маршрут по `team`; плюс алерт на долю idle и прогноз против бюджета.
+минимальной суммы», `for: 2h`, маршрут по `team`; плюс алерт на долю idle и прогноз против бюджета.
 
 </details>
 
@@ -1029,7 +949,7 @@ Recording rule стоимости namespace и алерт «выше средн�
 <details><summary>Ответ</summary>
 
 Таблица расходов команд за месяц с трендом, эффективностью, долей общих расходов,
-   `__unallocated__` и главное — владельцами и следующими шагами.
+`__unallocated__` и главное — владельцами и следующими шагами.
 
 </details>
 
@@ -1038,9 +958,7 @@ Recording rule стоимости namespace и алерт «выше средн�
 <details><summary>Ответ</summary>
 
 Prometheus собирает метрики OpenCost; recording rule `namespace:opencost_hourly_cost:sum`;
-    панели: прогноз кластера `sum(node_total_hourly_cost) * 730`, топ namespace, idle, тренд.
-
----
+панели: прогноз кластера `sum(node_total_hourly_cost) * 730`, топ namespace, idle, тренд.
 
 </details>
 

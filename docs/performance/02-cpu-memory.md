@@ -1,14 +1,14 @@
 ---
 title: "02. CPU и память: perf, flame graphs, OOM killer"
-description: "Блок → Deep Linux Troubleshooting & Performance → тема 02. Опирается на"
+description: "perf, flame graphs, steal, RSS/PSS/USS, утечки, OOM killer, overcommit"
 ---
 
 # 02. CPU и память: perf, flame graphs, OOM killer
 
 > Блок → Deep Linux Troubleshooting & Performance → тема 02. Опирается на
-> [01_methodology.md](/performance/01-methodology) (USE и «60 секунд»),
-> [../Linux/14_process_utilization.md](/linux/14-process-utilization) (top, free, vmstat)
-> и [../Linux/07_processes.md](/linux/07-processes) (RSS/VSZ, /proc).
+> [01. Методология: USE, «60 секунд» и load average](/performance/01-methodology) (USE и «60 секунд»),
+> [Linux: 14. Мониторинг процессов и cron](/linux/14-process-utilization) (top, free, vmstat)
+> и [Linux: 07. Processes](/linux/07-processes) (RSS/VSZ, /proc).
 >
 > **После темы ты умеешь:** разложить CPU-время на user/sys/softirq/steal и понять, что
 > каждое значит; найти горячую функцию через `perf` и построить flame graph; отличить
@@ -19,7 +19,7 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                   ┌──────────── CPU ────────────┐          ┌──────────── ПАМЯТЬ ───────────┐
  USE (тема 01)    │ U: us/sy/si/st по ядрам      │          │ U: available, RSS/PSS          │
       │           │ S: run queue, nvcswch, PSI   │          │ S: si/so, majflt, direct reclaim│
@@ -31,19 +31,20 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
                где в коде? perf top / record     растёт? pidstat -r -p PID 60, pmap -x
                                  ▼                                         ▼
                  flame graph → функция        OOM? journalctl -k: кто вызвал, кого убили, почему
-```text
+```
+
 ---
 
 ## 1. Куда уходит CPU-время
 
-Базовые колонки `top`/`vmstat` разобраны в [../Linux/14_process_utilization.md](/linux/14-process-utilization).
+Базовые колонки `top`/`vmstat` разобраны в [Linux: 14. Мониторинг процессов и cron](/linux/14-process-utilization).
 Здесь — что делать, когда одна из них высокая.
 
 | Колонка (`mpstat`) | Что это на самом деле | Высокая → куда смотреть |
 |--------------------|------------------------|--------------------------|
 | `%usr` | Код приложений в user space | `pidstat -u 1` → `perf top -p PID` → flame graph |
 | `%sys` | Ядро по просьбе процессов: syscalls, page faults, копирование | `pidstat -u` (колонка `%system`), `strace -c` (тема 05), `perf top` с `[k]`-символами |
-| `%iowait` | **Простой** CPU, пока есть незавершённый I/O. Это не работа CPU | Диск: [03_disk_io.md](/performance/03-disk-io). iowait может упасть, просто когда CPU стал занят другим |
+| `%iowait` | **Простой** CPU, пока есть незавершённый I/O. Это не работа CPU | Диск: [03. Диск и I/O: latency, page cache и «куда делось место»](/performance/03-disk-io). iowait может упасть, просто когда CPU стал занят другим |
 | `%irq` / `%soft` | Аппаратные и программные прерывания: сеть, блочные устройства, таймеры | `mpstat -I SCPU 1`, `/proc/softirqs`, процесс `ksoftirqd/N` в top |
 | `%steal` | Гипервизор отдал «твоё» время другой VM | Раздел 5 |
 | `%guest` | Время, когда этот хост крутит виртуалки (KVM) | Нормально на гипервизоре |
@@ -53,14 +54,15 @@ description: "Блок → Deep Linux Troubleshooting & Performance → тема
 mpstat -P ALL 1          # ⭐ всегда по ядрам: среднее 12% может быть одним ядром в 100%
 mpstat -I SCPU 1         # softirq по типам и ядрам: NET_RX, TIMER, BLOCK, SCHED…
 watch -d -n1 cat /proc/softirqs      # какие счётчики быстро растут
-```text
-```text
+```
+
+```
 # пример вывода: mpstat -P ALL 1 (VM 2 vCPU), однопоточный процесс в цикле
 CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
 all   50.25    0.00    0.50    0.00    0.00    0.00    0.00    0.00    0.00   49.25
   0    0.99    0.00    0.99    0.00    0.00    0.00    0.00    0.00    0.00   98.02
   1  100.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00
-```text
+```
 Среднее «50%» выглядит нормально, но ядро 1 в полке: однопоточный процесс упёрся в
 потолок и **больше CPU не получит никогда**. Такой сервис масштабируют процессами, а не ядрами.
 
@@ -85,14 +87,15 @@ all   50.25    0.00    0.50    0.00    0.00    0.00    0.00    0.00    0.00   49
 pidstat -w 1                        # по процессам
 pidstat -wt -p 4312 1               # по потокам конкретного процесса
 grep ctxt_switches /proc/4312/status
-```text
-```text
+```
+```text:no-line-numbers
 # пример вывода: pidstat -w -p 4312 1
 UID       PID   cswch/s nvcswch/s  Command
 1000     4312      2.00    812.00  python3      ← вытесняют ~800 раз/с: CPU не хватает
-```text
+```
+
 Сколько задачи **ждут** в очереди — видно только гистограммой задержки run queue:
-`sudo runqlat-bpfcc 10 1` ([07_ebpf_bpftrace.md](/performance/07-ebpf-bpftrace)). Интегрально то же
+`sudo runqlat-bpfcc 10 1` ([07. eBPF, bcc и bpftrace: вопросы прямо к ядру](/performance/07-ebpf-bpftrace)). Интегрально то же
 показывает PSI: `/proc/pressure/cpu` (тема 06).
 
 ---
@@ -110,11 +113,12 @@ sudo perf top -p 4312 -g           # один процесс, со стекам�
 sudo perf record -F 99 -g -p 4312 -- sleep 30   # ⭐ запись профиля: 99 Гц, 30 с, со стеками
 sudo perf record -F 99 -a -g -- sleep 30        # вся система
 sudo perf report --stdio --no-children | head -40
-```text
+```
+
 > На Ubuntu `kernel.perf_event_paranoid = 4` — без `sudo` perf не работает вовсе.
 > 99 Гц, а не 100 — чтобы не совпасть по фазе с таймерами, тикающими 100 раз в секунду.
 
-```text
+```
 # пример вывода: sudo perf stat -p 4312 -- sleep 10 (VM с host-passthrough)
  Performance counter stats for process id '4312':
 
@@ -124,19 +128,19 @@ sudo perf report --stdio --no-children | head -40
                  0      page-faults         #    0.000 /sec
     34,112,905,221      cycles              #    3.417 GHz
     98,443,120,774      instructions        #    2.89  insn per cycle
-```text
+```
 `0.998 CPUs utilized` — процесс съедает ровно одно ядро. **IPC** (insn per cycle) ≈ 2–3 —
 процессор реально считает; IPC < 1 — чаще ждёт память (cache misses), и оптимизировать
 нужно доступ к данным, а не «алгоритм».
 
-```text
+```
 # пример вывода: sudo perf top (VM, на фоне openssl speed sha256)
 Samples: 48K of event 'cycles:P', 4000 Hz, Event count (approx.): 9012250000 lost: 0/0 drop: 0/0
 Overhead  Shared Object        Symbol
   71.48%  libcrypto.so.3       [.] sha256_block_data_order_avx2
    6.12%  [kernel]             [k] clear_page_erms
    2.03%  [kernel]             [k] _raw_spin_unlock_irqrestore
-```text
+```
 `[.]` — user space, `[k]` — ядро. Много `[k]` у процесса = высокий `%sys`: смотри, какие
 syscalls его вызывают (тема 05).
 
@@ -153,12 +157,13 @@ python3 -X perf ~/perf/cpu_hog.py &            # Python 3.12: пишет /tmp/pe
 sudo perf record -F 99 -g -p $! -- sleep 20
 sudo perf report --stdio --no-children | grep -m5 'py::'
 #   38.10%  python3  perf-4312.map  [.] py::fib:/home/vagrant/perf/cpu_hog.py   ← пример
-```text
+```
+
 ---
 
 ## 4. Flame graph: профиль одной картинкой
 
-```text
+```text:no-line-numbers
             ┌──────────┐
             │  fib     │        ← верхний край = функция, которая была НА CPU
       ┌─────┴──────────┴──┐┌─────────┐
@@ -168,7 +173,8 @@ sudo perf report --stdio --no-children | grep -m5 'py::'
  ┌─┴─────────────────────────────────────┴┐        по алфавиту и склеены
  │                  main                   │
  └─────────────────────────────────────────┘
-```text
+```
+
 Как читать: ищи **широкие плато сверху** — функции, которые сами жгут CPU. Широкая
 «башня» внизу без плато — просто общий предок. Цвет в классическом flame graph случаен.
 
@@ -187,7 +193,8 @@ sudo perf script | inferno-collapse-perf | inferno-flamegraph > cpu.svg
 
 # Вариант 3 — сразу из eBPF, без perf.data на диске (тема 07)
 sudo profile-bpfcc -F 99 -f 30 > out.folded && ~/FlameGraph/flamegraph.pl out.folded > cpu.svg
-```text
+```
+
 > В upstream perf есть `perf script report flamegraph` (HTML), но в Ubuntu-пакетах
 > linux-tools скрипты perf обычно не поставляются — надёжнее FlameGraph или inferno.
 > **Off-CPU flame graph** (где процесс *ждёт*, а не считает) строится из `offcputime-bpfcc -f` —
@@ -200,11 +207,12 @@ sudo profile-bpfcc -F 99 -f 30 > out.folded && ~/FlameGraph/flamegraph.pl out.fo
 `%steal` — время, когда vCPU был готов работать, но гипервизор выполнял кого-то другого.
 Внутри VM это выглядит как «всё медленнее без причины».
 
-```text
+```
 # пример вывода: mpstat 1 — облачная VM на burstable-инстансе после исчерпания кредитов
 CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
 all   38.12    0.00    2.01    0.00    0.00    0.25   59.62    0.00    0.00    0.00
-```text
+```
+
 | Причина | Как отличить | Что делать |
 |---------|--------------|------------|
 | «Шумный сосед» на хосте | steal скачет без связи с твоей нагрузкой | Миграция/пересоздание VM, dedicated host |
@@ -228,26 +236,28 @@ cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq     # кГц
 sudo turbostat --quiet --interval 5      # Busy%, Bzy_MHz (частота под нагрузкой), CoreTmp, PkgWatt
 dmesg -T | grep -i -E 'throttl|temperature'      # тепловой троттлинг ядро пишет в лог
 cat /sys/devices/system/cpu/cpu0/thermal_throttle/core_throttle_count   # Intel: счётчик событий
-```text
+```
+
 | Где | Что видно |
 |-----|-----------|
 | Железный сервер | Governor `powersave` на проде, троттлинг от перегрева (пыль, вентиляторы, BIOS power limits) |
 | VM в облаке / на стенде | `cpufreq` обычно **нет** — частотой управляет хост; turbostat может не работать |
-| Контейнер | «Троттлинг» там — это CFS-квота cgroup, а не частота. Совсем другой механизм → [06_cgroups_containers.md](/performance/06-cgroups-containers) |
+| Контейнер | «Троттлинг» там — это CFS-квота cgroup, а не частота. Совсем другой механизм → [06. cgroups v2 и контейнеры](/performance/06-cgroups-containers) |
 
 ---
 
 ## 7. Память: page cache против «занятой»
 
-Базовое правило «смотри на `available`» — в [../Linux/14_process_utilization.md](/linux/14-process-utilization).
+Базовое правило «смотри на `available`» — в [Linux: 14. Мониторинг процессов и cron](/linux/14-process-utilization).
 Глубже — из чего оно складывается.
 
-```text
+```
 # пример вывода: free -w -m (VM 4 ГБ, после копирования большого файла)
                total        used        free      shared     buffers       cache   available
 Mem:            3915        1227         118         164          52        2833        2688
 Swap:              0           0           0
-```text
+```
+
 | Колонка | Смысл |
 |---------|-------|
 | `used` | В procps-ng 4.x (Ubuntu 24.04) это `total − available`, поэтому `used + free + buff/cache` ≠ `total` |
@@ -262,7 +272,8 @@ Swap:              0           0           0
 grep -E 'MemAvailable|^Cached|Dirty|AnonPages|Shmem:|SReclaimable|SUnreclaim' /proc/meminfo
 sudo slabtop -o | head -15        # память ядра: dentry/inode-кэш, сетевые буферы
 df -h -t tmpfs                    # не съел ли память файл в /dev/shm или /run
-```text
+```
+
 > ⚠️ `echo 3 | sudo tee /proc/sys/vm/drop_caches` сбрасывает кэш — **только для экспериментов**
 > (например, «холодный» fio в теме 03). На проде это не «освобождает память», а ломает
 > производительность: все читают с диска заново.
@@ -271,7 +282,7 @@ df -h -t tmpfs                    # не съел ли память файл в 
 
 ## 8. RSS, PSS, USS: сколько памяти на самом деле у процесса
 
-```text
+```text:no-line-numbers
  процесс A                процесс B         RSS  = всё, что сейчас в RAM у процесса, включая общее
  ┌──────────────┐        ┌──────────────┐   USS  = только его приватные страницы
  │ приватные 50M│        │ приватные 30M│         (освободятся, если убить процесс)
@@ -280,7 +291,8 @@ df -h -t tmpfs                    # не съел ли память файл в 
  └──────────────────────────────────────┘   A: RSS 90M, USS 50M, PSS 50 + 40/2 = 70M
                                             B: RSS 70M, USS 30M, PSS 30 + 40/2 = 50M
  Сумма RSS = 160M (больше реального!)       Сумма PSS = 120M — честная сумма по системе
-```text
+```
+
 Где это важно: 16 воркеров gunicorn или PostgreSQL-бэкенды после `fork()` делят память
 через copy-on-write. Сумма RSS покажет «8 ГБ», а реально занято 2 ГБ.
 
@@ -288,8 +300,8 @@ df -h -t tmpfs                    # не съел ли память файл в 
 sudo smem -k -s pss -r | head             # колонки: PID User Command Swap USS PSS RSS
 sudo smem -k -s pss -r -P gunicorn -t     # только gunicorn, с итогом
 sudo cat /proc/4312/smaps_rollup          # то же для одного процесса, без smem
-```text
-```text
+```
+```text:no-line-numbers
 # пример вывода: /proc/PID/smaps_rollup (сокращено)
 Rss:              412340 kB
 Pss:              298117 kB
@@ -298,7 +310,8 @@ Private_Dirty:    280456 kB      ← USS = Private_Clean + Private_Dirty = 28166
 Shared_Clean:     118032 kB
 Anonymous:        283900 kB
 Swap:                  0 kB
-```text
+```
+
 | Метрика | Когда смотреть |
 |---------|----------------|
 | RSS | Быстрая оценка; её же считает cgroup-лимит в контейнере (вместе с page cache — тема 06) |
@@ -309,14 +322,15 @@ Swap:                  0 kB
 
 ## 9. Swap, swappiness и major faults
 
-`si/so` в `vmstat` — в [../Linux/14_process_utilization.md](/linux/14-process-utilization),
-swap-файл — в [../Linux/10_the_filesystem.md](/linux/10-the-filesystem). Глубже:
+`si/so` в `vmstat` — в [Linux: 14. Мониторинг процессов и cron](/linux/14-process-utilization),
+swap-файл — в [Linux: 10. Файловая система](/linux/10-the-filesystem). Глубже:
 
 ```bash
 sar -W 1          # pswpin/s pswpout/s — страницы свопа в секунду
 sar -B 1          # majflt/s — чтение страниц с диска; pgscand/s — direct reclaim
 pidstat -r 1      # minflt/s majflt/s VSZ RSS %MEM по процессам
-```text
+```
+
 - **Major fault** — страницы нет в RAM, её читают с диска (из свопа или файла). Каждый
   стоит миллисекунды: процесс «тормозит», хотя CPU свободен.
 - **`pgscand/s` > 0** — direct reclaim: процесс сам чистит память в момент аллокации.
@@ -339,25 +353,27 @@ pidstat -r 1      # minflt/s majflt/s VSZ RSS %MEM по процессам
 ```bash
 pidstat -r -p 4312 60                         # RSS раз в минуту — тренд за час
 while sleep 60; do echo "$(date +%T) $(ps -o rss= -p 4312)"; done | tee rss.log
-```text
-```text
+```
+```text:no-line-numbers
 # пример вывода: pidstat -r -p 4312 60
           UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
 14:00:01 1000      4312    812.40      0.00  612340  201544   5.15  python3
 14:01:01 1000      4312    797.13      0.00  654120  242968   6.21  python3
 14:02:01 1000      4312    803.55      0.00  695900  284312   7.26  python3   ← +41 МБ/мин
-```text
+```
+
 Где растёт — по картам памяти:
 ```bash
 sudo pmap -x 4312 | sort -k3 -n | tail -5     # регионы с наибольшим RSS
 sudo pmap -x 4312 > t1; sleep 300; sudo pmap -x 4312 > t2; diff t1 t2   # что выросло
-```text
-```text
+```
+```text:no-line-numbers
 # пример вывода: pmap -x (хвост после sort по RSS)
 Address           Kbytes     RSS   Dirty Mode  Mapping
 00007f1c2c000000  131072  131072  131072 rw---   [ anon ]
 000055d5c7a1e000  284412  284300  284300 rw---   [ anon ]    ← heap растёт — утечка в куче
-```text
+```
+
 | Растёт | Вероятно |
 |--------|----------|
 | `[ anon ]` / heap | Утечка объектов в коде: кэш без лимита, глобальный список, незакрытые ресурсы |
@@ -366,7 +382,7 @@ Address           Kbytes     RSS   Dirty Mode  Mapping
 
 Дальше — инструмент языка: Python `tracemalloc`/memray, Go `pprof` heap, Java heap dump
 (`jmap`), Node `--heapsnapshot-signal`. Для C/C++ и «чёрного ящика» — `memleak-bpfcc -p PID`
-([07_ebpf_bpftrace.md](/performance/07-ebpf-bpftrace)). Полный разбор — лаба 2 в [08_practice_labs.md](/softskills/08-practice-labs).
+([07. eBPF, bcc и bpftrace: вопросы прямо к ядру](/performance/07-ebpf-bpftrace)). Полный разбор — лаба 2 в [08. Практика: 6 инцидентов на стенде](/performance/08-practice-labs).
 
 ---
 
@@ -376,28 +392,29 @@ Address           Kbytes     RSS   Dirty Mode  Mapping
 (своп полон или его нет, кэш выжат). Два вида:
 - **глобальный OOM** — кончилась память всей машины;
 - **cgroup OOM** — процесс упёрся в `memory.max` своей cgroup (контейнер, systemd-юнит):
-  на хосте память может быть свободна. Подробно — [06_cgroups_containers.md](/performance/06-cgroups-containers).
+  на хосте память может быть свободна. Подробно — [06. cgroups v2 и контейнеры](/performance/06-cgroups-containers).
 
 **Как выбирает жертву** (`mm/oom_kill.c`, `oom_badness`):
-```text
+```text:no-line-numbers
 badness = RSS + swap + page tables (в страницах)  +  oom_score_adj × totalpages / 1000
           └────────── доля памяти ───────────┘      └── поправка −1000…+1000 ──────┘
 убивают процесс с максимальным badness; oom_score_adj = −1000 → не убьют никогда
 
 /proc/PID/oom_score = (1000 + badness в ‰ от totalpages) × 2/3
                       у крошечного процесса с adj 0 это ~666, adj −1000 → 0
-```text
+```
+
 ```bash
 for p in $(pgrep -d' ' .); do printf '%s %s %s\n' "$(cat /proc/$p/oom_score 2>/dev/null)" "$p" \
   "$(cat /proc/$p/comm 2>/dev/null)"; done | sort -rn | head      # кандидаты №1
 systemctl show postgresql -p OOMScoreAdjust      # systemd: OOMScoreAdjust= в юните
-```text
+```
 Kubernetes сам ставит `oom_score_adj` по QoS: Guaranteed −997, BestEffort 1000,
-Burstable — между ([../Kubernetes/09_probes_resources.md](/kubernetes/09-probes-resources)).
+Burstable — между ([Kubernetes: 09. Проверки (probes) и ресурсы](/kubernetes/09-probes-resources)).
 
 ### Читаем OOM-отчёт построчно
 
-```text
+```text:no-line-numbers
 # пример: journalctl -k — глобальный OOM на VM 4 ГБ (сокращено)
 python3 invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
   └─ КТО ПОПРОСИЛ память последним. Это не обязательно виновник!
@@ -416,7 +433,8 @@ oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,glob
   └─ CONSTRAINT_NONE + global_oom = кончилась память машины; task_memcg — чья cgroup
 Out of memory: Killed process 4312 (python3) total-vm:4049380kB, anon-rss:3759200kB, file-rss:2848kB, shmem-rss:0kB, UID:1000 pgtables:7452kB oom_score_adj:0
   └─ КОГО убили и сколько он держал: anon-rss 3,6 ГБ
-```text
+```
+
 | Строка | Глобальный OOM | cgroup OOM (контейнер, юнит) |
 |--------|----------------|------------------------------|
 | constraint | `CONSTRAINT_NONE`, `global_oom` | `CONSTRAINT_MEMCG`, `oom_memcg=/system.slice/docker-….scope` |
@@ -428,8 +446,8 @@ journalctl -k | grep -E 'invoked oom-killer|Killed process'     # все OOM-с�
 journalctl -k -b -1 | grep -i 'killed process'                  # до последней перезагрузки
 sudo dmesg -T | grep -A40 'invoked oom-killer' | less           # целиком, с человеческим временем
 grep oom_kill /proc/vmstat                                      # счётчик OOM-убийств с загрузки
-```text
-Код выхода убитого процесса — 137 (128 + SIGKILL, см. [../Linux/07_processes.md](/linux/07-processes)).
+```
+Код выхода убитого процесса — 137 (128 + SIGKILL, см. [Linux: 07. Processes](/linux/07-processes)).
 
 > ⭐ «Invoked» ≠ «killed». Виновник — тот, у кого большой `rss` в таблице, а вызвать OOM
 > мог любой невинный процесс, попросивший 4 КБ в неудачный момент.
@@ -457,7 +475,7 @@ sysctl vm.overcommit_memory vm.overcommit_ratio
 grep -E 'CommitLimit|Committed_AS' /proc/meminfo
 # CommitLimit  = swap + RAM × overcommit_ratio / 100   ← действует только в режиме 2
 # Committed_AS = сколько виртуальной памяти уже обещано всем процессам
-```text
+```
 > ⚠️ Режим 2 с дефолтным `overcommit_ratio=50` и без свопа: половина RAM «недоступна»
 > для аллокаций — сервисы падают с ENOMEM при свободной памяти. Меняй вместе с ratio.
 
@@ -475,7 +493,7 @@ grep -E 'CommitLimit|Committed_AS' /proc/meminfo
 ```bash
 cat /sys/kernel/mm/transparent_hugepage/enabled     # always [madvise] never
 grep -E 'AnonHugePages|HugePages_' /proc/meminfo
-```text
+```
 Некоторые СУБД (Redis, старые версии MongoDB) просят `never` — сверяйся с документацией своей версии.
 
 ---
@@ -504,7 +522,7 @@ grep -E 'AnonHugePages|HugePages_' /proc/meminfo
 - Flame graph — лучший аргумент в споре «это инфраструктура тормозит»: картинка с широким
   плато в `json.dumps` или regex снимает вопрос.
 - Continuous profiling (Parca, Pyroscope) — те же flame graphs, но постоянно и по всему
-  парку: видно, какой релиз добавил CPU ([07_ebpf_bpftrace.md](/performance/07-ebpf-bpftrace)).
+  парку: видно, какой релиз добавил CPU ([07. eBPF, bcc и bpftrace: вопросы прямо к ядру](/performance/07-ebpf-bpftrace)).
 - Каждое OOM-событие — повод для алерта (`node_vmstat_oom_kill` из node_exporter) и разбора:
   утечка, неверный лимит или реальный рост нагрузки. Поднять лимит «×2» — не разбор.
 - В облаке steal и исчерпанные CPU-кредиты — частая причина «загадочных» тормозов; метрика
@@ -554,13 +572,40 @@ grep -E 'AnonHugePages|HugePages_' /proc/meminfo
 10. `CONSTRAINT_MEMCG` — упёрлись в лимит cgroup, `global_oom` — кончилась память машины.
 11. Overcommit 0/1/2: режим 2 превращает OOM в ENOMEM, но требует расчёта `CommitLimit`.
 
-➡️ Дальше: [03_disk_io.md](/performance/03-disk-io) · задачи: 02_cpu_memory_tasks.md
+---
 
+## Задачи
+
+> Стенд: VM `perf-lab` из [Performance](/performance/); ⚠️ ломающие задачи (OOM, overcommit,
+> нагрузка) — только на VM, перед темой `vagrant snapshot save before_perf_02`.
+> Скрипты для задач кладёшь в `~/perf/02/`.
+
+```python
+# ~/perf/02/cpu_hog.py — два «горячих» места: рекурсия и сериализация
+import json
+
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+def serialize():
+    return json.dumps([{"id": i, "v": "x" * 50} for i in range(2000)])
+
+while True:
+    fib(25)
+    serialize()
+```
+```python
+# ~/perf/02/leak.py — «утечка» ~10 МБ/с (bytes заполнен данными → RSS реально растёт)
+import time
+hoard = []
+while True:
+    hoard.append(b"x" * (10 * 1024 * 1024))
+    time.sleep(1)
+```
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Чем `%iowait` отличается от загрузки CPU? Почему iowait может упасть, хотя диск
 по-прежнему тормозит?
@@ -620,7 +665,11 @@ Instructions per cycle — сколько инструкций процессо�
 
 <details><summary>Ответ</summary>
 
-1) Бинарник без символов (stripped) → пакеты `-dbgsym`/debuginfod, не стрипать свои сборки.
+1\) Бинарник без символов (stripped) → пакеты `-dbgsym`/debuginfod, не стрипать свои сборки.
+2) Код без frame pointers → стеки обрываются: `--call-graph dwarf` или сборка
+с `-fno-omit-frame-pointer`. 3) Интерпретатор/JIT → perf видит только движок: Python 3.12+
+`-X perf`, Java `-XX:+PreserveFramePointer` + perf-map-agent, Node `--perf-basic-prof`, либо
+профайлер языка (py-spy, async-profiler, pprof).
 
 </details>
 
@@ -707,7 +756,7 @@ kswapd не успевает: прямой рост латентности. Ви
 
 Глобальный: `constraint=CONSTRAINT_NONE`, `global_oom`, итоговая строка
 `Out of memory: Killed process …`, кандидаты — все процессы. cgroup: `constraint=CONSTRAINT_MEMCG`,
-`oom_memcg=&lt;путь cgroup&gt;`, строка `Memory cgroup out of memory: Killed process …`, кандидаты —
+`oom_memcg=<путь cgroup>`, строка `Memory cgroup out of memory: Killed process …`, кандидаты —
 только процессы этой cgroup, на хосте память может быть свободна.
 
 </details>
@@ -737,314 +786,137 @@ RAM × overcommit_ratio / 100`, сверх — `ENOMEM`. `Committed_AS` — ск
 
 ### Блок B. «Что произойдёт / что тут не так»
 
-
 ```text:no-line-numbers
 B1.  $ mpstat -P ALL 1          (VM 4 vCPU, веб-сервер под трафиком, жалобы на латентность)
-```text
-<details><summary>Ответ</summary>
+     CPU    %usr   %sys %iowait   %irq   %soft  %steal   %idle
+     all   14.20   3.10    0.00   0.00   25.30    0.00   57.40
+       0   18.00   4.00    0.00   0.00    1.00    0.00   77.00
+       1   16.00   3.00    0.00   0.00    0.00    0.00   81.00
+       2   15.00   3.00    0.00   0.00    0.00    0.00   82.00
+       3    8.00   2.00    0.00   0.00   90.00    0.00    0.00
 
-⚠️ Всё softirq на ядре 3 (`%soft` 90%, idle 0): прерывания сетевой карты обрабатываются
+B2.  $ vmstat 1                  (4 ядра)            $ pidstat -w -p 2210 1
+      r  b ... us sy id wa st                        PID   cswch/s nvcswch/s  Command
+      9  0 ... 96  4  0  0  0                        2210     3.00   1450.00  java
+
+B3.  top - %Cpu(s): 21.3 us,  2.0 sy,  0.0 ni,  0.0 id,  0.0 wa,  0.0 hi,  0.3 si, 76.4 st
+     (облачная VM t-класса, сервис не менялся неделю)
+
+B4.  $ sudo perf top
+     Overhead  Shared Object   Symbol
+       44.81%  [kernel]        [k] native_queued_spin_lock_slowpath
+        9.12%  [kernel]        [k] _raw_spin_lock
+        3.40%  app             [.] handle_conn
+
+B5.  $ sudo perf report --stdio --no-children | head
+       71.20%  python3  python3.12      [.] _PyEval_EvalFrameDefault
+        8.03%  python3  python3.12      [.] _PyObject_Malloc
+        5.11%  python3  [unknown]       [.] 0x00007f3a91c2b1e0
+
+B6.  $ free -m
+                    total    used    free   shared  buff/cache  available
+     Mem:            7821    7210     180     3900        4300        611
+     (в top нет процессов с RSS больше 300 МБ)
+
+B7.  $ sudo smem -k -s pss -r -P gunicorn
+       PID User     Command                  Swap      USS      PSS      RSS
+      1201 app      gunicorn: worker          0     58.1M    91.4M   301.2M
+      1202 app      gunicorn: worker          0     57.9M    91.2M   300.9M
+      ... (ещё 6 воркеров с такими же цифрами)
+     Мониторинг суммирует RSS: «gunicorn занимает 2,4 ГБ».
+
+B8.  kernel: sshd invoked oom-killer: gfp_mask=0xcc0(GFP_KERNEL), order=0, oom_score_adj=0
+     kernel: [  pid  ]   uid  tgid total_vm      rss ... oom_score_adj name
+     kernel: [    901]     0   901     4012     1630 ...             0 sshd
+     kernel: [   2210]  1001  2210  1302312   838912 ...             0 java
+     kernel: Out of memory: Killed process 2210 (java) total-vm:5209248kB, anon-rss:3355648kB, ...
+     Коллега: «sshd сломал сервер, надо его обновить».
+
+B9.  kernel: oom-kill:constraint=CONSTRAINT_MEMCG,...,oom_memcg=/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod6f1c…slice,...,task=node,pid=5521
+     kernel: Memory cgroup out of memory: Killed process 5521 (node) total-vm:1441200kB, anon-rss:523220kB, ...
+     $ free -g  →  available: 11
+
+B10. $ sysctl vm.overcommit_memory vm.overcommit_ratio
+     vm.overcommit_memory = 2
+     vm.overcommit_ratio = 50
+     $ grep -E 'MemTotal|MemAvailable|SwapTotal|CommitLimit|Committed_AS' /proc/meminfo
+     MemTotal:  8008420 kB   MemAvailable: 3620120 kB   SwapTotal: 0 kB
+     CommitLimit: 4004208 kB   Committed_AS: 3998950 kB
+     app: fork failed: Cannot allocate memory
+
+B11. $ pidstat -r -p 3300 600            (сервис под постоянной нагрузкой)
+     10:00  VSZ 812340  RSS 402112
+     10:10  VSZ 812340  RSS 402320
+     10:20  VSZ 812340  RSS 401980
+     $ free -m (за то же время): buff/cache 1200 → 3900, available 5100 → 4950
+     Коллега: «у сервиса утечка, память растёт».
+
+B12. $ sar -B 1
+     pgpgin/s pgpgout/s   fault/s  majflt/s  pgfree/s pgscank/s pgscand/s pgsteal/s    %vmeff
+     48210.00   9120.00  51200.00    612.00  60210.00  81200.00  12410.00  40120.00     42.84
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Всё softirq на ядре 3 (`%soft` 90%, idle 0): прерывания сетевой карты обрабатываются
 одним ядром, оно в полке, пакеты копятся — латентность растёт при «57% idle» в среднем.
 Проверить `mpstat -I SCPU 1` (NET_RX на CPU3), `/proc/interrupts`; лечить RSS/RPS, `irqbalance`,
 больше очередей NIC.
 
-</details>
-
-```text:no-line-numbers
-     CPU    %usr   %sys %iowait   %irq   %soft  %steal   %idle
-```text
-```text:no-line-numbers
-     all   14.20   3.10    0.00   0.00   25.30    0.00   57.40
-```text
-```text:no-line-numbers
-       0   18.00   4.00    0.00   0.00    1.00    0.00   77.00
-```text
-```text:no-line-numbers
-       1   16.00   3.00    0.00   0.00    0.00    0.00   81.00
-```text
-```text:no-line-numbers
-       2   15.00   3.00    0.00   0.00    0.00    0.00   82.00
-```text
-```text:no-line-numbers
-       3    8.00   2.00    0.00   0.00   90.00    0.00    0.00
-```text
-```text:no-line-numbers
-B2.  $ vmstat 1                  (4 ядра)            $ pidstat -w -p 2210 1
-```text
-<details><summary>Ответ</summary>
-
-⚠️ CPU saturation: `r` 9 при 4 ядрах, `id` 0, у java 1450 вытеснений в секунду при 3
+**B2.** ⚠️ CPU saturation: `r` 9 при 4 ядрах, `id` 0, у java 1450 вытеснений в секунду при 3
 добровольных — потокам не хватает CPU. Дальше: `pidstat -t` (какие потоки), `perf top -p 2210`;
 решение — оптимизировать горячий код, уменьшить число потоков или добавить ядра.
 
-</details>
-
-```text:no-line-numbers
-      r  b ... us sy id wa st                        PID   cswch/s nvcswch/s  Command
-```text
-```text:no-line-numbers
-      9  0 ... 96  4  0  0  0                        2210     3.00   1450.00  java
-```text
-```text:no-line-numbers
-B3.  top - %Cpu(s): 21.3 us,  2.0 sy,  0.0 ni,  0.0 id,  0.0 wa,  0.0 hi,  0.3 si, 76.4 st
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Steal 76%: гипервизор отдаёт VM лишь четверть времени. На t-классе почти наверняка
+**B3.** ⚠️ Steal 76%: гипервизор отдаёт VM лишь четверть времени. На t-классе почти наверняка
 кончились CPU-кредиты (проверить в консоли облака). Решение — инстанс с постоянной
 производительностью или unlimited-режим; код тут ни при чём.
 
-</details>
-
-```text:no-line-numbers
-     (облачная VM t-класса, сервис не менялся неделю)
-```text
-```text:no-line-numbers
-B4.  $ sudo perf top
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Почти половина CPU — ожидание спинлока в ядре (lock contention). Смотреть стек:
+**B4.** ⚠️ Почти половина CPU — ожидание спинлока в ядре (lock contention). Смотреть стек:
 `sudo perf record -g -a -- sleep 10` и `perf report` — кто берёт лок (часто один сокет/accept
 на много потоков, epoll, файловая система, conntrack). `%sys` высокий по той же причине.
 
-</details>
-
-```text:no-line-numbers
-     Overhead  Shared Object   Symbol
-```text
-```text:no-line-numbers
-       44.81%  [kernel]        [k] native_queued_spin_lock_slowpath
-```text
-```text:no-line-numbers
-        9.12%  [kernel]        [k] _raw_spin_lock
-```text
-```text:no-line-numbers
-        3.40%  app             [.] handle_conn
-```text
-```text:no-line-numbers
-B5.  $ sudo perf report --stdio --no-children | head
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Профиль интерпретатора: perf не знает Python-функций, `[unknown]` — JIT/без символов.
+**B5.** ⚠️ Профиль интерпретатора: perf не знает Python-функций, `[unknown]` — JIT/без символов.
 Перезапустить с `python3 -X perf` (3.12+) или взять `py-spy record/top` — будут видны функции
 скрипта.
 
-</details>
-
-```text:no-line-numbers
-       71.20%  python3  python3.12      [.] _PyEval_EvalFrameDefault
-```text
-```text:no-line-numbers
-        8.03%  python3  python3.12      [.] _PyObject_Malloc
-```text
-```text:no-line-numbers
-        5.11%  python3  [unknown]       [.] 0x00007f3a91c2b1e0
-```text
-```text:no-line-numbers
-B6.  $ free -m
-```text
-<details><summary>Ответ</summary>
-
-⚠️ `shared` 3,9 ГБ — это tmpfs/shared memory (например, файлы в `/dev/shm` или `/run`),
+**B6.** ⚠️ `shared` 3,9 ГБ — это tmpfs/shared memory (например, файлы в `/dev/shm` или `/run`),
 он входит в buff/cache, но не освобождается, поэтому `available` всего 611 МБ. Искать
 `df -h -t tmpfs`, `du -sh /dev/shm/*`; удалить мусор или ограничить размер tmpfs.
 
-</details>
-
-```text:no-line-numbers
-                    total    used    free   shared  buff/cache  available
-```text
-```text:no-line-numbers
-     Mem:            7821    7210     180     3900        4300        611
-```text
-```text:no-line-numbers
-     (в top нет процессов с RSS больше 300 МБ)
-```text
-```text:no-line-numbers
-B7.  $ sudo smem -k -s pss -r -P gunicorn
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Сумма RSS считает общие страницы (CoW от master-процесса, библиотеки) восемь раз.
+**B7.** ⚠️ Сумма RSS считает общие страницы (CoW от master-процесса, библиотеки) восемь раз.
 Реально: сумма PSS ≈ 8 × 91 ≈ 730 МБ; USS 58 МБ — сколько освободится при убийстве одного
 воркера. Мониторинг надо строить на PSS или на памяти cgroup.
 
-</details>
+**B8.** ⚠️ sshd лишь попросил страницу в неудачный момент («invoked»). Виновник — java: RSS
+838912 страниц ≈ 3,2 ГБ, её и убили. Разбирать надо память java (heap, лимиты `-Xmx`, утечка).
 
-```text:no-line-numbers
-       PID User     Command                  Swap      USS      PSS      RSS
-```text
-```text:no-line-numbers
-      1201 app      gunicorn: worker          0     58.1M    91.4M   301.2M
-```text
-```text:no-line-numbers
-      1202 app      gunicorn: worker          0     57.9M    91.2M   300.9M
-```text
-```text:no-line-numbers
-      ... (ещё 6 воркеров с такими же цифрами)
-```text
-```text:no-line-numbers
-     Мониторинг суммирует RSS: «gunicorn занимает 2,4 ГБ».
-```text
-```text:no-line-numbers
-B8.  kernel: sshd invoked oom-killer: gfp_mask=0xcc0(GFP_KERNEL), order=0, oom_score_adj=0
-```text
-<details><summary>Ответ</summary>
-
-⚠️ sshd лишь попросил страницу в неудачный момент («invoked»). Виновник — java: RSS
-
-</details>
-
-```text:no-line-numbers
-     kernel: [  pid  ]   uid  tgid total_vm      rss ... oom_score_adj name
-```text
-```text:no-line-numbers
-     kernel: [    901]     0   901     4012     1630 ...             0 sshd
-```text
-```text:no-line-numbers
-     kernel: [   2210]  1001  2210  1302312   838912 ...             0 java
-```text
-```text:no-line-numbers
-     kernel: Out of memory: Killed process 2210 (java) total-vm:5209248kB, anon-rss:3355648kB, ...
-```text
-```text:no-line-numbers
-     Коллега: «sshd сломал сервер, надо его обновить».
-```text
-```text:no-line-numbers
-B9.  kernel: oom-kill:constraint=CONSTRAINT_MEMCG,...,oom_memcg=/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod6f1c…slice,...,task=node,pid=5521
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Это не нехватка памяти ноды: `CONSTRAINT_MEMCG` и `oom_memcg=…pod…` — контейнер
+**B9.** ⚠️ Это не нехватка памяти ноды: `CONSTRAINT_MEMCG` и `oom_memcg=…pod…` — контейнер
 упёрся в свой `limits.memory` (~512 Mi по anon-rss). В Kubernetes это `OOMKilled`, код 137.
-Поднимать лимит или чинить потребление — [06_cgroups_containers.md](/performance/06-cgroups-containers).
+Поднимать лимит или чинить потребление — [06. cgroups v2 и контейнеры](/performance/06-cgroups-containers).
 
-</details>
-
-```text:no-line-numbers
-     kernel: Memory cgroup out of memory: Killed process 5521 (node) total-vm:1441200kB, anon-rss:523220kB, ...
-```text
-```text:no-line-numbers
-     $ free -g  →  available: 11
-```text
-```text:no-line-numbers
-B10.  $ sysctl vm.overcommit_memory vm.overcommit_ratio
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Режим 2: `CommitLimit` = 0 swap + 8 ГБ × 50% ≈ 4 ГБ, и `Committed_AS` уже упёрся
+**B10.** ⚠️ Режим 2: `CommitLimit` = 0 swap + 8 ГБ × 50% ≈ 4 ГБ, и `Committed_AS` уже упёрся
 в него. Любая новая аллокация (в том числе fork) получает ENOMEM при 3,6 ГБ доступной RAM.
 Вернуть режим 0 или поднять `overcommit_ratio`/добавить swap после расчёта.
 
-</details>
-
-```text:no-line-numbers
-     vm.overcommit_memory = 2
-```text
-```text:no-line-numbers
-     vm.overcommit_ratio = 50
-```text
-```text:no-line-numbers
-     $ grep -E 'MemTotal|MemAvailable|SwapTotal|CommitLimit|Committed_AS' /proc/meminfo
-```text
-```text:no-line-numbers
-     MemTotal:  8008420 kB   MemAvailable: 3620120 kB   SwapTotal: 0 kB
-```text
-```text:no-line-numbers
-     CommitLimit: 4004208 kB   Committed_AS: 3998950 kB
-```text
-```text:no-line-numbers
-     app: fork failed: Cannot allocate memory
-```text
-```text:no-line-numbers
-B11.  $ pidstat -r -p 3300 600            (сервис под постоянной нагрузкой)
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Утечки нет: RSS сервиса стабилен (~402 МБ). Растёт page cache (buff/cache), а
+**B11.** ⚠️ Утечки нет: RSS сервиса стабилен (~402 МБ). Растёт page cache (buff/cache), а
 `available` почти не изменился — кэш освобождаемый. Это нормальная работа ядра.
 
-</details>
-
-```text:no-line-numbers
-     10:00  VSZ 812340  RSS 402112
-```text
-```text:no-line-numbers
-     10:10  VSZ 812340  RSS 402320
-```text
-```text:no-line-numbers
-     10:20  VSZ 812340  RSS 401980
-```text
-```text:no-line-numbers
-     $ free -m (за то же время): buff/cache 1200 → 3900, available 5100 → 4950
-```text
-```text:no-line-numbers
-     Коллега: «у сервиса утечка, память растёт».
-```text
-```text:no-line-numbers
-B12.  $ sar -B 1
-```text
-<details><summary>Ответ</summary>
-
-⚠️ Сильное давление памяти: `pgscand/s` 12 тысяч — direct reclaim (процессы сами
+**B12.** ⚠️ Сильное давление памяти: `pgscand/s` 12 тысяч — direct reclaim (процессы сами
 чистят память на аллокациях), `majflt/s` 612 — страницы читаются с диска, `%vmeff` 43% — reclaim
 неэффективен. Система на грани thrashing: латентность растёт, скоро OOM. Искать потребителя
 (`smem`, `pidstat -r`), смотреть PSI memory.
 
 </details>
 
-```text:no-line-numbers
-     pgpgin/s pgpgout/s   fault/s  majflt/s  pgfree/s pgscank/s pgscand/s pgsteal/s    %vmeff
-```text
-```text:no-line-numbers
-     48210.00   9120.00  51200.00    612.00  60210.00  81200.00  12410.00  40120.00     42.84
-```text
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Однопоточный процесс в полке
-**1.** `stress-ng --cpu 1 --cpu-method matrixprod --timeout 120s &`
-
-<details><summary>Ответ</summary>
-
-Среднее `mpstat 1` ≈ 50% usr на 2 vCPU, `mpstat -P ALL 1` — одно ядро 100%, второе ~0%;
-`pidstat -u 1` — `stress-ng-cpu` ~100% `%CPU`; в `top` после `1` видно ядро в полке. Процесс
-однопоточный: он может занять только одно ядро одновременно, лишние vCPU будут простаивать.
-
-</details>
-
-**2.** Покажи: `mpstat` без `-P ALL` («всё нормально»), `mpstat -P ALL 1` (одно ядро 100%),
+#### C1. 🔑 Однопоточный процесс в полке
+1. `stress-ng --cpu 1 --cpu-method matrixprod --timeout 120s &`
+2. Покажи: `mpstat` без `-P ALL` («всё нормально»), `mpstat -P ALL 1` (одно ядро 100%),
    `pidstat -u 1` (кто), `top` с клавишей `1`.
-
-<details><summary>Ответ</summary>
-
-) Убит процесс с adj 0: у второго badness уменьшен на 500 × totalpages / 1000 (≈ половину RAM),
-при равном RSS его badness ниже. Отчёт — `CONSTRAINT_NONE`, `global_oom`,
-`Out of memory: Killed process`. Второй процесс добей сам: `pkill -f leak.py`.
-
-</details>
-
-**3.** Объясни, почему добавление vCPU этому процессу не поможет.
-
-<details><summary>Ответ</summary>
-
-```bash
-sudo perf record -F 99 -g -p $PID -- sleep 20 && sudo perf script > out.perf
-~/FlameGraph/stackcollapse-perf.pl out.perf | ~/FlameGraph/flamegraph.pl > perf.svg
-sudo profile-bpfcc -F 99 -f -p $PID 20 > bcc.folded && ~/FlameGraph/flamegraph.pl bcc.folded > bcc.svg
-sudo ~/.local/bin/py-spy record -o py.svg --pid $PID --duration 20
-```text
-perf и profile-bpfcc показывают весь стек, включая C-функции интерпретатора и ядро (с `-X perf` —
-ещё и `py::` кадры). py-spy показывает чистые Python-функции с номерами строк, но не ядро и не C-код.
-
-</details>
-
-### C2. 🔑 perf: от процесса до функции
-**1.** `python3 ~/perf/02/cpu_hog.py &` и `sudo perf top -p $!` — что в топе?
+3. Объясни, почему добавление vCPU этому процессу не поможет.
 
 <details><summary>Ответ</summary>
 
@@ -1054,141 +926,145 @@ perf и profile-bpfcc показывают весь стек, включая C-�
 
 </details>
 
-**2.** Перезапусти с `python3 -X perf ~/perf/02/cpu_hog.py &`, повтори.
-
-<details><summary>Ответ</summary>
-
-) Убит процесс с adj 0: у второго badness уменьшен на 500 × totalpages / 1000 (≈ половину RAM),
-при равном RSS его badness ниже. Отчёт — `CONSTRAINT_NONE`, `global_oom`,
-`Out of memory: Killed process`. Второй процесс добей сам: `pkill -f leak.py`.
-
-</details>
-
-**3.** `sudo perf record -F 99 -g -p &lt;PID&gt; -- sleep 20` → `sudo perf report --stdio --no-children | head -30`.
+#### C2. 🔑 perf: от процесса до функции
+1. `python3 ~/perf/02/cpu_hog.py &` и `sudo perf top -p $!` — что в топе?
+2. Перезапусти с `python3 -X perf ~/perf/02/cpu_hog.py &`, повтори.
+3. `sudo perf record -F 99 -g -p <PID> -- sleep 20` → `sudo perf report --stdio --no-children | head -30`.
    Какая функция Python горячее: `fib` или `serialize`?
 
 <details><summary>Ответ</summary>
 
+Без `-X perf`: `_PyEval_EvalFrameDefault`, `PyObject_*`, `[unknown]` — одни внутренности
+интерпретатора. С `-X perf` появляются символы `py::fib:/home/vagrant/perf/02/cpu_hog.py` и
+`py::serialize:…`. На этом скрипте `fib(25)` обычно заметно тяжелее одного `json.dumps` на 2000
+элементов — проверь по `Overhead`, у тебя цифры будут свои.
+
+</details>
+
+#### C3. 🔑 Flame graph тремя способами
+Для процесса из C2 (с `-X perf`): FlameGraph-скрипты, `sudo profile-bpfcc -F 99 -f -p <PID> 20`
+и `sudo ~/.local/bin/py-spy record -o py.svg --pid <PID> --duration 20`. Сравни картинки:
+что видно в каждой, что нет?
+
+<details><summary>Ответ</summary>
+
 ```bash
 sudo perf record -F 99 -g -p $PID -- sleep 20 && sudo perf script > out.perf
 ~/FlameGraph/stackcollapse-perf.pl out.perf | ~/FlameGraph/flamegraph.pl > perf.svg
 sudo profile-bpfcc -F 99 -f -p $PID 20 > bcc.folded && ~/FlameGraph/flamegraph.pl bcc.folded > bcc.svg
 sudo ~/.local/bin/py-spy record -o py.svg --pid $PID --duration 20
-```text
+```
 perf и profile-bpfcc показывают весь стек, включая C-функции интерпретатора и ядро (с `-X perf` —
 ещё и `py::` кадры). py-spy показывает чистые Python-функции с номерами строк, но не ядро и не C-код.
 
 </details>
 
-### C3. 🔑 Flame graph тремя способами
-Для процесса из C2 (с `-X perf`): FlameGraph-скрипты, `sudo profile-bpfcc -F 99 -f -p &lt;PID&gt; 20`
-и `sudo ~/.local/bin/py-spy record -o py.svg --pid &lt;PID&gt; --duration 20`. Сравни картинки:
-что видно в каждой, что нет?
-
-### C4. Voluntary против involuntary
+#### C4. Voluntary против involuntary
 Сравни `pidstat -w 1` для двух нагрузок: `stress-ng --cpu 4 --timeout 60s` (4 воркера на 2 vCPU)
 и `while :; do sleep 0.001; done`. Какая колонка растёт в каждом случае и почему?
 
-### C5. IPC: CPU-bound против memory-bound
-`sudo perf stat -e cycles,instructions -- stress-ng --cpu 1 --cpu-method matrixprod -t 10s` и то же
-для `stress-ng --stream 1 -t 10s`. Сравни IPC. Что делать, если `cycles` показывает `&lt;not supported&gt;`?
-
-### C6. 🔑 RSS против PSS против USS
-```text:no-line-numbers
-# ~/perf/02/shared.py — родитель заполняет 200 МБ и форкает 3 ребёнка (copy-on-write)
-```text
-```text:no-line-numbers
-import os, time
-```text
-```text:no-line-numbers
-data = b"x" * (200 * 1024 * 1024)
-```text
-```text:no-line-numbers
-for _ in range(3):
-```text
-```text:no-line-numbers
-    if os.fork() == 0:
-```text
-```text:no-line-numbers
-        time.sleep(600); os._exit(0)
-```text
-```text:no-line-numbers
-time.sleep(600)
-```text
-Запусти, сравни `ps -o pid,rss,cmd -C python3`, `sudo smem -k -P shared.py -t` и `smaps_rollup`
-одного ребёнка. Сколько памяти занято реально?
-
-### C7. 🔑 Поймать утечку
-`python3 ~/perf/02/leak.py &`. Докажи утечку тремя способами: `pidstat -r -p PID 5`,
-`sudo pmap -x PID` дважды с `diff`, `smaps_rollup` (рост `Private_Dirty`). Останови до OOM.
-
-### C8. 🔑 cgroup OOM против глобального
-**1.** `sudo systemd-run --scope -p MemoryMax=200M python3 ~/perf/02/leak.py` — дождись смерти,
-   найди отчёт в `journalctl -k`: constraint, `oom_memcg`, строка `Killed process`.
-
 <details><summary>Ответ</summary>
 
-Среднее `mpstat 1` ≈ 50% usr на 2 vCPU, `mpstat -P ALL 1` — одно ядро 100%, второе ~0%;
-`pidstat -u 1` — `stress-ng-cpu` ~100% `%CPU`; в `top` после `1` видно ядро в полке. Процесс
-однопоточный: он может занять только одно ядро одновременно, лишние vCPU будут простаивать.
+У `stress-ng --cpu 4` на 2 vCPU растёт `nvcswch/s` (воркеры вытесняют друг друга по кванту).
+У цикла со `sleep 0.001` — `cswch/s` (сотни в секунду): процесс сам засыпает.
 
 </details>
 
-**2.** ⚠️ Снапшот! Запусти два `leak.py`, одному поставь `echo -500 | sudo tee /proc/&lt;PID&gt;/oom_score_adj`.
+#### C5. IPC: CPU-bound против memory-bound
+`sudo perf stat -e cycles,instructions -- stress-ng --cpu 1 --cpu-method matrixprod -t 10s` и то же
+для `stress-ng --stream 1 -t 10s`. Сравни IPC. Что делать, если `cycles` показывает `<not supported>`?
+
+<details><summary>Ответ</summary>
+
+matrixprod даёт высокий IPC (обычно 2+), `--stream` — низкий (< 1): процессор ждёт
+память. `<not supported>` у `cycles` — в VM нет виртуального PMU: нужен `cpu_mode =
+"host-passthrough"` в Vagrantfile (есть на стенде) или работать с software-событиями (`task-clock`).
+
+</details>
+
+#### C6. 🔑 RSS против PSS против USS
+```python
+# ~/perf/02/shared.py — родитель заполняет 200 МБ и форкает 3 ребёнка (copy-on-write)
+import os, time
+data = b"x" * (200 * 1024 * 1024)
+for _ in range(3):
+    if os.fork() == 0:
+        time.sleep(600); os._exit(0)
+time.sleep(600)
+```
+Запусти, сравни `ps -o pid,rss,cmd -C python3`, `sudo smem -k -P shared.py -t` и `smaps_rollup`
+одного ребёнка. Сколько памяти занято реально?
+
+<details><summary>Ответ</summary>
+
+У каждого из 4 процессов RSS ≈ 205+ МБ (сумма > 800 МБ). В `smem` PSS ≈ 55 МБ у каждого
+(200 МБ / 4 + своё), USS детей — единицы МБ. Реально занято ≈ 200 МБ + накладные — это и
+показывает строка итога PSS. В `smaps_rollup` ребёнка большой `Shared_Clean/Shared_Dirty`,
+маленький `Private_*`. Убить: `pkill -f shared.py`.
+
+</details>
+
+#### C7. 🔑 Поймать утечку
+`python3 ~/perf/02/leak.py &`. Докажи утечку тремя способами: `pidstat -r -p PID 5`,
+`sudo pmap -x PID` дважды с `diff`, `smaps_rollup` (рост `Private_Dirty`). Останови до OOM.
+
+<details><summary>Ответ</summary>
+
+`pidstat -r` — RSS растёт ~10 МБ/с. `diff` двух `pmap -x` — растут/появляются регионы
+`[ anon ]` (крупные объекты Python живут в отдельных mmap). `Private_Dirty` в `smaps_rollup`
+растёт так же — память приватная, значит, копит именно этот процесс. Остановить: `kill %1`.
+
+</details>
+
+#### C8. 🔑 cgroup OOM против глобального
+1. `sudo systemd-run --scope -p MemoryMax=200M python3 ~/perf/02/leak.py` — дождись смерти,
+   найди отчёт в `journalctl -k`: constraint, `oom_memcg`, строка `Killed process`.
+2. ⚠️ Снапшот! Запусти два `leak.py`, одному поставь `echo -500 | sudo tee /proc/<PID>/oom_score_adj`.
    Дождись глобального OOM. Кого убили и почему? Сравни отчёты.
 
 <details><summary>Ответ</summary>
 
-) Убит процесс с adj 0: у второго badness уменьшен на 500 × totalpages / 1000 (≈ половину RAM),
+1\) Отчёт: `constraint=CONSTRAINT_MEMCG`, `oom_memcg=/system.slice/run-….scope`,
+`Memory cgroup out of memory: Killed process … (python3)`; машина при этом не страдает.
+2) Убит процесс с adj 0: у второго badness уменьшен на 500 × totalpages / 1000 (≈ половину RAM),
 при равном RSS его badness ниже. Отчёт — `CONSTRAINT_NONE`, `global_oom`,
 `Out of memory: Killed process`. Второй процесс добей сам: `pkill -f leak.py`.
 
 </details>
 
-### C9. Overcommit на практике
-**1.** `python3 -c "import time; x = bytearray(3 * 1024**3); time.sleep(30)" &` — сравни VSZ и RSS.
+#### C9. Overcommit на практике
+1. `python3 -c "import time; x = bytearray(3 * 1024**3); time.sleep(30)" &` — сравни VSZ и RSS.
+2. ⚠️ `sudo sysctl vm.overcommit_memory=2`, повтори. Что изменилось? Посмотри `CommitLimit`.
+3. Верни `sudo sysctl vm.overcommit_memory=0`.
 
 <details><summary>Ответ</summary>
 
-Среднее `mpstat 1` ≈ 50% usr на 2 vCPU, `mpstat -P ALL 1` — одно ядро 100%, второе ~0%;
-`pidstat -u 1` — `stress-ng-cpu` ~100% `%CPU`; в `top` после `1` видно ядро в полке. Процесс
-однопоточный: он может занять только одно ядро одновременно, лишние vCPU будут простаивать.
+1\) VSZ ≈ 3 ГБ, RSS — единицы МБ: большой `bytearray` выделяется через mmap нулевых
+страниц, реальные страницы не тронуты. 2) В режиме 2 с `overcommit_ratio=50` и без swap
+`CommitLimit` ≈ 2 ГБ — `MemoryError` сразу, хотя RAM свободна. 3) Обязательно верни 0.
 
 </details>
 
-**2.** ⚠️ `sudo sysctl vm.overcommit_memory=2`, повтори. Что изменилось? Посмотри `CommitLimit`.
-
-<details><summary>Ответ</summary>
-
-) Убит процесс с adj 0: у второго badness уменьшен на 500 × totalpages / 1000 (≈ половину RAM),
-при равном RSS его badness ниже. Отчёт — `CONSTRAINT_NONE`, `global_oom`,
-`Out of memory: Killed process`. Второй процесс добей сам: `pkill -f leak.py`.
-
-</details>
-
-**3.** Верни `sudo sysctl vm.overcommit_memory=0`.
+#### C10. Кандидаты на OOM и защита сервиса
+Выведи топ-5 процессов по `oom_score`. Запусти `sudo systemd-run --unit=demo -p OOMScoreAdjust=-900 sleep 600`
+и проверь `oom_score_adj` его процесса.
 
 <details><summary>Ответ</summary>
 
 ```bash
-sudo perf record -F 99 -g -p $PID -- sleep 20 && sudo perf script > out.perf
-~/FlameGraph/stackcollapse-perf.pl out.perf | ~/FlameGraph/flamegraph.pl > perf.svg
-sudo profile-bpfcc -F 99 -f -p $PID 20 > bcc.folded && ~/FlameGraph/flamegraph.pl bcc.folded > bcc.svg
-sudo ~/.local/bin/py-spy record -o py.svg --pid $PID --duration 20
-```text
-perf и profile-bpfcc показывают весь стек, включая C-функции интерпретатора и ядро (с `-X perf` —
-ещё и `py::` кадры). py-spy показывает чистые Python-функции с номерами строк, но не ядро и не C-код.
+for p in /proc/[0-9]*; do printf '%s %s %s\n' "$(cat $p/oom_score 2>/dev/null)" "${p#/proc/}" \
+  "$(cat $p/comm 2>/dev/null)"; done | sort -rn | head -5
+sudo systemd-run --unit=demo -p OOMScoreAdjust=-900 sleep 600
+cat /proc/$(systemctl show -p MainPID --value demo)/oom_score_adj     # -900
+sudo systemctl stop demo
+```
+Наверху списка — самые большие по памяти процессы; у `demo` `oom_score` близок к 0.
 
 </details>
-
-### C10. Кандидаты на OOM и защита сервиса
-Выведи топ-5 процессов по `oom_score`. Запусти `sudo systemd-run --unit=demo -p OOMScoreAdjust=-900 sleep 600`
-и проверь `oom_score_adj` его процесса.
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Ночью Java-сервис перезапустился. В логах приложения пусто, `systemctl status` показывает
 `code=killed, status=9/KILL`. Как доказать или опровергнуть OOM?
@@ -1208,7 +1084,7 @@ watchdog/таймаут остановки юнита, человек или с�
 
 <details><summary>Ответ</summary>
 
-1) Steal/CPU-кредиты — `mpstat` `%steal`, кредиты в консоли облака. 2) Меньше ядер или
+1\) Steal/CPU-кредиты — `mpstat` `%steal`, кредиты в консоли облака. 2) Меньше ядер или
 другая частота — `nproc`, `lscpu`, `perf stat` (GHz, IPC) против старого сервера. 3) Сеть и диск
 облака медленнее (сетевые диски с лимитом IOPS, межзонные вызовы) — `iostat -x` await,
 `ss -ti` rtt. Плюс лимиты контейнера (throttling), если переехали и в Kubernetes.
@@ -1285,15 +1161,14 @@ Lock contention в ядре — потоки конкурируют за оди�
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Сервер тормозит, CPU 100%. Твои действия?
 
 <details><summary>Ответ</summary>
 
 Сначала масштаб: `mpstat -P ALL 1` (все ядра или одно, us или sy/si/st), `pidstat -u 1` (кто),
-   `vmstat 1` (`r` против ядер). Если us — `perf top -p PID`/flame graph → функция; sy — `strace -c`,
-   perf со `[k]`; si — прерывания; st — гипервизор. Параллельно — «что изменилось» (деплой, трафик).
-   Смягчение (откат, scale out) — до поиска первопричины.
+`vmstat 1` (`r` против ядер). Если us — `perf top -p PID`/flame graph → функция; sy — `strace -c`,
+perf со `[k]`; si — прерывания; st — гипервизор. Параллельно — «что изменилось» (деплой, трафик).
+Смягчение (откат, scale out) — до поиска первопричины.
 
 </details>
 
@@ -1302,7 +1177,7 @@ Lock contention в ядре — потоки конкурируют за оди�
 <details><summary>Ответ</summary>
 
 us — код приложений, sy — ядро по просьбе процессов (syscalls, page faults), wa — простой CPU
-   при незавершённом I/O (не нагрузка), st — время, отобранное гипервизором.
+при незавершённом I/O (не нагрузка), st — время, отобранное гипервизором.
 
 </details>
 
@@ -1311,7 +1186,7 @@ us — код приложений, sy — ядро по просьбе проц
 <details><summary>Ответ</summary>
 
 `perf record -F 99 -g -p PID -- sleep 30` + `perf report` или flame graph; для Python —
-   `-X perf` или py-spy, для Java — async-profiler, для Go — pprof. На проде — коротко, 99 Гц.
+`-X perf` или py-spy, для Java — async-profiler, для Go — pprof. На проде — коротко, 99 Гц.
 
 </details>
 
@@ -1320,7 +1195,7 @@ us — код приложений, sy — ядро по просьбе проц
 <details><summary>Ответ</summary>
 
 Визуализация сэмплированных стеков: ширина = доля CPU, высота = глубина стека, ось X не время;
-   ищут широкие плато сверху — функции, которые сами жгут CPU.
+ищут широкие плато сверху — функции, которые сами жгут CPU.
 
 </details>
 
@@ -1329,7 +1204,7 @@ us — код приложений, sy — ядро по просьбе проц
 <details><summary>Ответ</summary>
 
 Не по `free`, а по `available`, `si/so` и `majflt` (своп и чтение страниц), `pgscand`
-   (direct reclaim), PSI memory, OOM-событиям в `dmesg`.
+(direct reclaim), PSI memory, OOM-событиям в `dmesg`.
 
 </details>
 
@@ -1338,7 +1213,7 @@ us — код приложений, sy — ядро по просьбе проц
 <details><summary>Ответ</summary>
 
 VSZ — вся виртуальная память (обещанная, не выделенная), почти бесполезна. RSS — страницы
-   в RAM, включая общие. PSS — общие страницы поделены между владельцами, честно суммируется.
+в RAM, включая общие. PSS — общие страницы поделены между владельцами, честно суммируется.
 
 </details>
 
@@ -1347,8 +1222,8 @@ VSZ — вся виртуальная память (обещанная, не в�
 <details><summary>Ответ</summary>
 
 При нехватке памяти ядро убивает процесс с максимальным badness (RSS + swap + page tables +
-   поправка `oom_score_adj`). Защита: `oom_score_adj`/`OOMScoreAdjust=` (−1000 — только для
-   критичного вроде sshd), но главное — лимиты памяти соседям (cgroups, systemd `MemoryMax=`).
+поправка `oom_score_adj`). Защита: `oom_score_adj`/`OOMScoreAdjust=` (−1000 — только для
+критичного вроде sshd), но главное — лимиты памяти соседям (cgroups, systemd `MemoryMax=`).
 
 </details>
 
@@ -1357,8 +1232,8 @@ VSZ — вся виртуальная память (обещанная, не в�
 <details><summary>Ответ</summary>
 
 Тренд RSS/USS под постоянной нагрузкой (`pidstat -r`, метрики), `pmap -x` во времени — какой
-   регион растёт; дальше профайлер памяти языка (tracemalloc/memray, pprof heap, heap dump)
-   или `memleak-bpfcc`. Отличать от роста page cache.
+регион растёт; дальше профайлер памяти языка (tracemalloc/memray, pprof heap, heap dump)
+или `memleak-bpfcc`. Отличать от роста page cache.
 
 </details>
 
@@ -1367,7 +1242,7 @@ VSZ — вся виртуальная память (обещанная, не в�
 <details><summary>Ответ</summary>
 
 Ядро обещает больше виртуальной памяти, чем есть, а страницы выделяет при первом обращении.
-   Режимы 0 (эвристика), 1 (всегда), 2 (строго по `CommitLimit`, иначе ENOMEM).
+Режимы 0 (эвристика), 1 (всегда), 2 (строго по `CommitLimit`, иначе ENOMEM).
 
 </details>
 
@@ -1376,10 +1251,8 @@ VSZ — вся виртуальная память (обещанная, не в�
 <details><summary>Ответ</summary>
 
 Зависит от задачи: небольшой swap сглаживает редкие пики и выселяет холодные страницы, но
-    для latency-чувствительных сервисов и БД своп-ад хуже быстрого OOM. Решение осознанное:
-    размер, `swappiness`, мониторинг `si/so`. В Kubernetes swap исторически выключали.
-
----
+для latency-чувствительных сервисов и БД своп-ад хуже быстрого OOM. Решение осознанное:
+размер, `swappiness`, мониторинг `si/so`. В Kubernetes swap исторически выключали.
 
 </details>
 

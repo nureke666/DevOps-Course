@@ -79,7 +79,7 @@ description: "Ресурсная модель и регионы, IAM и workload
 ⭐ **Одна зона в Казахстане — главное архитектурное следствие.** Мультизонной
 отказоустойчивости «как в AWS» внутри региона нет: HA-мастер k8s и хосты PostgreSQL
 защищают от отказа хоста, но не от отказа ЦОД. DR — вторая площадка, а если в данных есть
-ПДн граждан РК, то тоже в Казахстане ([10_kz_clouds.md](/cloud/10-kz-clouds),
+ПДн граждан РК, то тоже в Казахстане ([10. Казахстанские облака](/cloud/10-kz-clouds),
 Security/07, §7).
 
 ```bash
@@ -395,7 +395,7 @@ yc managed-postgresql cluster list-backups linkd-pg
 
 ## 8. Object Storage через S3 API и Lockbox
 
-**Object Storage** говорит на S3 API ([04_s3_storage.md](/cloud/04-s3-storage)): те же `aws s3`,
+**Object Storage** говорит на S3 API ([04. S3 и объектное хранилище](/cloud/04-s3-storage)): те же `aws s3`,
 `boto3`, `rclone`, `restic`, но со своим endpoint и статическим ключом SA.
 ```bash
 aws configure --profile yc          # key_id / secret из `yc iam access-key create`, region ru-central1
@@ -1007,7 +1007,7 @@ SG целей не пускает health check'и: нет правила с `loa
 
 Всё в одной зоне — отказ площадки = отказ сервиса. Для KZ-региона: вторая площадка
 (другой провайдер или свой ЦОД в Казахстане) с репликой базы и бэкапами, IaC для быстрого
-подъёма, DNS-переключение; RTO/RPO согласовать заранее ([10_kz_clouds.md](/cloud/10-kz-clouds)).
+подъёма, DNS-переключение; RTO/RPO согласовать заранее ([10. Казахстанские облака](/cloud/10-kz-clouds)).
 
 </details>
 

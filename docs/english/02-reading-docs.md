@@ -1,14 +1,14 @@
 ---
 title: "02. Чтение документации, ошибок и issues"
-description: "Блок → Английский для IT → тема 02. Опирается на систему из"
+description: "Skim / scan / intensive, структура доков, deprecated, as of, opt-in, MUST/SHOULD/MAY, changelog, ошибки и stack trace"
 ---
 
 # 02. Чтение документации, ошибок и issues
 
 > Блок → Английский для IT → тема 02. Опирается на систему из
-> [01_level_and_system.md](/english/01-level-and-system): чтение — главный input DevOps-инженера,
+> [01. Уровень и система: как учить английский для IT](/english/01-level-and-system): чтение — главный input DevOps-инженера,
 > и его можно тренировать прямо на рабочих задачах. Лексика отдельных областей —
-> в [03_vocabulary.md](/english/03-vocabulary).
+> в [03. Лексика: глоссарий DevOps, фразовые глаголы, ложные друзья, произношение](/english/03-vocabulary).
 >
 > **После темы ты умеешь:** выбирать режим чтения под задачу (skimming, scanning,
 > intensive); ориентироваться в структуре любой документации; понимать типовые фразы доков
@@ -20,7 +20,7 @@ description: "Блок → Английский для IT → тема 02. Оп�
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
  ЧТО ЧИТАЕШЬ              РЕЖИМ          ГЛАВНЫЙ ВОПРОС
  ─────────────────────────────────────────────────────────────────────────────
  новая дока           ─► skimming   ─►  «это вообще то, что мне нужно?»
@@ -30,7 +30,8 @@ description: "Блок → Английский для IT → тема 02. Оп�
  ошибка               ─► разбор     ─►  кто · что делал · с чем · почему
  stack trace          ─► разбор     ─►  последняя строка / последний «Caused by»
  issue на 40 сообщений ─► skim + scan ─► первый пост, конец, мейнтейнер, workaround
-```text
+```
+
 ---
 
 ## 1. Почему только оригинал
@@ -63,7 +64,7 @@ description: "Блок → Английский для IT → тема 02. Оп�
 
 Почти любая документация делится на одни и те же части:
 
-```text
+```text:no-line-numbers
  Overview / Introduction    что это и зачем              → решить, нужно ли
  Quickstart / Get started   рабочий пример за 10 минут    → потрогать руками
  Concepts / Architecture    как устроено, модель          → понять, почему так
@@ -72,7 +73,8 @@ description: "Блок → Английский для IT → тема 02. Оп�
  Reference                  все поля, флаги, API          → уточнить деталь
  Troubleshooting / FAQ      типовые проблемы              → починить
  Release notes / Changelog  что изменилось в версии       → обновиться без сюрпризов
-```text
+```
+
 Это деление описывает фреймворк **Diátaxis** (diataxis.fr): tutorials, how-to guides,
 reference, explanation. В документации Kubernetes разделы так и называются: Getting
 started, Concepts, Tasks, Tutorials, Reference.
@@ -144,7 +146,7 @@ started, Concepts, Tasks, Tutorials, Reference.
 | *i.e.* | То есть (*that is*) |
 | *etc.*, *vs.*, *cf.* | И так далее; против; сравни |
 | *N/A* | Неприменимо |
-| *placeholder*, *replace `&lt;name&gt;` with …* | Подставь своё значение |
+| *placeholder*, *replace `<name>` with …* | Подставь своё значение |
 
 ---
 
@@ -165,13 +167,13 @@ Commits) слова в **ВЕРХНЕМ РЕГИСТРЕ** имеют строг
 строчными — обычное английское «следует».
 
 🇬🇧 Пример (внутренняя спецификация):
-```text
+```
 Health check endpoint, v2
 - The service MUST expose GET /healthz on the main port.
 - The endpoint MUST NOT require authentication.
 - The response SHOULD complete within 100 ms.
 - The response body MAY include build information (version, commit).
-```text
+```
 Прочтение: `/healthz` без авторизации — обязательно; 100 мс — цель, но 150 мс не нарушение
 спецификации; версия в ответе — по желанию.
 
@@ -189,21 +191,21 @@ Health check endpoint, v2
 |--------|----------|
 | `[OPTION]` | Необязательно |
 | `...` | Можно повторить |
-| `FILE`, `&lt;file&gt;`, *курсив* | Подставь своё значение |
+| `FILE`, `<file>`, *курсив* | Подставь своё значение |
 | `a\|b` | Одно из двух |
 | `(a \| b)` | Обязательная группа: выбери одно |
 | **жирный** текст | Пишется буквально |
 
-```text
+```
 cp [OPTION]... [-T] SOURCE DEST
 kubectl scale [--resource-version=version] [--current-replicas=count] --replicas=COUNT (-f FILENAME | TYPE NAME)
-```text
+```
 Прочтение второй строки: `--replicas` обязателен; дальше **либо** `-f файл`, **либо**
 тип и имя ресурса; остальное — по желанию.
 
 Навигация в `man`: `/pattern` — поиск, `n` — следующее совпадение, `q` — выход;
 `man -k keyword` — найти команду по слову; секции: 1 — команды, 5 — форматы файлов,
-8 — команды администратора (`man 5 crontab`). Короткие примеры — `tldr &lt;команда&gt;`.
+8 — команды администратора (`man 5 crontab`). Короткие примеры — `tldr <команда>`.
 
 ---
 
@@ -255,12 +257,13 @@ Notes* с подзаголовком *(No, really, you MUST read this before you
 не шутка.
 
 **Алгоритм перед обновлением:**
-```text
+```text:no-line-numbers
  1. Выписать все версии между текущей и целевой (1.30 → 1.33 = три changelog'а, не один)
  2. Ctrl+F в каждом: breaking · deprecat · removed · action required · migration
  3. Сверить со своим: какие API, флаги, поля реально используются
  4. Итог — в описание MR: «Breaking changes: none that affect us» или список
-```text
+```
+
 ---
 
 ## 8. Сообщение об ошибке: разбор по частям
@@ -269,10 +272,10 @@ Notes* с подзаголовком *(No, really, you MUST read this before you
 **что** пытались сделать (операция), **с чем** (ресурс, файл, адрес), **почему** не вышло.
 
 🇬🇧 kubectl:
-```text
+```
 Error from server (Forbidden): pods is forbidden: User "dev" cannot list resource "pods"
 in API group "" in the namespace "prod"
-```text
+```
 | Вопрос | Ответ |
 |--------|-------|
 | Кто | *from server* — API-сервер, а не kubectl |
@@ -282,22 +285,22 @@ in API group "" in the namespace "prod"
 | Куда смотреть | Role/RoleBinding в `prod`; проверка: `kubectl auth can-i list pods -n prod --as dev` |
 
 🇬🇧 Docker:
-```text
+```
 permission denied while trying to connect to the Docker daemon socket at
 unix:///var/run/docker.sock: ...
-```text
+```
 Кто: клиент `docker`. Что: подключиться к сокету демона. Почему: *permission denied* —
 у пользователя нет прав на сокет. Куда: группа `docker` или `sudo` (и помнить, что группа
 `docker` — фактически root).
 
 🇬🇧 Terraform:
-```text
+```
 Error: Error acquiring the state lock
 ...
 Lock Info:
   Operation: OperationTypeApply
   Who:       daniyar@laptop
-```text
+```
 Кто: Terraform. Что: взять блокировку state. Почему: её держит другой `apply` —
 `Who` говорит, чей. Не бежать за `force-unlock`: сначала спросить Данияра, идёт ли у него
 `apply`.
@@ -335,26 +338,26 @@ Lock Info:
 | Go | Первая строка *panic: …*; ниже — стек горутины | Первый кадр из своего кода |
 
 🇬🇧 Python:
-```text
+```
 Traceback (most recent call last):
-  File "/app/main.py", line 12, in &lt;module&gt;
+  File "/app/main.py", line 12, in <module>
     run()
   File "/app/main.py", line 8, in run
     conn = psycopg2.connect(DB_URL)
   ...
 psycopg2.OperationalError: connection to server at "db" (10.0.0.5), port 5432 failed:
 Connection refused
-```text
+```
 Читаем снизу: БД на `db:5432` отказала в соединении (порт не слушают) → проблема не
 в коде, а в БД или сети. Строка 8 `main.py` — где это случилось в нашем коде.
 
 🇬🇧 Java:
-```text
+```
 Exception in thread "main" java.lang.IllegalStateException: Failed to load config
     at com.example.App.loadConfig(App.java:42)
     at com.example.App.main(App.java:15)
 Caused by: java.io.FileNotFoundException: /etc/app/config.yml (No such file or directory)
-```text
+```
 Верхнее исключение — обёртка, причина — в *Caused by*: нет файла конфига. В Kubernetes —
 проверить, смонтирован ли ConfigMap по этому пути.
 
@@ -365,14 +368,15 @@ Caused by: java.io.FileNotFoundException: /etc/app/config.yml (No such file or d
 
 ## 10. Как читать страницу доки за 10–15 минут
 
-```text
+```text:no-line-numbers
  1. Skim, 1–2 мин     заголовки, первые предложения, код, Note/Warning
  2. Решить            это Concepts, How-to или Reference? нужная ли страница?
  3. Intensive         нужный раздел; незнакомое слово → догадка по контексту →
                       если слово ключевое — словарь (Cambridge Dictionary)
  4. Руками            выполнить пример на стенде
  5. Anki              3 слова или сочетания в cloze-карточки
-```text
+```
+
 Переводчик — на **одно предложение**, когда не помогли контекст и словарь, а не на всю
 страницу. Сложное предложение сначала разбери сам: найди подлежащее и сказуемое, выкинь
 вводные части.
@@ -442,13 +446,17 @@ Caused by: java.io.FileNotFoundException: /etc/app/config.yml (No such file or d
 9. ⭐ Ошибка = кто · что · с чем · почему; *Forbidden* ≠ *Unauthorized*.
 10. Python-traceback читают снизу, в Java ищут последний *Caused by*.
 
-➡️ Дальше: [03_vocabulary.md](/english/03-vocabulary) · задачи: 02_reading_docs_tasks.md
+---
 
+## Задачи
+
+> Фрагменты ниже написаны в стиле документации kubectl, Terraform и Docker специально
+> для задач — это не цитаты. Английские тексты помечены 🇬🇧. Для блока C держи под рукой
+> терминал: часть ответов проверяется руками.
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** ⭐ Чем skimming отличается от scanning и intensive reading? Приведи по примеру
 из работы DevOps-инженера.
@@ -597,7 +605,6 @@ Python — внизу, последняя строка: тип и текст и�
 
 ### Блок B. «Что тут не так»
 
-
 Каждый пункт: фрагмент доки или вывода и то, что написал по нему коллега. Найди ошибки
 понимания и ошибки английского, перепиши сообщение.
 
@@ -648,6 +655,11 @@ our statistics by default, we must to disable it before installing.*
 </details>
 
 **B5.** Вывод:
+```
+Error from server (Forbidden): secrets is forbidden: User "ci-bot" cannot get resource
+"secrets" in API group "" in the namespace "payments"
+```
+Коллега: 🇬🇧 *The token of ci-bot is expired, I need to login again.*
 
 <details><summary>Ответ</summary>
 
@@ -658,16 +670,8 @@ to check its Role and RoleBinding.*
 
 </details>
 
-```text:no-line-numbers
-Error from server (Forbidden): secrets is forbidden: User "ci-bot" cannot get resource
-```text
-```text:no-line-numbers
-"secrets" in API group "" in the namespace "payments"
-```text
-Коллега: 🇬🇧 *The token of ci-bot is expired, I need to login again.*
-
 **B6.** Traceback заканчивается строкой `KeyError: 'DATABASE_URL'`, а первая строка
-стека — `File "/app/app.py", line 3, in &lt;module&gt;`. Коллега: 🇬🇧 *The bug is in app.py
+стека — `File "/app/app.py", line 3, in <module>`. Коллега: 🇬🇧 *The bug is in app.py
 line 3, the import is broken.*
 
 <details><summary>Ответ</summary>
@@ -752,108 +756,49 @@ notice. Let's try it on staging first and wait for beta before using it in produ
 
 ### Блок C. Практика
 
-
-### C1. 🔑 Фрагмент в стиле Kubernetes API reference
+#### C1. 🔑 Фрагмент в стиле Kubernetes API reference
 🇬🇧
-```text:no-line-numbers
+```
 maxUnavailable (optional)
-```text
-```text:no-line-numbers
 The maximum number of pods that can be unavailable during the update. The value can be
-```text
-```text:no-line-numbers
 an absolute number (for example, 5) or a percentage of desired pods (for example, 10%).
-```text
-```text:no-line-numbers
 The absolute number is calculated from the percentage by rounding down. This field
-```text
-```text:no-line-numbers
 cannot be 0 if maxSurge is 0. Defaults to 25%.
-```text
-**1.** Что будет, если поле не указать?
+```
+1. Что будет, если поле не указать?
+2. Сколько подов может быть недоступно при 10 репликах и значении по умолчанию?
+3. Можно ли поставить `maxUnavailable: 0` и `maxSurge: 0` одновременно? Почему?
+4. Переведи на русский последние два предложения.
 
 <details><summary>Ответ</summary>
 
-1) 25%. 2) 25% от 10 = 2,5 → округление вниз → 2 пода. 3) Нет: при обоих
+1\) 25%. 2) 25% от 10 = 2,5 → округление вниз → 2 пода. 3) Нет: при обоих
 нулях выкатка не может ни убрать старый под, ни добавить новый. 4) «Абсолютное число
 вычисляется из процента с округлением вниз. Поле не может быть равно 0, если maxSurge
 равен 0. По умолчанию — 25%».
 
 </details>
 
-**2.** Сколько подов может быть недоступно при 10 репликах и значении по умолчанию?
-
-<details><summary>Ответ</summary>
-
-1) *Forces a new resource* — Terraform удалит бакет и создаст новый: без бэкапа
-данные пропадут (в плане — `must be replaced`). 2) `force_destroy` по умолчанию `false`:
-удаление непустого бакета завершится ошибкой, объекты не удалятся. 3) Блок пока работает,
-но deprecated: перенести настройку в отдельный ресурс `example_bucket_versioning`
-отдельным MR, проверив план — без замены бакета.
-
-</details>
-
-**3.** Можно ли поставить `maxUnavailable: 0` и `maxSurge: 0` одновременно? Почему?
-
-<details><summary>Ответ</summary>
-
-) Нет: код 0 — не ошибка, `on-failure` перезапускает только при ненулевом коде.
-
-</details>
-
-**4.** Переведи на русский последние два предложения.
-
-<details><summary>Ответ</summary>
-
+#### C2. 🔑 Фрагмент в стиле Terraform provider docs
 🇬🇧
-```text
-</details>
-
-### C2. 🔑 Фрагмент в стиле Terraform provider docs
-🇬🇧
-```text:no-line-numbers
+```
 Argument Reference
-```text
-```text:no-line-numbers
 The following arguments are supported:
-```text
-```text:no-line-numbers
 * name - (Required) The name of the bucket. Changing this forces a new resource
-```text
-```text:no-line-numbers
   to be created.
-```text
-```text:no-line-numbers
 * force_destroy - (Optional) When set to true, deleting the bucket also deletes all
-```text
-```text:no-line-numbers
   objects in it. Defaults to false.
-```text
-```text:no-line-numbers
 * versioning - (Optional) A configuration block for object versioning. As of v5.0 of
-```text
-```text:no-line-numbers
   the provider, this block is deprecated. Use the separate example_bucket_versioning
-```text
-```text:no-line-numbers
   resource instead.
-```text
-**1.** Что произойдёт, если в коде переименовать бакет? Чем это опасно?
+```
+1. Что произойдёт, если в коде переименовать бакет? Чем это опасно?
+2. Что будет с объектами при `terraform destroy`, если `force_destroy` не указан?
+3. Что делать с блоком `versioning` при переходе на провайдер v5?
 
 <details><summary>Ответ</summary>
 
-1) 25%. 2) 25% от 10 = 2,5 → округление вниз → 2 пода. 3) Нет: при обоих
-нулях выкатка не может ни убрать старый под, ни добавить новый. 4) «Абсолютное число
-вычисляется из процента с округлением вниз. Поле не может быть равно 0, если maxSurge
-равен 0. По умолчанию — 25%».
-
-</details>
-
-**2.** Что будет с объектами при `terraform destroy`, если `force_destroy` не указан?
-
-<details><summary>Ответ</summary>
-
-1) *Forces a new resource* — Terraform удалит бакет и создаст новый: без бэкапа
+1\) *Forces a new resource* — Terraform удалит бакет и создаст новый: без бэкапа
 данные пропадут (в плане — `must be replaced`). 2) `force_destroy` по умолчанию `false`:
 удаление непустого бакета завершится ошибкой, объекты не удалятся. 3) Блок пока работает,
 но deprecated: перенести настройку в отдельный ресурс `example_bucket_versioning`
@@ -861,80 +806,152 @@ The following arguments are supported:
 
 </details>
 
-**3.** Что делать с блоком `versioning` при переходе на провайдер v5?
-
-<details><summary>Ответ</summary>
-
-) Нет: код 0 — не ошибка, `on-failure` перезапускает только при ненулевом коде.
-
-</details>
-
-### C3. Фрагмент в стиле Docker CLI reference
+#### C3. Фрагмент в стиле Docker CLI reference
 🇬🇧
-```text:no-line-numbers
+```
 --restart
-```text
-```text:no-line-numbers
 Restart policy to apply when a container exits. Defaults to "no".
-```text
-```text:no-line-numbers
   no                        Don't automatically restart the container.
-```text
-```text:no-line-numbers
   on-failure[:max-retries]  Restart only if the container exits with a non-zero status.
-```text
-```text:no-line-numbers
   always                    Always restart the container if it stops. If it's manually
-```text
-```text:no-line-numbers
                             stopped, it's restarted only when the Docker daemon restarts.
-```text
-```text:no-line-numbers
   unless-stopped            Like always, except that when the container is stopped
-```text
-```text:no-line-numbers
                             (manually or otherwise), it isn't restarted even after the
-```text
-```text:no-line-numbers
                             daemon restarts.
-```text
-**1.** Что значит запись `[:max-retries]`?
-
-<details><summary>Ответ</summary>
-
-1) 25%. 2) 25% от 10 = 2,5 → округление вниз → 2 пода. 3) Нет: при обоих
-нулях выкатка не может ни убрать старый под, ни добавить новый. 4) «Абсолютное число
-вычисляется из процента с округлением вниз. Поле не может быть равно 0, если maxSurge
-равен 0. По умолчанию — 25%».
-
-</details>
-
-**2.** Какую политику выбрать для сервиса, который должен подниматься после перезагрузки
+```
+1. Что значит запись `[:max-retries]`?
+2. Какую политику выбрать для сервиса, который должен подниматься после перезагрузки
    сервера, но оставаться выключенным, если ты остановил его руками?
+3. Контейнер завершился с кодом 0. Перезапустит ли его `on-failure`?
 
 <details><summary>Ответ</summary>
 
-1) *Forces a new resource* — Terraform удалит бакет и создаст новый: без бэкапа
-данные пропадут (в плане — `must be replaced`). 2) `force_destroy` по умолчанию `false`:
-удаление непустого бакета завершится ошибкой, объекты не удалятся. 3) Блок пока работает,
-но deprecated: перенести настройку в отдельный ресурс `example_bucket_versioning`
-отдельным MR, проверив план — без замены бакета.
+1\) Необязательная часть: `on-failure` или `on-failure:5`. 2) `unless-stopped`.
+3) Нет: код 0 — не ошибка, `on-failure` перезапускает только при ненулевом коде.
 
 </details>
 
-**3.** Контейнер завершился с кодом 0. Перезапустит ли его `on-failure`?
-
-<details><summary>Ответ</summary>
-
-) Нет: код 0 — не ошибка, `on-failure` перезапускает только при ненулевом коде.
-
-</details>
-
-### C4. 🔑 Release notes → заметка в MR
+#### C4. 🔑 Release notes → заметка в MR
 🇬🇧
+```
+## shipd v3.0.0
+### Breaking changes
+- The `--config` flag has been removed. Use the `SHIPD_CONFIG` environment variable.
+- The default port changed from 8080 to 9090.
+### Deprecations
+- The `legacy` output format is deprecated and will be removed in v4.0.
+### Fixed
+- Fixed a memory leak when watching more than 1,000 resources.
+### Known issues
+- On ARM64, the first start may take up to 2 minutes.
+```
+Мы запускаем `shipd --config /etc/shipd.yaml -o legacy` на порту по умолчанию, за ним —
+Service с `targetPort: 8080`, ноды x86. Напиши по-английски раздел *Upgrade notes* для
+описания MR: что меняем и что можно пока не трогать.
+
+<details><summary>Ответ</summary>
+
+🇬🇧
+```text:no-line-numbers
+## Upgrade notes (shipd 2.x → 3.0.0)
+Breaking changes that affect us:
+- `--config` was removed: we now pass the path via the SHIPD_CONFIG env variable.
+- The default port changed from 8080 to 9090: we set `--port 8080` explicitly
+  to keep the Service unchanged.
+Deprecations:
+- `-o legacy` still works but will be removed in v4.0. Follow-up: OPS-123.
+Not affected:
+- The ARM64 known issue (our nodes are x86).
+```
+Альтернатива по порту — поменять `targetPort` на 9090; главное — явно написать, что выбрали.
+
+</details>
+
+#### C5. Разбор ошибок
+Разбери каждую по схеме «кто · что делал · с чем · почему» и скажи, куда смотреть:
+```
+1. Error response from daemon: driver failed programming external connectivity on endpoint
+   web (...): Bind for 0.0.0.0:80 failed: port is already allocated
+2. Error: INSTALLATION FAILED: cannot re-use a name that is still in use
+3. The Deployment "api" is invalid: spec.selector: Invalid value: ...: field is immutable
+4. Get "https://registry.example.com/v2/": x509: certificate signed by unknown authority
+5. dial tcp 10.0.0.5:5432: connect: connection refused
+6. dial tcp 10.0.0.5:5432: i/o timeout
+```
+
+<details><summary>Ответ</summary>
+
+1. Docker-демон не смог опубликовать порт 80 на хосте: порт уже занят (другой контейнер
+   или nginx). Смотреть `ss -tlnp | grep ':80 '`, `docker ps`.
+2. Helm: установка отменена, релиз с таким именем уже есть (возможно, в статусе failed).
+   `helm list -a`, затем `helm upgrade --install` или удалить старый релиз.
+3. API-сервер отклонил изменение Deployment `api`: `spec.selector` нельзя менять после
+   создания. Пересоздать Deployment или вернуть старый селектор.
+4. Клиент не доверяет сертификату registry: подписан неизвестным CA. Добавить CA
+   в доверенные (в Docker — `/etc/docker/certs.d/<registry>/ca.crt`).
+5. Хост 10.0.0.5 доступен, но на 5432 никто не слушает: PostgreSQL не запущен или слушает
+   другой адрес (`listen_addresses`).
+6. Ответа нет вообще: файрвол, security group, маршрут или хост лежит.
+
+</details>
+
+#### C6. Stack trace
+🇬🇧
+```
+Traceback (most recent call last):
+  File "/app/app.py", line 3, in <module>
+    from config import settings
+  File "/app/config.py", line 5, in <module>
+    DB_URL = os.environ["DATABASE_URL"]
+             ~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "<frozen os>", line 714, in __getitem__
+KeyError: 'DATABASE_URL'
+```
+Где причина? Что проверить в Kubernetes? Напиши одно предложение по-английски для
+канала команды.
+
+<details><summary>Ответ</summary>
+
+Причина внизу: `KeyError: 'DATABASE_URL'` — переменная не задана. Проверить
+`env`/`envFrom` в Deployment, существует ли Secret и ключ в нём,
+`kubectl exec … -- env | grep DATABASE`. 🇬🇧 *The app fails at startup because
+DATABASE_URL isn't set; I'm checking the Secret and the Deployment env.*
+
+</details>
+
+#### C7. `man` руками
+Открой `man ss` и найди флаги: только TCP, только слушающие сокеты, числа вместо имён,
+показать процесс. Собери команду «кто слушает порт 80». Потом открой `man 5 crontab`
+и выпиши по-английски названия пяти полей времени.
+
+<details><summary>Ответ</summary>
+
+`-t` (TCP), `-l` (listening), `-n` (numeric), `-p` (processes):
+`sudo ss -tlnp | grep ':80 '`. Поля crontab: *minute*, *hour*, *day of month*, *month*,
+*day of week*.
+
+</details>
+
+#### C8. Реальный issue
+Найди закрытый issue по ошибке, с которой сталкивался (kubernetes, helm, docker, terraform).
+Напиши по-английски резюме в 3–4 предложения: problem, cause, fix или workaround,
+в какой версии исправлено.
+
+<details><summary>Ответ</summary>
+
+🇬🇧 Пример:
+```
+Problem: `helm upgrade` failed with "another operation is in progress".
+Cause: a previous upgrade was interrupted and left the release in a pending state.
+Workaround: roll back to the last deployed revision with `helm rollback`.
+The maintainers say newer versions handle this better.
+```
+
+</details>
+
+---
 
 ### Блок D. Инциденты
-
 
 **D1.** Ночь, под `orders` в `CrashLoopBackOff`. В логах Java stack trace, последний
 *Caused by*: `java.net.UnknownHostException: redis-master`. Напиши первое сообщение
@@ -943,11 +960,12 @@ Restart policy to apply when a container exits. Defaults to "no".
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 [SEV2] orders is down: pods are in CrashLoopBackOff since 02:10 UTC.
 Root cause so far: the app can't resolve `redis-master` (UnknownHostException).
 Checking the Redis Service and recent changes. Next update at 02:40 UTC.
-```text
+```
+
 </details>
 
 **D2.** В release notes Helm-чарта: 🇬🇧 *Action required: the `ingress.enabled` value
@@ -957,11 +975,12 @@ has been renamed to `ingress.create`. The old key is ignored.* Коллега с
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Yes, one change: `ingress.enabled` was renamed to `ingress.create`, and the old key
 is ignored. If we don't rename it in our values, the Ingress won't be created.
 I'll update values.yaml in the same MR.
-```text
+```
+
 </details>
 
 **D3.** Коллега из соседней команды: 🇬🇧 *Per the API guidelines, the service MUST
@@ -972,10 +991,11 @@ return 429 when a client is rate limited, but yours returns 500. Can you check?*
 
 MUST — обязательное требование: 500 вместо 429 — нарушение, а не вкусовщина;
 клиенты не поймут, что нужно подождать и повторить. 🇬🇧
-```text
+```
 You're right, that's a bug on our side: we return 500 instead of 429 when a client
 hits the rate limit. I've created OPS-456 and will fix it this week.
-```text
+```
+
 </details>
 
 **D4.** Ты нашёл в GitHub issue workaround, и он сработал. Напиши комментарий в issue
@@ -984,10 +1004,10 @@ hits the rate limit. I've created OPS-456 and will fix it this week.
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 The workaround from @user above worked for me on v3.14.2 (Ubuntu 24.04, containerd 2.0).
-Steps: &lt;short list&gt;. Happy to test a fix if needed.
-```text
+Steps: <short list>. Happy to test a fix if needed.
+```
 «+1» не помогает мейнтейнерам; версия и окружение — помогают. Если нечего добавить —
 реакция 👍 на первый пост.
 
@@ -999,12 +1019,13 @@ Steps: &lt;short list&gt;. Happy to test a fix if needed.
 <details><summary>Ответ</summary>
 
 🇬🇧
-```text
+```
 Hi Jonas! My `terraform apply` for the network stack fails because the state is locked
 by you (OperationTypeApply, started 17:40 UTC). Are you still running it? If it's
 a stale lock, could you release it, or should I run `force-unlock`? No rush if you're
 in the middle of an apply.
-```text
+```
+
 </details>
 
 **D6.** Ревьюер в твоём MR: 🇬🇧 *Is `--short` still supported? I think it was deprecated
@@ -1026,26 +1047,26 @@ and the output of `helm version`?* Что отправить и как отве�
 Минимальный пример, который воспроизводит проблему (чарт или values на 10–20
 строк), точные команды, ожидаемое и фактическое поведение, вывод `helm version`
 и `kubectl version`. 🇬🇧
-```text
-Sure! Here's a minimal repro: &lt;link to a gist&gt;.
+```
+Sure! Here's a minimal repro: <link to a gist>.
 Steps: `helm install demo ./chart -f values.yaml`
-Expected: the Service is created. Actual: install fails with &lt;error&gt;.
+Expected: the Service is created. Actual: install fails with <error>.
 helm version: v3.x.y
-```text
+```
+
 </details>
 
 ---
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** 🇬🇧 *How do you approach documentation for a tool you've never used?*
 
 <details><summary>Ответ</summary>
 
 🇬🇧 *I start with the overview to see what problem it solves, then do the quickstart
-   hands-on. After that, I read the Concepts section to understand the model, and I use
-   the reference only when I need specific details.*
+hands-on. After that, I read the Concepts section to understand the model, and I use
+the reference only when I need specific details.*
 
 </details>
 
@@ -1054,8 +1075,8 @@ helm version: v3.x.y
 <details><summary>Ответ</summary>
 
 🇬🇧 *Deprecated means it still works but will be removed in a future version.
-   Removed means it's gone. When I see a deprecation, I create a task to migrate before
-   the version that removes it, and I check release notes before every upgrade.*
+Removed means it's gone. When I see a deprecation, I create a task to migrate before
+the version that removes it, and I check release notes before every upgrade.*
 
 </details>
 
@@ -1064,8 +1085,8 @@ helm version: v3.x.y
 <details><summary>Ответ</summary>
 
 🇬🇧 *The changelogs for 1.31, 1.32, and 1.33, especially the Urgent Upgrade Notes and
-   deprecations. I'd check the Deprecated API Migration Guide and scan our manifests with
-   a tool like pluto or kubent. The control plane is upgraded one minor version at a time.*
+deprecations. I'd check the Deprecated API Migration Guide and scan our manifests with
+a tool like pluto or kubent. The control plane is upgraded one minor version at a time.*
 
 </details>
 
@@ -1074,8 +1095,8 @@ helm version: v3.x.y
 <details><summary>Ответ</summary>
 
 🇬🇧 *Forbidden means the API server knows who you are, but RBAC doesn't allow the action.
-   Unauthorized means authentication failed: the token or certificate is missing, invalid,
-   or expired.*
+Unauthorized means authentication failed: the token or certificate is missing, invalid,
+or expired.*
 
 </details>
 
@@ -1084,8 +1105,8 @@ helm version: v3.x.y
 <details><summary>Ответ</summary>
 
 🇬🇧 *A Python traceback shows the most recent call last, so I start from the bottom:
-   the exception type and message, then the frames from our code. In Java, I look for the
-   last "Caused by", because the top exception is often just a wrapper.*
+the exception type and message, then the frames from our code. In Java, I look for the
+last "Caused by", because the top exception is often just a wrapper.*
 
 </details>
 
@@ -1094,8 +1115,8 @@ helm version: v3.x.y
 <details><summary>Ответ</summary>
 
 🇬🇧 *Connection refused means the host is reachable but nothing is listening on that
-   port. A timeout means there's no response at all: a firewall drops the packets,
-   the route is wrong, or the host is down or overloaded.*
+port. A timeout means there's no response at all: a firewall drops the packets,
+the route is wrong, or the host is down or overloaded.*
 
 </details>
 
@@ -1104,8 +1125,8 @@ helm version: v3.x.y
 <details><summary>Ответ</summary>
 
 🇬🇧 *GitHub issues and discussions, release notes, and sometimes the source code.
-   If nothing helps, I ask in the project's community channel or open an issue with
-   a minimal repro.*
+If nothing helps, I ask in the project's community channel or open an issue with
+a minimal repro.*
 
 </details>
 
@@ -1114,10 +1135,8 @@ helm version: v3.x.y
 <details><summary>Ответ</summary>
 
 🇬🇧 *An operation is idempotent if running it several times gives the same result
-   as running it once. In automation, it means I can safely re-run a playbook or
-   `kubectl apply` after a failure without breaking anything.*
-
----
+as running it once. In automation, it means I can safely re-run a playbook or
+`kubectl apply` after a failure without breaking anything.*
 
 </details>
 

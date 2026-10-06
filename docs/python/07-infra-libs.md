@@ -1,6 +1,6 @@
 ---
 title: "07. Инфраструктурные библиотеки: SSH, Docker, Kubernetes, S3, Prometheus"
-description: "Блок → Python для DevOps → тема 7 из 8."
+description: "paramiko/fabric, docker, kubernetes, boto3, prometheus_client"
 ---
 
 # 07. Инфраструктурные библиотеки: SSH, Docker, Kubernetes, S3, Prometheus
@@ -18,7 +18,7 @@ description: "Блок → Python для DevOps → тема 7 из 8."
 
 ## 🗺️ Карта темы
 
-```text
+```text:no-line-numbers
                                 Python-скрипт
    ┌───────────────┬───────────────┼────────────────┬──────────────────┐
  paramiko/fabric  docker         kubernetes        boto3              prometheus_client
@@ -28,7 +28,8 @@ description: "Блок → Python для DevOps → тема 7 из 8."
       │               │                │                │                  │
  аналог в CLI:   docker ...       kubectl ...       aws s3 / mc        node_exporter
  ssh, pssh                                                             textfile collector
-```text
+```
+
 **CLI через subprocess или SDK?** Если в шелле задача решалась бы через `... -o json | jq` — бери SDK:
 получаешь объекты вместо текста, типизированные исключения и не зависишь от формата вывода утилиты.
 Разовая простая команда (`kubectl rollout status`) — можно и через `subprocess`.
@@ -52,7 +53,8 @@ def run_remote(host: str, command: str, user: str = "deploy", timeout: int = 30)
         err = stderr.read().decode()
         code = stdout.channel.recv_exit_status()                #    потом код выхода
         return code, out, err
-```text
+```
+
 Пачка хостов параллельно:
 
 ```python
@@ -65,10 +67,11 @@ with ThreadPoolExecutor(max_workers=10) as pool:
         host = futures[fut]
         try:
             code, out, err = fut.result()
-            print(f"{host:&lt;8} {'✅' if code == 0 else '❌'} {out.strip() or err.strip()}")
+            print(f"{host:<8} {'✅' if code == 0 else '❌'} {out.strip() or err.strip()}")
         except (paramiko.SSHException, OSError) as e:          # auth, таймаут, отказ соединения
             print(f"{host:<8} ❌ нет подключения: {e}")
-```text
+```
+
 ⚠️ `AutoAddPolicy()` — это `StrictHostKeyChecking=no`: подмену сервера не заметишь.
 ⚠️ paramiko **не читает** `~/.ssh/config` (алиасы, `ProxyJump`, порты) — это делает fabric.
 
@@ -92,7 +95,9 @@ except GroupException as e:
     results = e.result                                          # часть хостов недоступна
 for conn, res in results.items():
     print(f"{conn.host}: {res if isinstance(res, Exception) else res.stdout.strip()}")
-```text&gt; Команды на пачке хостов — да. Настройка серверов (пакеты, конфиги, идемпотентность) — это Ansible,
+```
+
+> Команды на пачке хостов — да. Настройка серверов (пакеты, конфиги, идемпотентность) — это Ansible,
 > а не цикл на fabric.
 
 ---
@@ -106,7 +111,7 @@ from docker.errors import DockerException, NotFound
 client = docker.from_env()             # DOCKER_HOST или /var/run/docker.sock; нет демона → DockerException
 
 for c in client.containers.list(all=True):
-    print(f"{c.short_id} {c.name:&lt;25} {c.status:<10} {c.attrs['Config']['Image']}")
+    print(f"{c.short_id} {c.name:<25} {c.status:<10} {c.attrs['Config']['Image']}")
 
 web = client.containers.run(
     "nginx:alpine", name="py-web", detach=True,
@@ -120,7 +125,8 @@ res = web.exec_run("nginx -t")         # ExecResult(exit_code, output)
 print(res.exit_code, res.output.decode())
 web.stop(timeout=10)
 web.remove()
-```text
+```
+
 Типовые задачи:
 
 ```python
@@ -138,7 +144,7 @@ try:
     client.containers.get("nope")
 except NotFound:
     ...
-```text
+```
 ⚠️ Доступ к `docker.sock` = root на хосте. Скрипт или контейнер с примонтированным сокетом —
 такой же привилегированный, как root.
 
@@ -150,7 +156,7 @@ except NotFound:
 from kubernetes import client, config
 from kubernetes.client import ApiException
 
-def load_kube(context: str | None = None) -&gt; None:
+def load_kube(context: str | None = None) -> None:
     try:
         config.load_incluster_config()             # внутри пода: токен ServiceAccount
     except config.ConfigException:
@@ -164,8 +170,8 @@ for pod in pods.items:
     statuses = pod.status.container_statuses or []        # у Pending-подов — None
     restarts = sum(cs.restart_count for cs in statuses)
     waiting = [cs.state.waiting.reason for cs in statuses if cs.state and cs.state.waiting]
-    print(f"{pod.metadata.name:&lt;40} {pod.status.phase:<10} restarts={restarts} {','.join(waiting)}")
-```text
+    print(f"{pod.metadata.name:<40} {pod.status.phase:<10} restarts={restarts} {','.join(waiting)}")
+```
 ⚠️ Поля в Python-объектах — **snake_case**: `containerStatuses` → `container_statuses`,
 `restartCount` → `restart_count`. Структура та же, что в `kubectl get pod -o yaml`.
 
@@ -185,14 +191,15 @@ v1.delete_namespaced_pod(name, "default", grace_period_seconds=30)
 # rollout restart деплоймента — то же, что делает kubectl
 from datetime import datetime, timezone
 patch = {"spec": {"template": {"metadata": {"annotations": {
-    "kubectl.kubernetes.io/restartedAt": datetime.now(timezone.utc).isoformat()&#125;&#125;&#125;&#125;}
+    "kubectl.kubernetes.io/restartedAt": datetime.now(timezone.utc).isoformat()}}}}}
 client.AppsV1Api().patch_namespaced_deployment("web", "default", patch)
 
 try:
     v1.read_namespaced_pod("nope", "default")
 except ApiException as e:
     if e.status == 404: ...                        # e.status, e.reason, e.body (JSON)
-```text
+```
+
 Следить за изменениями вместо опроса:
 
 ```python
@@ -202,9 +209,10 @@ w = watch.Watch()
 for ev in w.stream(v1.list_namespaced_pod, namespace="default", timeout_seconds=300):
     pod = ev["object"]
     print(ev["type"], pod.metadata.name, pod.status.phase)     # ADDED / MODIFIED / DELETED
-```text
+```
+
 Внутри кластера скрипту нужен ServiceAccount с правами (Role/RoleBinding) — ровно на те verbs,
-что он использует: `pods: get, list, delete`, `events: list`. Подробно — [17_rbac.md](/kubernetes/17-rbac).
+что он использует: `pods: get, list, delete`, `events: list`. Подробно — [Kubernetes: 17. RBAC](/kubernetes/17-rbac).
 
 ⚠️ Удалять можно только поды, которыми управляет контроллер (есть `metadata.owner_references` —
 ReplicaSet/StatefulSet/Job): их пересоздадут. «Голый» под удаляется навсегда.
@@ -218,7 +226,8 @@ docker run -d --name minio -p 9000:9000 -p 9001:9001 \
   -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 \
   pgsty/silo:RELEASE.2026-09-16T00-00-00Z server /data --console-address ":9001"   # форк MinIO: официальный образ больше не скачивается
 export AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin123 S3_ENDPOINT=http://localhost:9000
-```text&gt; Код boto3 одинаков для AWS, MinIO, Ceph и S3 облачных провайдеров — меняются только endpoint и ключи.
+```
+> Код boto3 одинаков для AWS, MinIO, Ceph и S3 облачных провайдеров — меняются только endpoint и ключи.
 
 ```python
 import os
@@ -247,7 +256,7 @@ except ClientError as e:
         raise                                        # 403 — нет прав, это не «нет бакета»
 
 s3.upload_file("db.sql.gz", bucket, "pg/2026-09-27/db.sql.gz",       # большие файлы — multipart сам
-               ExtraArgs={"Metadata": {"sha256": digest&#125;&#125;)
+               ExtraArgs={"Metadata": {"sha256": digest}})
 s3.download_file(bucket, "pg/2026-09-27/db.sql.gz", "/tmp/restore.sql.gz")
 
 paginator = s3.get_paginator("list_objects_v2")      # ⭐ один вызов отдаёт максимум 1000 объектов
@@ -256,7 +265,8 @@ for page in paginator.paginate(Bucket=bucket, Prefix="pg/"):
         print(obj["Key"], obj["Size"], obj["LastModified"])   # LastModified — aware datetime (UTC)
 
 url = s3.generate_presigned_url("get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=3600)
-```text
+```
+
 Ротация — удалить объекты старше N дней:
 
 ```python
@@ -268,9 +278,9 @@ old = [{"Key": o["Key"]}
        for o in page.get("Contents", []) if o["LastModified"] < cutoff]
 for i in range(0, len(old), 1000):                   # delete_objects — до 1000 ключей за вызов
     s3.delete_objects(Bucket=bucket, Delete={"Objects": old[i:i + 1000], "Quiet": True})
-```text
+```
 В проде ротацию лучше отдать самому хранилищу — lifecycle-правилам бакета
-(см. [04_s3_storage.md](/cloud/04-s3-storage)), а скрипт оставить для проверки.
+(см. [Облака: 04. S3 и объектное хранилище](/cloud/04-s3-storage)), а скрипт оставить для проверки.
 
 ---
 
@@ -301,7 +311,8 @@ if __name__ == "__main__":
             log.exception("проверка не удалась")
             CHECKS.labels("error").inc()
         time.sleep(60)
-```text
+```
+
 **B. Collector — значения считаются в момент scrape** (нет устаревших данных и своего цикла):
 
 ```python
@@ -322,7 +333,7 @@ REGISTRY.register(DiskCollector())
 start_http_server(9101)
 while True:
     time.sleep(3600)                           # главный поток должен жить
-```text
+```
 ⚠️ `collect()` вызывается на **каждый** scrape: тяжёлые запросы (к API, S3) кэшируй,
 иначе упрёшься в `scrape_timeout`.
 
@@ -336,7 +347,7 @@ Gauge("backup_last_success_timestamp_seconds", "Время последнего 
       registry=registry).set_to_current_time()
 Gauge("backup_size_bytes", "Размер последнего бэкапа", registry=registry).set(archive.stat().st_size)
 write_to_textfile("/var/lib/node_exporter/textfile/backup.prom", registry)   # атомарно: tmp + rename
-```text
+```
 Алерт на такую метрику: `time() - backup_last_success_timestamp_seconds > 26 * 3600`.
 Для задач без постоянного хоста (CI, k8s Job) — Pushgateway: `push_to_gateway("pushgateway:9091", job="backup", registry=registry)`.
 
@@ -348,7 +359,7 @@ write_to_textfile("/var/lib/node_exporter/textfile/backup.prom", registry)   # �
 | Pushgateway | Короткоживущие задачи без хоста: CI, k8s Job |
 
 Правила имён и лейблов (базовые единицы, `_total`, `_seconds`, никаких id в лейблах) —
-в [04_exporters.md](/monitoring/04-exporters). `Counter` сам добавляет `_total`
+в [Мониторинг: 04. Exporter'ы](/monitoring/04-exporters). `Counter` сам добавляет `_total`
 и серию `_created`.
 
 ---
@@ -430,13 +441,27 @@ write_to_textfile("/var/lib/node_exporter/textfile/backup.prom", registry)   # �
 9. Метрики: exporter (цикл/collector) для внешних систем, textfile — для cron, Pushgateway — для CI/Job.
 10. Никаких id и URL в лейблах метрик; тяжёлое в `collect()` — кэшировать.
 
-➡️ Дальше: [08_packaging_quality.md](/python/08-packaging-quality) · Задачи: 07_infra_libs_tasks.md
+---
 
+## Задачи
+
+> Стенд (venv: `paramiko fabric docker kubernetes boto3 prometheus_client`):
+> ```bash
+> # SSH: два «сервера» в контейнерах (sshd слушает 2222 внутри)
+> for i in 1 2; do docker run -d --name ssh$i -p 222$i:2222 -e USER_NAME=deploy \
+>   -e PUBLIC_KEY="$(cat ~/.ssh/id_ed25519.pub)" lscr.io/linuxserver/openssh-server; done
+> # Kubernetes
+> kind create cluster --name py                     # контекст kind-py
+> kubectl --context kind-py create deployment web --image=nginx:alpine --replicas=2
+> kubectl --context kind-py create deployment crash --image=busybox -- sh -c 'sleep 5; exit 1'
+> # S3
+> docker run -d --name minio -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=minioadmin \
+>   -e MINIO_ROOT_PASSWORD=minioadmin123 pgsty/silo:RELEASE.2026-09-16T00-00-00Z server /data --console-address ":9001"
+> ```
 
 ---
 
 ### Блок A. Теория
-
 
 **A1.** Когда брать SDK, а когда достаточно `subprocess` с CLI? Приведи по примеру.
 
@@ -579,143 +604,117 @@ Pushgateway — короткие задачи без постоянного хо
 
 ### Блок B. «Что выведет / что тут не так»
 
-
-```text:no-line-numbers
+```python
 # B1.
-```text
-```text:no-line-numbers
 client = paramiko.SSHClient()
-```text
-```text:no-line-numbers
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-```text
-```text:no-line-numbers
 client.connect(host, username="root", password="P@ssw0rd")
-```text
-```text:no-line-numbers
+```
+```python
 # B2.
-```text
-```text:no-line-numbers
 _, stdout, _ = client.exec_command("journalctl -u app --no-pager")   # вывод на 50 МБ
-```text
-```text:no-line-numbers
 code = stdout.channel.recv_exit_status()
-```text
-```text:no-line-numbers
 out = stdout.read()
-```text
-```text:no-line-numbers
+```
+```python
 # B3.
-```text
-```text:no-line-numbers
 c = client.containers.get("web")
-```text
-```text:no-line-numbers
 c.stop()
-```text
-```text:no-line-numbers
 print(c.status)
-```text
-```text:no-line-numbers
+```
+```python
 # B4.
-```text
-```text:no-line-numbers
 config.load_kube_config()
-```text
-```text:no-line-numbers
 for pod in v1.list_pod_for_all_namespaces().items:
-```text
-```text:no-line-numbers
     if pod.status.phase != "Running":
-```text
-```text:no-line-numbers
         v1.delete_namespaced_pod(pod.metadata.name, pod.metadata.namespace)
-```text
-```text:no-line-numbers
+```
+```python
 # B5.
-```text
-```text:no-line-numbers
 for pod in v1.list_namespaced_pod("default").items:
-```text
-```text:no-line-numbers
     restarts = sum(cs.restartCount for cs in pod.status.container_statuses)
-```text
-```text:no-line-numbers
+```
+```python
 # B6.
-```text
-```text:no-line-numbers
 r = s3.list_objects_v2(Bucket="backups", Prefix="pg/")
-```text
-```text:no-line-numbers
 for obj in r["Contents"]:
-```text
-```text:no-line-numbers
     print(obj["Key"])
-```text
-```text:no-line-numbers
+```
+```python
 # B7.
-```text
-```text:no-line-numbers
 s3 = boto3.client("s3", endpoint_url="localhost:9000")
-```text
-```text:no-line-numbers
+```
+```python
 # B8.
-```text
-```text:no-line-numbers
 REQS = Counter("app_requests_total", "Запросы", ["path", "user_id"])
-```text
-```text:no-line-numbers
 REQS.labels(path=request.path, user_id=user.id).inc()
-```text
-```text:no-line-numbers
+```
+```python
 # B9.
-```text
-```text:no-line-numbers
 class S3Collector(Collector):
-```text
-```text:no-line-numbers
     def collect(self):
-```text
-```text:no-line-numbers
         objs = list_all_objects("backups")           # 300 тыс. объектов, ~40 секунд
-```text
-```text:no-line-numbers
         yield GaugeMetricFamily("backup_objects", "Число объектов", value=len(objs))
-```text
-```text:no-line-numbers
+```
+```python
 # B10.
-```text
-```text:no-line-numbers
 Path("/var/lib/node_exporter/textfile/backup.prom").write_text(generate_latest(registry).decode())
-```text
-```text:no-line-numbers
+```
+```python
 # B11.
-```text
-```text:no-line-numbers
 group = ThreadingGroup("web1", "web2", "web-dead")
-```text
-```text:no-line-numbers
 for conn, res in group.run("uptime", hide=True).items():
-```text
-```text:no-line-numbers
     print(conn.host, res.stdout)
-```text
-```text:no-line-numbers
+```
+```python
 # B12.
-```text
-```text:no-line-numbers
 e = v1.list_namespaced_event("default").items[0]
-```text
-```text:no-line-numbers
 print(e.last_timestamp.isoformat())
-```text
+```
+
+<details><summary>Ответы</summary>
+
+**B1.** ⚠️ Принимается любой ключ хоста, логин root по паролю из кода, нет таймаута. Нужны known_hosts,
+ключи (агент), непривилегированный пользователь, `timeout=`.
+
+**B2.** ⚠️ Может зависнуть: `recv_exit_status()` до чтения большого вывода. Сначала `read()`.
+
+**B3.** Напечатает старый статус (`running`) — атрибуты не обновлены. `c.reload()` перед `print`.
+
+**B4.** ⚠️ Текущий контекст kubectl (может быть прод), все неймспейсы, удаляются и `Pending`, и `Succeeded`
+(поды Job'ов), и «голые» поды — без dry-run и без фильтра по владельцу.
+
+**B5.** ⚠️ `AttributeError: 'V1ContainerStatus' object has no attribute 'restartCount'` (нужен `restart_count`),
+а для Pending-подов — `TypeError: 'NoneType' object is not iterable`.
+
+**B6.** ⚠️ Максимум 1000 объектов и `KeyError: 'Contents'`, если под префиксом пусто.
+
+**B7.** ⚠️ `ValueError: Invalid endpoint: localhost:9000` — нужна схема: `http://localhost:9000`.
+
+**B8.** ⚠️ `user_id` и сырой путь в лейблах — взрыв кардинальности.
+
+**B9.** ⚠️ 40 секунд на каждый scrape — таймаут, таргет `down`. Кэшировать/считать в фоне.
+
+**B10.** ⚠️ Неатомарная запись: node_exporter может прочитать половину файла. `write_to_textfile`.
+
+**B11.** ⚠️ Недоступный `web-dead` → `GroupException`, цикл не выполнится ни для кого.
+Ловить `GroupException` и брать `e.result`; значения могут быть исключениями.
+
+**B12.** ⚠️ `AttributeError: 'NoneType' object has no attribute 'isoformat'`, если событие создано через
+новый events API без `last_timestamp`. Брать `e.last_timestamp or e.event_time or e.metadata.creation_timestamp`.
+
+</details>
+
 ---
 
 ### Блок C. Практика
 
-
-### C1. 🔑 SSH на пачку хостов (paramiko)
-**1.** Реализуй `run_remote(host, port, command)` по образцу из конспекта (добавь порт).
+#### C1. 🔑 SSH на пачку хостов (paramiko)
+1. Реализуй `run_remote(host, port, command)` по образцу из конспекта (добавь порт).
+2. Добавь хосты стенда в `known_hosts` (`ssh-keyscan -p 2221 127.0.0.1 >> ~/.ssh/known_hosts`).
+3. Параллельно выполни на обоих `uptime` и `df -h /`, выведи таблицу хост/код/вывод.
+4. Останови `ssh2` и убедись, что скрипт пишет «нет подключения» за ~10 секунд, а не висит.
+5. Удали запись о хосте из `known_hosts` — что скажет `RejectPolicy`?
 
 <details><summary>Ответ</summary>
 
@@ -724,8 +723,17 @@ print(e.last_timestamp.isoformat())
 
 </details>
 
-**2.** Добавь хосты стенда в `known_hosts` (`ssh-keyscan -p 2221 127.0.0.1 >> ~/.ssh/known_hosts`).
-**3.** Параллельно выполни на обоих `uptime` и `df -h /`, выведи таблицу хост/код/вывод.
+#### C2. fabric
+1. Опиши хосты стенда в `~/.ssh/config` (`Host lab1`, `Port 2221`, `User deploy`).
+2. Через `ThreadingGroup("lab1", "lab2")` выполни `uname -a` и загрузи файл `put`.
+3. Останови один контейнер и обработай `GroupException` — выведи успешные и упавшие хосты отдельно.
+
+#### C3. 🔑 Отчёт и уборка Docker
+Напиши `docker_report.py`:
+- таблица: имя, образ, статус, health, `RestartCount` (из `attrs`), время старта;
+- `--prune --label owner=py-lab` — удалить остановленные контейнеры с этим лейблом, по умолчанию dry-run,
+  с `--apply` — по-настоящему;
+- код выхода 1, если есть `unhealthy` или `restarting`.
 
 <details><summary>Ответ</summary>
 
@@ -733,8 +741,16 @@ print(e.last_timestamp.isoformat())
 
 </details>
 
-**4.** Останови `ssh2` и убедись, что скрипт пишет «нет подключения» за ~10 секунд, а не висит.
-**5.** Удали запись о хосте из `known_hosts` — что скажет `RejectPolicy`?
+#### C4. Watchdog
+Запусти «больной» контейнер: `docker run -d --name sick --health-cmd='exit 1' --health-interval=5s nginx:alpine`.
+Напиши watchdog, который раз в 30 секунд перезапускает `unhealthy`-контейнеры с лейблом `autoheal=true`
+(добавь лейбл при запуске) и логирует действия. Корректно завершается по SIGTERM.
+
+#### C5. 🔑 Отчёт по подам
+`pods_report.py --context kind-py [--namespace NS] [--min-restarts N]`:
+- все поды (или неймспейса), фаза, суммарные рестарты, причины `waiting` (`CrashLoopBackOff`, `ImagePullBackOff`);
+- сортировка по рестартам, `--json` для машинного вывода;
+- код выхода 1, если есть поды в `CrashLoopBackOff`.
 
 <details><summary>Ответ</summary>
 
@@ -742,90 +758,71 @@ print(e.last_timestamp.isoformat())
 def crashloop(pod) -> bool:
     return any(cs.state and cs.state.waiting and cs.state.waiting.reason == "CrashLoopBackOff"
                for cs in pod.status.container_statuses or [])
-```text
-</details>
-
-### C2. fabric
-**1.** Опиши хосты стенда в `~/.ssh/config` (`Host lab1`, `Port 2221`, `User deploy`).
-
-<details><summary>Ответ</summary>
-
-Порт — параметр `client.connect(host, port=port, ...)`. Без записи в `known_hosts` —
-`SSHException: Server '[127.0.0.1]:2222' not found in known_hosts`.
+```
 
 </details>
 
-**2.** Через `ThreadingGroup("lab1", "lab2")` выполни `uname -a` и загрузи файл `put`.
-**3.** Останови один контейнер и обработай `GroupException` — выведи успешные и упавшие хосты отдельно.
-
-<details><summary>Ответ</summary>
-
-Счётчик рестартов — `c.attrs["RestartCount"]`, время старта — `c.attrs["State"]["StartedAt"]`.
-
-</details>
-
-### C3. 🔑 Отчёт и уборка Docker
-Напиши `docker_report.py`:
-- таблица: имя, образ, статус, health, `RestartCount` (из `attrs`), время старта;
-- `--prune --label owner=py-lab` — удалить остановленные контейнеры с этим лейблом, по умолчанию dry-run,
-  с `--apply` — по-настоящему;
-- код выхода 1, если есть `unhealthy` или `restarting`.
-
-### C4. Watchdog
-Запусти «больной» контейнер: `docker run -d --name sick --health-cmd='exit 1' --health-interval=5s nginx:alpine`.
-Напиши watchdog, который раз в 30 секунд перезапускает `unhealthy`-контейнеры с лейблом `autoheal=true`
-(добавь лейбл при запуске) и логирует действия. Корректно завершается по SIGTERM.
-
-### C5. 🔑 Отчёт по подам
-`pods_report.py --context kind-py [--namespace NS] [--min-restarts N]`:
-- все поды (или неймспейса), фаза, суммарные рестарты, причины `waiting` (`CrashLoopBackOff`, `ImagePullBackOff`);
-- сортировка по рестартам, `--json` для машинного вывода;
-- код выхода 1, если есть поды в `CrashLoopBackOff`.
-
-### C6. События
+#### C6. События
 Для каждого пода с рестартами > 0 выведи последние 5 событий (`type`, `reason`, `message`),
 отсортированных по времени. Учти, что `last_timestamp` бывает `None`.
 
-### C7. Rollout restart и ожидание
+#### C7. Rollout restart и ожидание
 Сделай rollout restart деплоймента `web` через `patch_namespaced_deployment` и дождись через `watch`,
 пока все новые поды станут `Ready` (условие `Ready=True` в `pod.status.conditions`). Таймаут — 120 секунд.
 
-### C8. 🔑 Бэкап в MinIO
+<details><summary>Ответ</summary>
+
+```python
+def is_ready(pod) -> bool:
+    return any(c.type == "Ready" and c.status == "True" for c in pod.status.conditions or [])
+```
+Ждать, пока число `Ready`-подов с новым `pod-template-hash` не станет равно `spec.replicas`
+(или проще — опрашивать `deployment.status.updated_replicas` / `ready_replicas`).
+
+</details>
+
+#### C8. 🔑 Бэкап в MinIO
 `s3_backup.py upload FILE` / `list` / `verify KEY` / `rotate --keep-days N [--apply]`:
-- при загрузке — sha256 в метаданных (`ExtraArgs={"Metadata": {...&#125;&#125;`), ключ `pg/YYYY-MM-DD/имя`;
+- при загрузке — sha256 в метаданных (<code v-pre>ExtraArgs={"Metadata": {...}}</code>), ключ `pg/YYYY-MM-DD/имя`;
 - `verify` скачивает объект во временный файл и сверяет sha256 с метаданными (`head_object`);
 - `rotate` — через paginator, dry-run по умолчанию, `delete_objects` пачками по 1000.
 Проверь на 1500 маленьких объектах, что `list` видит все.
 
-### C9. 🔑 Метрики бэкапа
-**1.** В `s3_backup.py upload` после успеха пиши textfile-метрики: время последнего успеха и размер.
-
 <details><summary>Ответ</summary>
 
-Порт — параметр `client.connect(host, port=port, ...)`. Без записи в `known_hosts` —
-`SSHException: Server '[127.0.0.1]:2222' not found in known_hosts`.
+sha256 в метаданных читается так: `s3.head_object(Bucket=b, Key=k)["Metadata"]["sha256"]`
+(ключи метаданных приходят в нижнем регистре).
 
 </details>
 
-**2.** Напиши exporter на `:9101`, отдающий `backup_age_seconds` и `backup_objects` по префиксу в MinIO,
+#### C9. 🔑 Метрики бэкапа
+1. В `s3_backup.py upload` после успеха пиши textfile-метрики: время последнего успеха и размер.
+2. Напиши exporter на `:9101`, отдающий `backup_age_seconds` и `backup_objects` по префиксу в MinIO,
    с кэшированием результата на 60 секунд.
-**3.** Проверь `curl -s localhost:9101/metrics | grep backup_`.
+3. Проверь `curl -s localhost:9101/metrics | grep backup_`.
+4. (Если есть стенд из блока мониторинга) добавь job в Prometheus и алерт «бэкап старше 26 часов».
 
 <details><summary>Ответ</summary>
 
-Счётчик рестартов — `c.attrs["RestartCount"]`, время старта — `c.attrs["State"]["StartedAt"]`.
+Кэш на 60 секунд:
+```python
+_cache = {"ts": 0.0, "value": None}
+
+def cached_stats() -> dict:
+    if time.monotonic() - _cache["ts"] > 60:
+        _cache["value"], _cache["ts"] = compute_stats(), time.monotonic()
+    return _cache["value"]
+```
 
 </details>
 
-**4.** (Если есть стенд из блока мониторинга) добавь job в Prometheus и алерт «бэкап старше 26 часов».
-### C10. Collector
+#### C10. Collector
 Напиши `DiskCollector`, отдающий `mount_used_ratio{mount}` для всех точек монтирования из `/proc/mounts`
 с реальными ФС (`ext4`, `xfs`, `btrfs`). Сравни значения с `df`.
 
 ---
 
 ### Блок D. Инциденты
-
 
 **D1.** Скрипт «собрать версии пакетов со 120 серверов» висит час на одном хосте. Что добавить?
 
@@ -923,7 +920,6 @@ dry-run по умолчанию, у людей — права только на 
 
 ### Блок E. Вопросы с собеседования
 
-
 **1.** Как выполнить команду на 100 серверах из Python?
 
 <details><summary>Ответ</summary>
@@ -1001,9 +997,7 @@ Textfile collector: `write_to_textfile("/var/lib/node_exporter/textfile/x.prom",
 <details><summary>Ответ</summary>
 
 `prometheus_client`: метрики `Gauge`/`Counter` + `start_http_server(port)` и цикл опроса,
-    или custom collector; правильные имена, ограниченные лейблы, кэш тяжёлых запросов.
-
----
+или custom collector; правильные имена, ограниченные лейблы, кэш тяжёлых запросов.
 
 </details>
 

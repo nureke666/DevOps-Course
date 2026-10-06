@@ -197,7 +197,7 @@ lrwxrwxrwx  1 root root    21 Jan 15 10:30 link -> /etc/nginx/nginx.conf
 └─ тип: - файл, d каталог, l симлинк, c/b устройство, s сокет, p pipe
 ```
 
-Подробно про права — в теме [06_permissions.md](/linux/06-permissions).
+Подробно про права — в теме [06. Permissions](/linux/06-permissions).
 
 ---
 

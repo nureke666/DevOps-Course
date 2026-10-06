@@ -1,6 +1,6 @@
 ---
 title: "06. GitOps: Argo CD собирает кластер из linkd-gitops"
-description: "Цель этапа: перенести app-of-apps из 12-autopilot на публичный linkd-gitops,"
+description: "app-of-apps, CI → gitops → кластер, откат"
 ---
 
 # 06. GitOps: Argo CD собирает кластер из linkd-gitops
@@ -22,13 +22,13 @@ description: "Цель этапа: перенести app-of-apps из 12-autopi
 | Проект | Что забираешь | Когда готово |
 |--------|---------------|--------------|
 | 🛠️ **12-autopilot** — GitOps с Argo CD · `README` · `~/Projects/devops/12-autopilot` | структуру app-of-apps, окружения dev/prod, AppProject'ы, настройки self-heal и sync waves, опыт отката через `git revert` | `./check.sh` зелёный |
-| 🛠️ **05-conveyor** → этап 03 · `README` · `~/Projects/devops/05-conveyor` | bump-job, который коммитит тег в `envs/&lt;env&gt;/values.yaml` | этап 03 сделан |
+| 🛠️ **05-conveyor** → этап 03 · `README` · `~/Projects/devops/05-conveyor` | bump-job, который коммитит тег в `envs/<env>/values.yaml` | этап 03 сделан |
 
 ---
 
 ## 🎯 Цель
 
-```text
+```text:no-line-numbers
          push-модель                               pull-модель (GitOps)
  CI ──kubeconfig──► helm upgrade ──► кластер    CI ──git commit──► linkd-gitops
   • у CI полный доступ к кластеру                                    ▲   │
@@ -36,7 +36,8 @@ description: "Цель этапа: перенести app-of-apps из 12-autopi
   • «что сейчас задеплоено?» — неизвестно             │ sync ◄───────────┘ и применяет
                                                       ▼
                                                    кластер
-```text
+```
+
 В 12-autopilot Argo CD читал Gitea внутри кластера — удобно для учёбы, но снаружи этого
 никто не увидит. В портфолио источник правды — публичный `linkd-gitops`, и в нём
 сходятся три вещи: чарт из `linkd-platform`, values окружений и тег, который пишет CI.
@@ -50,7 +51,7 @@ description: "Цель этапа: перенести app-of-apps из 12-autopi
 
 ## 🗺️ Что получится
 
-```text
+```text:no-line-numbers
  linkd-gitops/
  ├── bootstrap/                 root-приложение — единственное, что применяется руками
  ├── apps/
@@ -62,9 +63,10 @@ description: "Цель этапа: перенести app-of-apps из 12-autopi
  ├── data/                      PostgreSQL из этапа 05
  └── platform/                  values сторонних чартов
 
- linkd-platform: merge в main ─► CI :&lt;sha&gt; ─► commit envs/dev ─► Argo sync dev
+ linkd-platform: merge в main ─► CI :<sha> ─► commit envs/dev ─► Argo sync dev
                  тег vX.Y.Z   ─► CI :X.Y.Z ─► MR envs/prod ─► ревью ─► Argo sync prod
-```text
+```
+
 ---
 
 ## 🪜 Шаги
@@ -73,7 +75,8 @@ description: "Цель этапа: перенести app-of-apps из 12-autopi
 
 ```bash
 cd ~/Projects/devops/12-autopilot && ./check.sh
-```text
+```
+
 ### 2. Перенос структуры
 
 Дерево `apps/` и bootstrap из 12-autopilot → `linkd-gitops`. Все `repoURL`, указывавшие
@@ -96,22 +99,23 @@ cd ~/Projects/devops/12-autopilot && ./check.sh
 
 ```yaml
 sources:
-  - repoURL: https://gitlab.com/&lt;you&gt;/linkd-platform.git   # чарт — рядом с кодом
+  - repoURL: https://gitlab.com/<you>/linkd-platform.git   # чарт — рядом с кодом
     path: deploy/helm/linkd
     targetRevision: v0.3.0                                  # версия чарта зафиксирована
     helm:
       valueFiles: [$values/envs/dev/values.yaml]
-  - repoURL: https://gitlab.com/&lt;you&gt;/linkd-gitops.git     # values окружения — здесь
+  - repoURL: https://gitlab.com/<you>/linkd-gitops.git     # values окружения — здесь
     targetRevision: main
     ref: values
-```text
+```
+
 ### 4. Замкнуть цепочку CI → GitOps
 
 Bump-job из этапа 03 пишет в тот самый `envs/dev/values.yaml`, который читает Argo.
 Проверка — без рук:
 
 1. видимая правка в `linkd-platform` (например, версия в логе старта), MR, merge;
-2. CI публикует `:&lt;sha&gt;` и коммитит тег в `linkd-gitops`;
+2. CI публикует `:<sha>` и коммитит тег в `linkd-gitops`;
 3. Argo замечает коммит (опрос или `argocd app get --refresh`) и катит dev;
 4. в dev работает образ с этим SHA — видно в `kubectl get deploy -o wide` и в UI Argo.
 
@@ -145,7 +149,7 @@ Secret с `LINKD_DATABASE_URL` — пока руками в каждом namespa
 ### 8. README и ADR
 
 - Раздел «Доставка»: схема, путь коммита до dev и до prod, как откатить.
-- ADR-001 «Два репозитория и pull-модель» (шаблон — в [10_readme_resume.md](/project/10-readme-resume)).
+- ADR-001 «Два репозитория и pull-модель» (шаблон — в [10. Оформление: README, ADR, резюме, рассказ на собесе](/project/10-readme-resume)).
 - ADR «CI коммитит тег, а не Image Updater» и ADR про способ связи чарта и values.
 - Скриншот дерева приложений Argo CD (root → дети).
 
@@ -153,7 +157,8 @@ Secret с `LINKD_DATABASE_URL` — пока руками в каждом namespa
 
 ```bash
 git -C ~/Projects/linkd-gitops add bootstrap apps && git -C ~/Projects/linkd-gitops commit -m "gitops: app-of-apps for linkd"
-```text
+```
+
 ---
 
 ## ✅ Критерии приёмки
@@ -207,13 +212,13 @@ git -C ~/Projects/linkd-gitops add bootstrap apps && git -C ~/Projects/linkd-git
 
 ## 📚 Теория в волте
 
-- GitOps: [../Left/07_ArgoCD/01_gitops_concepts.md](/argocd/01-gitops-concepts),
-  [../CICD/04_gitops.md](/cicd/04-gitops)
-- Установка и устройство Argo CD: [../Left/07_ArgoCD/02_argocd_install.md](/argocd/02-argocd-install)
-- Application, sync, self-heal, откат: [../Left/07_ArgoCD/03_application.md](/argocd/03-application)
-- App of Apps и ApplicationSet: [../Left/07_ArgoCD/04_app_of_apps.md](/argocd/04-app-of-apps)
-- Helm/Kustomize в Argo: [../Left/07_ArgoCD/05_helm_kustomize.md](/argocd/05-helm-kustomize)
-- Откат изменений в git: [../../IT/Git/07_undo_history.md](/git/07-undo-history)
-- Git в работе DevOps: [../../IT/Git/12_git_in_devops.md](/git/12-git-in-devops)
+- GitOps: [ArgoCD: 01. Принципы GitOps](/argocd/01-gitops-concepts),
+  [CI/CD: 04. GitOps](/cicd/04-gitops)
+- Установка и устройство Argo CD: [ArgoCD: 02. Установка и устройство ArgoCD](/argocd/02-argocd-install)
+- Application, sync, self-heal, откат: [ArgoCD: 03. Application: синхронизация и здоровье](/argocd/03-application)
+- App of Apps и ApplicationSet: [ArgoCD: 04. App of Apps и ApplicationSet](/argocd/04-app-of-apps)
+- Helm/Kustomize в Argo: [ArgoCD: 05. Helm, Kustomize и секреты в GitOps](/argocd/05-helm-kustomize)
+- Откат изменений в git: [Git: 07. Отмена изменений и история](/git/07-undo-history)
+- Git в работе DevOps: [Git: 12. Git в работе DevOps](/git/12-git-in-devops)
 
-➡️ Следующий этап: [07_observability.md](/project/07-observability)
+➡️ Следующий этап: [07. Наблюдаемость: метрики, логи, трейсы и алерты по SLO](/project/07-observability)
