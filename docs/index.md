@@ -57,7 +57,7 @@ const topicsPractice = [
 
 const topicsSystemDesign = [
   { title: '1. Основы и метод', desc: 'Требования и SLO, оценки на салфетке, фреймворк ответа, бэкенд- и DevOps-собес, design doc и ADR', status: 'active', link: '/system-design/basics/' },
-  { title: '2. Строительные блоки', desc: 'DNS, CDN, балансировщики, API, кеш, хранилища, масштабирование БД, очереди, rate limiting', status: 'soon' },
+  { title: '2. Строительные блоки', desc: 'DNS, CDN, балансировщики, API, кеш, хранилища, масштабирование БД, очереди, rate limiting', status: 'active', link: '/system-design/building-blocks/' },
   { title: '3. Данные', desc: 'Модель под нагрузку, распределённые транзакции, генерация ID, вероятностные структуры, CDC', status: 'soon' },
   { title: '4. Надёжность и эксплуатация', desc: 'Автоскейлинг, отказоустойчивость, выкатка без простоя, SLO, мультирегион и DR, стоимость', status: 'soon' },
   { title: '5. Бэкенд-задачи', desc: '14 разборов от сокращателя ссылок до платежей — каждый с блоком «Эксплуатация»', status: 'active', link: '/system-design/backend-cases/' },
