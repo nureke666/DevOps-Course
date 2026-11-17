@@ -50,6 +50,14 @@ export default defineConfig({
         ],
       },
       {
+        text: 'System Design',
+        items: [
+          { text: 'Обзор курса', link: '/system-design/' },
+          { text: '1. Основы и метод', link: '/system-design/basics/' },
+          { text: '5. Бэкенд-задачи', link: '/system-design/backend-cases/' },
+        ],
+      },
+      {
         text: 'Практика и Карьера',
         items: [
           { text: 'Пет-проект linkd-platform', link: '/project/' },
@@ -62,6 +70,34 @@ export default defineConfig({
     ],
 
     sidebar: {
+      '/system-design/': [
+        {
+          text: 'System Design',
+          items: [
+            { text: 'Обзор курса', link: '/system-design/' },
+          ],
+        },
+        {
+          text: '1. Основы и метод',
+          collapsed: false,
+          items: [
+            { text: 'Обзор блока', link: '/system-design/basics/' },
+            { text: '01. Что такое system design: требования, качества, SLO', link: '/system-design/basics/01-what-is-system-design' },
+            { text: '02. Оценки на салфетке: RPS, объём, трафик, задержки', link: '/system-design/basics/02-estimations' },
+            { text: '03. Фреймворк ответа: 45 минут от уточнений до trade-offs', link: '/system-design/basics/03-interview-framework' },
+            { text: '04. Бэкенд-собес и DevOps-собес: две стороны одной схемы', link: '/system-design/basics/04-backend-vs-devops' },
+            { text: '05. Design doc и ADR: как записать решение', link: '/system-design/basics/05-design-doc-adr' },
+          ],
+        },
+        {
+          text: '5. Бэкенд-задачи',
+          collapsed: false,
+          items: [
+            { text: 'Обзор блока', link: '/system-design/backend-cases/' },
+            { text: '01. Сокращатель ссылок: linkd ×1000', link: '/system-design/backend-cases/01-url-shortener' },
+          ],
+        },
+      ],
       '/vault/': [
         {
           text: 'Vault',
