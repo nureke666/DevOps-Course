@@ -55,15 +55,6 @@ const topicsPractice = [
   { title: 'English для IT', desc: 'Чтение документации без словаря, профессиональный вокабуляр, переписка в PR/Issues, собеседования', status: 'active', link: '/english/' },
 ]
 
-const topicsSystemDesign = [
-  { title: '1. Основы и метод', desc: 'Требования и SLO, оценки на салфетке, фреймворк ответа, бэкенд- и DevOps-собес, design doc и ADR', status: 'active', link: '/system-design/basics/' },
-  { title: '2. Строительные блоки', desc: 'DNS, CDN, балансировщики, API, кеш, хранилища, масштабирование БД, очереди, rate limiting', status: 'active', link: '/system-design/building-blocks/' },
-  { title: '3. Данные', desc: 'Модель под нагрузку, распределённые транзакции, генерация ID, вероятностные структуры, CDC', status: 'soon' },
-  { title: '4. Надёжность и эксплуатация', desc: 'Автоскейлинг, отказоустойчивость, выкатка без простоя, SLO, мультирегион и DR, стоимость', status: 'soon' },
-  { title: '5. Бэкенд-задачи', desc: '14 разборов от сокращателя ссылок до платежей — каждый с блоком «Эксплуатация»', status: 'active', link: '/system-design/backend-cases/' },
-  { title: '6. Инфраструктурные задачи', desc: 'CI/CD на 30 сервисов, логи 1 ТБ/сутки, мониторинг, DR, k8s-платформа, распродажа ×10', status: 'soon' },
-  { title: '7. Практика и собес', desc: 'Лабы на linkd, пробные интервью с таймером, итоговая шпаргалка', status: 'soon' },
-]
 </script>
 
 <div class="vp-doc" style="max-width: 688px; margin: 0 auto; padding: 0 24px;">
@@ -75,12 +66,6 @@ const topicsSystemDesign = [
 ## 🔬 Специализации и Senior-трек
 
 <RoadmapChain :items="topicsAdvanced" />
-
-## 🏗️ System Design: бэкенд + DevOps
-
-Как устроено и как держать в проде — [обзор курса](/system-design/).
-
-<RoadmapChain :items="topicsSystemDesign" />
 
 ## 🚀 Практика, карьера и софт-скиллы
 

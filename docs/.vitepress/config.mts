@@ -6,6 +6,9 @@ export default defineConfig({
   description: 'Личные конспекты и практика по DevOps — Git, Docker, CI/CD, Kubernetes',
   base: '/DevOps-Course/',
   ignoreDeadLinks: true,
+  // DEPRECATED: курс System Design скрыт с сайта — файлы остаются в docs/system-design/,
+  // но не собираются. Как вернуть — docs/system-design/DEPRECATED.md.
+  srcExclude: ['system-design/**'],
 
   markdown: {
     lineNumbers: true,
@@ -49,15 +52,16 @@ export default defineConfig({
           { text: 'Python для DevOps', link: '/python/' },
         ],
       },
-      {
-        text: 'System Design',
-        items: [
-          { text: 'Обзор курса', link: '/system-design/' },
-          { text: '1. Основы и метод', link: '/system-design/basics/' },
-          { text: '2. Строительные блоки', link: '/system-design/building-blocks/' },
-          { text: '5. Бэкенд-задачи', link: '/system-design/backend-cases/' },
-        ],
-      },
+      // DEPRECATED: System Design скрыт (см. srcExclude выше)
+      // {
+      //   text: 'System Design',
+      //   items: [
+      //     { text: 'Обзор курса', link: '/system-design/' },
+      //     { text: '1. Основы и метод', link: '/system-design/basics/' },
+      //     { text: '2. Строительные блоки', link: '/system-design/building-blocks/' },
+      //     { text: '5. Бэкенд-задачи', link: '/system-design/backend-cases/' },
+      //   ],
+      // },
       {
         text: 'Практика и Карьера',
         items: [
@@ -71,49 +75,50 @@ export default defineConfig({
     ],
 
     sidebar: {
-      '/system-design/': [
-        {
-          text: 'System Design',
-          items: [
-            { text: 'Обзор курса', link: '/system-design/' },
-          ],
-        },
-        {
-          text: '1. Основы и метод',
-          collapsed: false,
-          items: [
-            { text: 'Обзор блока', link: '/system-design/basics/' },
-            { text: '01. Что такое system design: требования, качества, SLO', link: '/system-design/basics/01-what-is-system-design' },
-            { text: '02. Оценки на салфетке: RPS, объём, трафик, задержки', link: '/system-design/basics/02-estimations' },
-            { text: '03. Фреймворк ответа: 45 минут от уточнений до trade-offs', link: '/system-design/basics/03-interview-framework' },
-            { text: '04. Бэкенд-собес и DevOps-собес: две стороны одной схемы', link: '/system-design/basics/04-backend-vs-devops' },
-            { text: '05. Design doc и ADR: как записать решение', link: '/system-design/basics/05-design-doc-adr' },
-          ],
-        },
-        {
-          text: '2. Строительные блоки',
-          collapsed: false,
-          items: [
-            { text: 'Обзор блока', link: '/system-design/building-blocks/' },
-            { text: '01. Вход в систему: DNS, CDN, балансировщики и API gateway', link: '/system-design/building-blocks/01-edge-dns-cdn-lb' },
-            { text: '02. API: REST, gRPC, GraphQL, WebSocket и SSE', link: '/system-design/building-blocks/02-api-design' },
-            { text: '03. Кеширование: где, как и когда кеш врёт', link: '/system-design/building-blocks/03-caching' },
-            { text: '04. Хранилища: SQL или NoSQL, B-tree или LSM', link: '/system-design/building-blocks/04-storage-choice' },
-            { text: '05. Масштабирование БД: от индекса до шардов', link: '/system-design/building-blocks/05-db-scaling' },
-            { text: '06. Асинхронность: очереди, pub/sub и события', link: '/system-design/building-blocks/06-async-messaging' },
-            { text: '07. Файлы и поиск: объектное хранилище и инвертированный индекс', link: '/system-design/building-blocks/07-blobs-search' },
-            { text: '08. Rate limiting: алгоритмы и где ставить лимиты', link: '/system-design/building-blocks/08-rate-limiting' },
-          ],
-        },
-        {
-          text: '5. Бэкенд-задачи',
-          collapsed: false,
-          items: [
-            { text: 'Обзор блока', link: '/system-design/backend-cases/' },
-            { text: '01. Сокращатель ссылок: linkd ×1000', link: '/system-design/backend-cases/01-url-shortener' },
-          ],
-        },
-      ],
+      // DEPRECATED: сайдбар System Design закомментирован, пока раздел в srcExclude
+      // '/system-design/': [
+      //   {
+      //     text: 'System Design',
+      //     items: [
+      //       { text: 'Обзор курса', link: '/system-design/' },
+      //     ],
+      //   },
+      //   {
+      //     text: '1. Основы и метод',
+      //     collapsed: false,
+      //     items: [
+      //       { text: 'Обзор блока', link: '/system-design/basics/' },
+      //       { text: '01. Что такое system design: требования, качества, SLO', link: '/system-design/basics/01-what-is-system-design' },
+      //       { text: '02. Оценки на салфетке: RPS, объём, трафик, задержки', link: '/system-design/basics/02-estimations' },
+      //       { text: '03. Фреймворк ответа: 45 минут от уточнений до trade-offs', link: '/system-design/basics/03-interview-framework' },
+      //       { text: '04. Бэкенд-собес и DevOps-собес: две стороны одной схемы', link: '/system-design/basics/04-backend-vs-devops' },
+      //       { text: '05. Design doc и ADR: как записать решение', link: '/system-design/basics/05-design-doc-adr' },
+      //     ],
+      //   },
+      //   {
+      //     text: '2. Строительные блоки',
+      //     collapsed: false,
+      //     items: [
+      //       { text: 'Обзор блока', link: '/system-design/building-blocks/' },
+      //       { text: '01. Вход в систему: DNS, CDN, балансировщики и API gateway', link: '/system-design/building-blocks/01-edge-dns-cdn-lb' },
+      //       { text: '02. API: REST, gRPC, GraphQL, WebSocket и SSE', link: '/system-design/building-blocks/02-api-design' },
+      //       { text: '03. Кеширование: где, как и когда кеш врёт', link: '/system-design/building-blocks/03-caching' },
+      //       { text: '04. Хранилища: SQL или NoSQL, B-tree или LSM', link: '/system-design/building-blocks/04-storage-choice' },
+      //       { text: '05. Масштабирование БД: от индекса до шардов', link: '/system-design/building-blocks/05-db-scaling' },
+      //       { text: '06. Асинхронность: очереди, pub/sub и события', link: '/system-design/building-blocks/06-async-messaging' },
+      //       { text: '07. Файлы и поиск: объектное хранилище и инвертированный индекс', link: '/system-design/building-blocks/07-blobs-search' },
+      //       { text: '08. Rate limiting: алгоритмы и где ставить лимиты', link: '/system-design/building-blocks/08-rate-limiting' },
+      //     ],
+      //   },
+      //   {
+      //     text: '5. Бэкенд-задачи',
+      //     collapsed: false,
+      //     items: [
+      //       { text: 'Обзор блока', link: '/system-design/backend-cases/' },
+      //       { text: '01. Сокращатель ссылок: linkd ×1000', link: '/system-design/backend-cases/01-url-shortener' },
+      //     ],
+      //   },
+      // ],
       '/vault/': [
         {
           text: 'Vault',
