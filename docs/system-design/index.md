@@ -8,7 +8,7 @@ import RoadmapChain from '../.vitepress/theme/components/RoadmapChain.vue'
 
 const blocks = [
   {"title": "1. Основы и метод", "desc": "Требования и SLO, оценки на салфетке, фреймворк ответа на 45 минут, бэкенд- и DevOps-собес, design doc и ADR", "status": "active", "link": "/system-design/basics/"},
-  {"title": "2. Строительные блоки", "desc": "DNS, CDN, балансировщики, API, кеш, хранилища, масштабирование БД, очереди, файлы и поиск, rate limiting", "status": "soon"},
+  {"title": "2. Строительные блоки", "desc": "DNS, CDN, балансировщики, API, кеш, хранилища, масштабирование БД, очереди, файлы и поиск, rate limiting", "status": "active", "link": "/system-design/building-blocks/"},
   {"title": "3. Данные", "desc": "Модель данных под нагрузку, распределённые транзакции, генерация ID, вероятностные структуры, CDC и стриминг", "status": "soon"},
   {"title": "4. Надёжность и эксплуатация", "desc": "Масштабирование и автоскейлинг, отказоустойчивость, выкатка без простоя, SLO, мультирегион и DR, стоимость, безопасность, стили архитектуры", "status": "soon"},
   {"title": "5. Бэкенд-задачи", "desc": "14 разборов: сокращатель ссылок, rate limiter, лента, мессенджер, уведомления, видеохостинг, такси, платежи и другие", "status": "active", "link": "/system-design/backend-cases/"},
